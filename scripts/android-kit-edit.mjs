@@ -144,13 +144,50 @@ export async function gate(afterSave) {
       tap(dismissed.Save);
       await screen('committed', ['Coral'], ['Ink','Editing name','Save','Name required']);
       await check('saved');
-      if (afterSave) await afterSave({board, port, schema, check, adb, start, screen, tap, input, ime, foreground, signIn});
+      if (afterSave) await afterSave({board, port, schema, check, adb, start, screen, tap, input, ime, foreground, frame, signIn});
     } finally { requireKitEmulator(); adb('reverse','--remove', spec); }
   }));
   console.log('Android Kit: cleared, rejected, corrected, dismissed IME with Back, saved; store readbacks agree');
 }
 
+async function logoutJourney({port, check, adb, screen, tap, input, ime, frame, signIn}) {
+  const find = text => frame(text, lines => lines.find(l => l.text === text));
+  await check('peer');
+  const action = await find('Log out');
+  const mapping = `tcp:${port}`;
+  requireKitEmulator();
+  adb('reverse', '--remove', mapping);
+  try {
+    tap(action);
+    await find('Could not log out');
+    await screen('board after failed logout', ['Coral'], ['Editing name','Next']);
+    await check('logout-failed');
+  } finally { requireKitEmulator(); adb('reverse','--no-rebind',mapping,mapping); }
+
+  const replace = async (from, to) => {
+    tap((await screen('board before edit', [from], ['Editing name']))[from]);
+    const editor = await screen('edit before logout', ['Editing name',from,'Save']);
+    tap({...editor[from], x: editor[from].x + 64});
+    await ime(true);
+    input('keyevent', ...Array(from.length).fill('67'));
+    input('text', to);
+    input('keyevent', '4'); await ime(false);
+    return screen('draft before logout', ['Editing name',to,'Save']);
+  };
+  tap((await replace('Coral','Jade')).Save);
+  await screen('saved with original session', ['Jade'], ['Save','Editing name']);
+  await check('still-signed-in');
+  await replace('Jade','Amber');
+  tap(await find('Log out'));
+  await frame('signed out', lines => editFrame(lines, ['Username or email','Next'], ['Sample board','Review sketch','Jade','Amber','Editing name','Save','Log out']));
+  await check('logged-out');
+  await signIn(false);
+  await screen('signed in after logout', ['Jade'], ['Amber','Editing name','Save']);
+}
+
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   process.chdir(fileURLToPath(new URL('../', import.meta.url)));
-  await gate();
+  const args = process.argv.slice(2);
+  if (args.length && (args.length !== 1 || args[0] !== '--logout')) throw Error('Usage: android-kit-edit.mjs [--logout]');
+  await gate(args.length ? logoutJourney : undefined);
 }

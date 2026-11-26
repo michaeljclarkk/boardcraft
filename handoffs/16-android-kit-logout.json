@@ -1,0 +1,12 @@
+{
+  "status": "ready",
+  "summary": "Connected Android logout keeps the board editable after a failed connection. On acknowledgment it drops the local session and unsaved editor and returns to identifier entry. This retry updated the workflow register with the prior device result and reran the host and workspace checks.",
+  "evidence": [
+    "Implementation: the Kit Log out button calls EditClient::logout on a background executor. Its loopback POST uses the existing bearer; boardcraft_account::revoke deletes only the matching digest, without a board grant check. Login/load, save and logout cannot overlap. A failed logout offers explicit retry.",
+    "Fresh HTTP/PostgreSQL run: cargo test --locked --workspace --test loopback_board_access passed all four cases. In explicit_logout_isolates_sessions, A and B signed in as the same Member and both read the board. Anonymous logout was rejected. After A logged out, only B's original verifier remained linked to that UUID. A's resolve, read and rename were rejected; repeating A's logout succeeded and B could still resolve and read. Fresh store reads found both original rows unchanged.",
+    "Prior operator run: node scripts/android-kit-edit.mjs --logout passed on the dedicated AVD. Removing the fixture reverse produced Could not log out with Coral still visible and both sessions intact. After reconnection, the same login saved Jade. With Amber unsaved, explicit logout returned to Username or email and Next with no board or editor controls. The peer alone remained and could read IDs 42 then 17 (Review sketch/1, Jade/3). Signing in again in the same activity showed the saved titles without Amber.",
+    "Fresh checks: cargo test --locked --workspace passed all 17 portable tests; workspace and Android cargo fmt checks passed. The previous packet-16 handoff also recorded both Android probe cases, five Windows smoke cases and 18 Node regressions passing. Those graphical runs were not repeated on this documentation retry; the shell did not permit rerunning the Node tests.",
+    "Reference comparison: packet 16 documents the mobile command waiting for the logout POST before clearing the session. Handoff 13 records single-session isolation in the nonvisual reference. There is no reference mobile runtime observation of the disconnect/retry journey."
+  ],
+  "next": "Run the coordinator verification gate for 16-android-kit-logout with the dedicated AVD, graphical Windows session and disposable PostgreSQL database."
+}

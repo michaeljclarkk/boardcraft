@@ -161,6 +161,16 @@ test('06 requires the frame gate, not the process probe or just a successful bui
   assert.throws(() => verify(p, bin => { if (bin === 'node') throw Error('missing editor frame'); }), /missing editor frame/);
 });
 
+test('16 requires session isolation before its graphical logout gate', () => {
+  const packet = packets.find(p => p.id === '16-android-kit-logout');
+  const run = name => verify(packet, (_bin, args) => {
+    if (args.includes('loopback_board_access')) return `test ${name} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored`;
+    if (args.includes('--logout')) throw Error('logout UI gate reached');
+  });
+  assert.throws(() => run('viewer_reads_but_cannot_rename'), /Missing passing/);
+  assert.throws(() => run('explicit_logout_isolates_sessions'), /logout UI gate reached/);
+});
+
 test('ordered OCR frames distinguish an editor from a stale, blank or unrelated screen', () => {
   const frame = ['Sample board', 'Review sketch', 'Editing name', 'Review artwork'].map((text, i) => ({ text, x: 64, y: 80 + 80*i }));
   const board = frame.filter(l => l.text !== 'Editing name');

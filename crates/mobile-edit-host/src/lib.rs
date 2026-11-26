@@ -37,10 +37,10 @@ impl Host {
         let config = config.clone();
         let worker = thread::spawn(move || {
             while let Ok(mut req) = listener.recv() {
-                let result = if req.url() == "/session" {
-                    session(&config, &mut db, &mut req)
-                } else {
-                    handle(&mut db, board, &mut req)
+                let result = match req.url() {
+                    "/session" => session(&config, &mut db, &mut req),
+                    "/session/logout" => logout(&config, &req),
+                    _ => handle(&mut db, board, &mut req),
                 };
                 let response = match result {
                     Ok(body) => Response::from_data(body).with_header(
@@ -104,6 +104,14 @@ fn session(config: &Config, db: &mut Client, req: &mut Request) -> Result<Vec<u8
         }
         _ => Err(405),
     }
+}
+
+fn logout(config: &Config, req: &Request) -> Result<Vec<u8>, u16> {
+    if req.method() != &Method::Post {
+        return Err(405);
+    }
+    boardcraft_account::revoke(config, &access::bearer(req)?).map_err(access::account_status)?;
+    Ok(b"null".to_vec())
 }
 
 fn handle(db: &mut Client, board: BoardId, req: &mut Request) -> Result<Vec<u8>, u16> {

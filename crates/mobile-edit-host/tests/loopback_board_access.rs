@@ -1,6 +1,8 @@
 #[path = "fixture/caller.rs"]
 mod caller;
 mod fixture;
+#[path = "fixture/peer.rs"]
+mod peer;
 
 use boardcraft_account::{Role, revoke};
 use boardcraft_mobile_edit_client::{Credentials, EditClient, EditError, NameEdit, SavedItem};
@@ -42,6 +44,38 @@ fn denied(client: &EditClient, f: &Fixture, error: EditError, expected: &[SavedI
         error
     );
     f.check_store(expected);
+}
+
+#[test]
+fn explicit_logout_isolates_sessions() {
+    let f = Fixture::start();
+    let password = uuid::Uuid::new_v4().simple().to_string();
+    let member = f.seed_account("boardmember", &password, Role::Member);
+    f.set_creator(member);
+    let credentials = || Credentials {
+        identifier: "boardmember".into(),
+        password: password.clone(),
+    };
+    let a = EditClient::sign_in(f.host.port, credentials()).unwrap();
+    let b = peer::Peer::sign_in(&f, member, credentials());
+    let original = rows("Review", 1);
+    assert_eq!(a.read(f.board).unwrap(), original);
+    assert_eq!(b.client.read(f.board).unwrap(), original);
+    assert_eq!(
+        EditClient::new(f.host.port).logout(),
+        Err(EditError::SessionRejected)
+    );
+    b.check(&f, true);
+
+    a.logout().unwrap();
+    b.check(&f, false);
+    f.check_store(&original);
+    assert_eq!(a.resolve(), Err(EditError::SessionRejected));
+    denied(&a, &f, EditError::SessionRejected, &original);
+    a.logout().unwrap(); // A lost acknowledgment can be retried explicitly.
+    b.check(&f, false);
+    b.client.resolve().unwrap();
+    assert_eq!(b.client.read(f.board).unwrap(), original);
 }
 
 #[test]

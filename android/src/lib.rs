@@ -44,6 +44,7 @@ struct BoardView {
     connection: Option<Connection>,
     client: Option<EditClient>,
     login: Option<Login>,
+    logging_out: bool,
     message: &'static str,
     editor: Option<Editor>,
 }
@@ -67,6 +68,7 @@ impl BoardView {
             connection: None,
             client: None,
             login: None,
+            logging_out: false,
             message: "",
             editor: None,
         };
@@ -87,7 +89,10 @@ impl BoardView {
     }
 
     fn open_editor(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        if self.connection.is_some() && self.editor.is_some() {
+        if self.logging_out
+            || self.login.is_some()
+            || (self.connection.is_some() && self.editor.is_some())
+        {
             return;
         }
         if let Some(item) = self.board.items.iter().find(|item| item.id == id) {
@@ -121,7 +126,7 @@ impl BoardView {
         let Some(revision) = editor.revision else {
             return;
         };
-        if editor.pending {
+        if editor.pending || self.logging_out {
             return;
         }
         let id = editor.id;
@@ -181,6 +186,43 @@ impl BoardView {
         .detach();
         cx.notify();
     }
+
+    fn logout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Serialize board operations: a save must settle before revocation, and
+        // no new edit or save can start while the logout request is in flight.
+        if self.login.is_some()
+            || self.logging_out
+            || self.editor.as_ref().is_some_and(|e| e.pending)
+        {
+            return;
+        }
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        self.logging_out = true;
+        self.message = "";
+        let identifier = Login::identifier(window, cx);
+        let work = cx
+            .background_executor()
+            .spawn(async move { client.logout() });
+        cx.spawn(async move |view, cx| {
+            let result = work.await;
+            _ = view.update(cx, |view, cx| {
+                view.logging_out = false;
+                if result.is_ok() {
+                    view.client = None;
+                    view.editor = None;
+                    view.board.items.clear();
+                    view.login = Some(identifier);
+                } else {
+                    view.message = "Could not log out";
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
 }
 
 impl Render for BoardView {
@@ -195,14 +237,16 @@ impl Render for BoardView {
         }
         for item in &self.board.items {
             if let Some(editor) = self.editor.as_ref().filter(|e| e.id == item.id) {
-                column = column
-                    .child(Label::new("Editing name").text_lg())
-                    .child(Input::new(&editor.input).large().disabled(editor.pending));
+                column = column.child(Label::new("Editing name").text_lg()).child(
+                    Input::new(&editor.input)
+                        .large()
+                        .disabled(editor.pending || self.logging_out),
+                );
                 if self.connection.is_some() {
                     column = column.child(
                         Button::new("save")
                             .large()
-                            .disabled(editor.pending)
+                            .disabled(editor.pending || self.logging_out)
                             .label(if editor.pending { "Saving…" } else { "Save" })
                             .on_click(cx.listener(|view, _, _, cx| view.save(cx))),
                     );
@@ -215,12 +259,22 @@ impl Render for BoardView {
                 column = column.child(
                     Button::new(SharedString::from(id.to_string()))
                         .large()
+                        .disabled(self.logging_out)
                         .label(item.title.clone())
                         .on_click(cx.listener(move |view, _, window, cx| {
                             view.open_editor(id, window, cx);
                         })),
                 );
             }
+        }
+        if self.client.is_some() {
+            column = column.child(
+                Button::new("logout")
+                    .large()
+                    .label("Log out")
+                    .disabled(self.logging_out || self.editor.as_ref().is_some_and(|e| e.pending))
+                    .on_click(cx.listener(|view, _, window, cx| view.logout(window, cx))),
+            );
         }
         column
     }

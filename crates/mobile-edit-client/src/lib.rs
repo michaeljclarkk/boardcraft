@@ -101,6 +101,14 @@ impl EditClient {
         decode(self.authorize(self.http.get(url)).call())
     }
 
+    /// Revoke just this bearer. The view drops its client only after acknowledgment.
+    pub fn logout(&self) -> Result<(), EditError> {
+        let url = format!("http://127.0.0.1:{}/session/logout", self.port);
+        // Check current connectivity, not a pooled stream through an old bridge.
+        let http = Self::new(self.port).http;
+        decode(self.authorize(http.post(url)).send_empty())
+    }
+
     pub fn read(&self, board: Uuid) -> Result<Vec<SavedItem>, EditError> {
         decode(self.authorize(self.http.get(self.board_url(board))).call())
     }

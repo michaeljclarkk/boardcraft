@@ -28,6 +28,8 @@ export const packets = [
     cases: ['viewer_reads_but_cannot_rename', 'member_edits_within_scope'] },
   { id: '15-android-kit-sign-in', database: true, kitFrame: true, kitEdit: true, delivery: true,
     probeRegression: true, model: 'openai/gpt-6.2-astra#high' },
+  { id: '16-android-kit-logout', database: true, kitFrame: true, kitEdit: true, delivery: true,
+    probeRegression: true, logout: true, model: 'openai/gpt-6.2-astra#high' },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -59,7 +61,7 @@ export function requireKitEmulator(exec = command, env = process.env) {
   requireEditEmulator(exec, env.RUSTDAY_ANDROID_SERIAL ?? '');
 }
 
-export function verify({ target, buildBins, cases = [], android, kitFrame, kitEdit, delivery, probeRegression, windowsCases }, exec = command) {
+export function verify({ target, buildBins, cases = [], android, kitFrame, kitEdit, delivery, probeRegression, windowsCases, logout }, exec = command) {
   exec('cargo', ['fmt', '--all', '--', '--check']);
   const windows = () => {
     const args = ['test', '--locked', '-p', 'boardcraft-desktop', '--features', 'native-smoke', '--test', 'windows_smoke'];
@@ -73,6 +75,11 @@ export function verify({ target, buildBins, cases = [], android, kitFrame, kitEd
     return;
   }
   if (kitFrame) {
+    if (logout) {
+      const suite = 'loopback_board_access';
+      requireCases(suite, ['explicit_logout_isolates_sessions'], exec('cargo', ['test','--locked','--workspace','--test',suite], true));
+      exec('node', ['scripts/android-kit-edit.mjs', '--logout']);
+    }
     if (probeRegression) runDeviceProbe(packets.find(p => p.id === '05-android-emulator-edit'), exec);
     exec('cargo', ['fmt', '--manifest-path', 'android/Cargo.toml', '--', '--check']);
     exec('node', ['scripts/android-kit-frame.mjs']);

@@ -116,6 +116,7 @@ Use the frame gate's dedicated AVD and host GPU setup, with `rustday_test` activ
 node scripts/android-kit-frame.mjs       # no extras: original offline fixture
 node --test scripts/run.test.mjs
 node scripts/android-kit-edit.mjs        # live Kit input and independent store readbacks
+node scripts/android-kit-edit.mjs --logout # disconnect, edit after failure, log out and sign in again
 ```
 
 The edit gate starts [`kit_edit_fixture`](../crates/mobile-edit-host/examples/kit_edit_fixture.rs) against a fresh schema. Only a board UUID and reversed loopback port go into the activity intent. The fixture's stdin replies reflect new store connections; EOF stops the host and drops the schema. Record the live gate outcomes in the handoff before runner verification.
