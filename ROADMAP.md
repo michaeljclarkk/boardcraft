@@ -1,4 +1,4 @@
-# Rustday roadmap: full workflow parity
+# boardcraft roadmap: full workflow parity
 
 **Goal:** a user can perform every supported workflow with the same inputs, controls, permissions and results, including after a failed save, a disconnect or an upgrade. Persisted records, shared links, API clients and background work are part of that contract. Rust owns the rules, PostgreSQL owns durable state, and Longbridge GPUI Kit supplies the desktop controls.
 
@@ -18,7 +18,7 @@ Add the board model to the existing Rust workspace. On a synthetic board, create
 
 ### 02-postgres
 
-Add migrations and persist the board operation in PostgreSQL. Test on a dedicated, disposable Rustday database supplied as `RUSTDAY_TEST_DATABASE_URL`. No fallback to other URLs or databases. In `postgres_board`, save an edit, reconnect, reload the board and verify identity, ordering and values. Include a failed-write case proving no partial edit is visible. Never skip the test on a missing database.
+Add migrations and persist the board operation in PostgreSQL. Test on a dedicated, disposable boardcraft database supplied as `RUSTDAY_TEST_DATABASE_URL`. No fallback to other URLs or databases. In `postgres_board`, save an edit, reconnect, reload the board and verify identity, ordering and values. Include a failed-write case proving no partial edit is visible. Never skip the test on a missing database.
 
 Use nonempty UUIDs for durable board and item identities so the store can round-trip existing IDs. Keep the rename scoped to its board. For interactive edits, store the trimmed title; reject blank titles and titles over 255 UTF-16 code units after trimming. Exercise these rules with synthetic inputs and distinguish rejected edits from database faults. Historical imports have a separate spelling contract.
 
@@ -57,7 +57,7 @@ Each row is a group of independently testable packets. For each area, inventory 
 
 1. Pick the smallest unfinished user journey whose dependencies are verified. Give it a stable packet ID, synthetic fixture, expected visible **and** stored outcome, failure case and named check. For example, split column work by behavior family rather than attempting the entire column catalogue in one chat.
 2. Add its acceptance criteria here and its gate to the runner before dispatch. Use one fresh session per packet. Aim for 10,000–20,000 changed lines for large commits; split earlier at a tested boundary and never exceed 20,000. Small packets stay small.
-3. Start with a Kit control. If it cannot support a required interaction, put the reusable control in `rustday-ui` with a public API, synthetic example and interaction test. Keep board operations and persistence in the app.
+3. Start with a Kit control. If it cannot support a required interaction, put the reusable control in `boardcraft-ui` with a public API, synthetic example and interaction test. Keep board operations and persistence in the app.
 4. Finish with a handoff linking the rule owner, fixture, checks run, observed results, remaining gaps and one next action. A blocked packet remains open. Re-run affected earlier journeys when a shared rule changes.
 
 ## Release gate: when can we call it 1:1?

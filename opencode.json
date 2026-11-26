@@ -15,6 +15,7 @@
     { "action": "subagent", "resource": "*", "effect": "deny" },
     { "action": "edit", "resource": "opencode.json*", "effect": "deny" },
     { "action": "edit", "resource": "scripts/*", "effect": "deny" },
-    { "action": "edit", "resource": ".rustday/*", "effect": "deny" }
+    { "action": "edit", "resource": ".rustday/*", "effect": "deny" },
+    { "action": "edit", "resource": ".boardcraft/*", "effect": "deny" }
   ]
 }

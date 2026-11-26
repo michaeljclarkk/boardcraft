@@ -1,6 +1,6 @@
+use boardcraft_board::{Board, BoardId, ItemId, store};
+use boardcraft_desktop::database;
 use postgres::NoTls;
-use rustday_board::{Board, BoardId, ItemId, store};
-use rustday_desktop::database;
 use uuid::Uuid;
 
 fn main() -> Result<(), &'static str> {

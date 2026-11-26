@@ -1,4 +1,5 @@
 /target/
+/.boardcraft/
 /.rustday/
 /.private/
 /LOCAL-REFERENCE.md

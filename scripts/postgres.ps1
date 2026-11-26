@@ -7,7 +7,7 @@ $port = 55437
 $ctl = (Get-Command pg_ctl.exe -ErrorAction Stop).Source
 if ($Action -eq 'stop') {
     & $ctl -D $data -w stop
-    if ($LASTEXITCODE) { throw 'Could not stop the Rustday cluster.' }
+    if ($LASTEXITCODE) { throw 'Could not stop the boardcraft cluster.' }
     Remove-Item Env:RUSTDAY_TEST_DATABASE_URL -ErrorAction SilentlyContinue
     return
 }

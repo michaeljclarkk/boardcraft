@@ -1,9 +1,9 @@
 //! Real Windows processes; run in a graphical session with --features native-smoke.
 #![cfg(windows)]
 
+use boardcraft_board::{Board, BoardId, ItemId, store};
+use boardcraft_desktop::database;
 use postgres::NoTls;
-use rustday_board::{Board, BoardId, ItemId, store};
-use rustday_desktop::database;
 use std::{
     io::{BufRead, BufReader},
     process::{Child, Command, Stdio},
@@ -24,7 +24,7 @@ impl Drop for SmokeProcess {
 
 fn exercise(board: BoardId, mode: &str, finished: &str, mut on_line: impl FnMut(&str)) {
     let mut child = SmokeProcess(
-        Command::new(env!("CARGO_BIN_EXE_rustday-desktop"))
+        Command::new(env!("CARGO_BIN_EXE_boardcraft-desktop"))
             .arg(board.as_uuid().to_string())
             .arg(mode)
             .stdout(Stdio::piped())

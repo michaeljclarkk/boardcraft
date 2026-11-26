@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { packets, runQueue, validLimit, verify } from './run.mjs';
 
 test('resume skips verified work; a stale handoff or failed gate cannot advance the queue', () => {
-  const cwd = process.cwd(), dir = mkdtempSync(join(tmpdir(), 'rustday-'));
+  const cwd = process.cwd(), dir = mkdtempSync(join(tmpdir(), 'boardcraft-'));
   const seen = [];
   function work({ id }) {
     seen.push(id);
@@ -17,14 +17,36 @@ test('resume skips verified work; a stale handoff or failed gate cannot advance 
     assert.throws(() => runQueue(3, work, ({ id }) => { if (id === '02-postgres') throw Error('failed gate'); }), /failed gate/);
     assert.deepEqual(seen, ['01-board', '02-postgres']);
     assert.throws(() => runQueue(1, () => {}, () => {}), /ENOENT/);
-    assert.ok(!existsSync('.rustday/02-postgres.ok'));
+    assert.ok(!existsSync('.boardcraft/02-postgres.ok'));
     runQueue(1, work, () => {});
     assert.deepEqual(seen, ['01-board', '02-postgres', '02-postgres']);
-    assert.ok(!existsSync('.rustday/03-desktop.ok'));
+    assert.ok(!existsSync('.boardcraft/03-desktop.ok'));
     const checked = [];
     runQueue(2, work, ({ target }) => checked.push(target));
     assert.deepEqual(checked, ['desktop_edit', 'mobile_edit_service']);
-    assert.ok(existsSync('.rustday/04-mobile-edit-service.ok'));
+    assert.ok(existsSync('.boardcraft/04-mobile-edit-service.ok'));
+  } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an upgraded checkout honors its existing lock and resumes from its markers', () => {
+  const cwd = process.cwd(), dir = mkdtempSync(join(tmpdir(), 'boardcraft-'));
+  try {
+    process.chdir(dir);
+    mkdirSync('.rustday');
+    writeFileSync('.rustday/01-board.ok', 'verified');
+    writeFileSync('.rustday/lock', 'other runner');
+    assert.throws(() => runQueue(1, assert.fail, assert.fail), { code: 'EEXIST' });
+    assert.equal(readFileSync('.rustday/lock', 'utf8'), 'other runner');
+    rmSync('.rustday/lock');
+    runQueue(1, ({ id }, state) => {
+      assert.equal(id, '02-postgres');
+      assert.equal(state, '.rustday');
+      writeFileSync(`handoffs/${id}.json`, JSON.stringify({ status: 'ready', summary: 'fixture', evidence: ['checked'], next: 'continue' }));
+    }, () => {});
+    assert.ok(existsSync('.rustday/02-postgres.ok'));
+    assert.ok(!existsSync('.boardcraft'));
+    mkdirSync('.boardcraft');
+    assert.throws(() => runQueue(1, assert.fail, assert.fail), /Both .rustday and .boardcraft/);
   } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
 });
 

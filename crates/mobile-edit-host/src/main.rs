@@ -1,6 +1,6 @@
+use boardcraft_board::BoardId;
+use boardcraft_mobile_edit_host::Host;
 use postgres::Config;
-use rustday_board::BoardId;
-use rustday_mobile_edit_host::Host;
 use uuid::Uuid;
 
 fn main() -> Result<(), &'static str> {

@@ -1,5 +1,5 @@
+use boardcraft_board::{BoardId, Item, ItemId, RenameError, store};
 use postgres::{Client, Config, NoTls};
-use rustday_board::{BoardId, Item, ItemId, RenameError, store};
 
 /// This development window only opens the explicitly supplied disposable database.
 pub fn database() -> Result<Config, &'static str> {

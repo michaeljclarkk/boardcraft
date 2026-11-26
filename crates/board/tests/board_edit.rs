@@ -1,4 +1,4 @@
-use rustday_board::{Board, BoardId, DuplicateItem, ItemId, RenameError};
+use boardcraft_board::{Board, BoardId, DuplicateItem, ItemId, RenameError};
 use uuid::Uuid;
 
 const FIRST: ItemId = ItemId::new(Uuid::from_u128(42)).unwrap();

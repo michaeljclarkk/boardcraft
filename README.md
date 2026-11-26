@@ -1,6 +1,6 @@
-# Rustday
+# boardcraft
 
-Rustday is a native workspace for organizing work on boards. Rustday is inspired by monday dot com, but does not, and will not ever use any of it's code, branding or assets.
+boardcraft is a native workspace for organizing work on boards. boardcraft is inspired by monday dot com, but does not, and will not ever use any of it's code, branding or assets.
 
 **First workflow:** Two items on a board are both called “Review”. Rename the second one to “Review artwork”, close the app, then reopen the board. The first row should still say “Review”; the second should keep its new name. The edit targets the item's ID, so matching titles never decide which row changes.
 
@@ -10,7 +10,7 @@ Windows and Android are the active targets; iOS follows Android. Rust owns the r
 
 ## Run the migration
 
-Use Node 22+, OpenCode v2 with a configured provider, and a Rust toolchain with Cargo and rustfmt. For PostgreSQL, desktop and mobile service packets, supply `RUSTDAY_TEST_DATABASE_URL` for a disposable Rustday PostgreSQL database. The desktop packet also needs a graphical session and the platform's native GPUI build prerequisites. Use a dedicated checkout and development account with no production credentials. Cargo build scripts and tests run with the account's permissions.
+Use Node 22+, OpenCode v2 with a configured provider, and a Rust toolchain with Cargo and rustfmt. For PostgreSQL, desktop and mobile service packets, supply `RUSTDAY_TEST_DATABASE_URL` for a disposable boardcraft PostgreSQL database. The desktop packet also needs a graphical session and the platform's native GPUI build prerequisites. Use a dedicated checkout and development account with no production credentials. Cargo build scripts and tests run with the account's permissions.
 
 ```sh
 node --test scripts/run.test.mjs
@@ -22,6 +22,6 @@ node scripts/run.mjs run 3
 
 If the CLI is not on PATH, set `OPENCODE_BIN` to its executable. On Windows with OpenCode Desktop already running, PowerShell can use `$env:OPENCODE_BIN = (Get-Process opencode-cli | Select-Object -First 1 -ExpandProperty Path)`.
 
-**Resume:** inspect the last handoff and terminal error, fix the blocker, and run the same command in the same checkout. Partial edits remain on disk. After an abrupt shutdown, check that the runner and worker have exited before removing `.rustday/lock`. Verification markers are local to this checkout; invalidate the affected marker and later markers if you revert completed work. Review and commit source and public-safe handoffs at milestones; the runner does not publish changes.
+**Resume:** inspect the last handoff and terminal error, fix the blocker, and run the same command in the same checkout. Partial edits remain on disk. New checkouts keep runner state in `.boardcraft/`; existing `.rustday/` state is reused in place, including locks, verified packets and prior handoffs. If both directories exist, the runner stops. After an abrupt shutdown, confirm that the runner and worker have exited before removing a stale `lock` from the active state directory. Verification markers are local to this checkout; invalidate the affected marker and later markers if you revert completed work. Review and commit source and public-safe handoffs at milestones; the runner does not publish changes.
 
 See [ROADMAP.md](ROADMAP.md) for acceptance tests and [AGENTS.md](AGENTS.md) for the worker contract. To extend the queue, append a packet in `scripts/run.mjs` with its ID, named test target, database requirement and any additional required cases/build. The maximum `run` count follows the queue length. Run the Node tests and check `status` before dispatching a worker.

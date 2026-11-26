@@ -38,29 +38,36 @@ export function validLimit(count) {
   return /^[1-9]\d*$/.test(count) && Number(count) <= packets.length;
 }
 
+function stateDirectory() {
+  if (!existsSync('.rustday')) return '.boardcraft';
+  if (existsSync('.boardcraft')) throw Error('Both .rustday and .boardcraft runner states exist; resolve the conflict before continuing.');
+  return '.rustday';
+}
+
 export function runQueue(limit, work, check) {
   if (!validLimit(limit)) throw Error(`Expected 1-${packets.length} packets`);
-  mkdirSync('.rustday', { recursive: true });
+  const state = stateDirectory();
+  mkdirSync(state, { recursive: true });
   mkdirSync('handoffs', { recursive: true });
   // Exclusive create: a second runner must never dispatch the same packet.
-  writeFileSync('.rustday/lock', `${process.pid}\n`, { flag: 'wx' });
+  writeFileSync(`${state}/lock`, `${process.pid}\n`, { flag: 'wx' });
   try {
     for (const packet of packets) {
       const { id } = packet;
-      if (existsSync(`.rustday/${id}.ok`)) continue;
+      if (existsSync(`${state}/${id}.ok`)) continue;
       if (limit-- === 0) break;
       const path = `handoffs/${id}.json`;
       const prior = existsSync(path) ? readFileSync(path, 'utf8') : null;
-      if (prior !== null) { writeFileSync(`.rustday/${id}.previous.json`, prior); rmSync(path); }
-      work(packet);
+      if (prior !== null) { writeFileSync(`${state}/${id}.previous.json`, prior); rmSync(path); }
+      work(packet, state);
       const handoff = read(path);
       if (handoff.status !== 'ready') throw Error(`${id}: ${handoff.summary || 'incomplete'}`);
       if (!text(handoff.summary) || !text(handoff.next) || !Array.isArray(handoff.evidence) || !handoff.evidence.length || !handoff.evidence.every(text)) throw Error(`Incomplete ${path}`);
       check(packet);
-      writeFileSync(`.rustday/${id}.ok`, new Date().toISOString(), { flag: 'wx' });
+      writeFileSync(`${state}/${id}.ok`, new Date().toISOString(), { flag: 'wx' });
       console.log(`Verified ${id}`);
     }
-  } finally { rmSync('.rustday/lock'); }
+  } finally { rmSync(`${state}/lock`); }
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
@@ -68,14 +75,15 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   const [mode = 'status', count, ...extra] = process.argv.slice(2);
   try {
     if (mode === 'status' && count === undefined) {
-      for (const { id } of packets) console.log(id, existsSync(`.rustday/${id}.ok`) ? 'verified' : 'pending');
+      const state = stateDirectory();
+      for (const { id } of packets) console.log(id, existsSync(`${state}/${id}.ok`) ? 'verified' : 'pending');
     } else if (mode === 'run' && validLimit(count) && !extra.length) {
       const cli = process.env.OPENCODE_BIN || 'opencode';
       command('cargo', ['--version']);
       command(cli, ['--version']);
-      runQueue(Number(count), ({ id, database }) => {
-        if (database && !process.env.RUSTDAY_TEST_DATABASE_URL) throw Error('Set RUSTDAY_TEST_DATABASE_URL to the disposable Rustday DB.');
-        command(cli, ['run', '--standalone', '--agent', 'build', '--title', `Rustday ${id}`, `Complete only ${id} from ROADMAP.md. Read AGENTS.md, prior handoffs and any .rustday/${id}.previous.json. Inspect existing edits before continuing. Write handoffs/${id}.json and stop.`]);
+      runQueue(Number(count), ({ id, database }, state) => {
+        if (database && !process.env.RUSTDAY_TEST_DATABASE_URL) throw Error('Set RUSTDAY_TEST_DATABASE_URL to the disposable boardcraft DB.');
+        command(cli, ['run', '--standalone', '--agent', 'build', '--title', `boardcraft ${id}`, `Complete only ${id} from ROADMAP.md. Read AGENTS.md, prior handoffs and any ${state}/${id}.previous.json. Inspect existing edits before continuing. Write handoffs/${id}.json and stop.`]);
       }, verify);
     } else throw Error(`Usage: node scripts/run.mjs status | run <1-${packets.length}>`);
   } catch (error) { console.error(error.message); process.exitCode = 1; }

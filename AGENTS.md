@@ -1,12 +1,12 @@
-# Working on Rustday
+# Working on boardcraft
 
 ## Start a session
 
-Rustday is a source-code translation of our internal application. Its C# operations and React/TypeScript (TSX) components define the scope, including our own extensions. A feature offered by the commercial platform alone is not a requirement. Trace each interaction through the source component and its C# operation, then verify the translation with synthetic acceptance cases.
+boardcraft is a source-code translation of our internal application. Its C# operations and React/TypeScript (TSX) components define the scope, including our own extensions. A feature offered by the commercial platform alone is not a requirement. Trace each interaction through the source component and its C# operation, then verify the translation with synthetic acceptance cases.
 
 1. Read [ROADMAP.md](ROADMAP.md) for the assigned packet and acceptance criteria. `node scripts/run.mjs status` shows which packets passed in this checkout. Never edit verification markers to advance the queue.
 2. Inspect current edits, the previous `handoffs/<packet-id>.json`, and relevant entries in the [owner map](docs/architecture.md) and [workflow register](docs/workflows.md). Work within the assigned packet. Preserve unfinished edits across retries.
-3. Use the [development runbook](docs/development.md) for tools and checks. For feature work load `rustday-feature` or read its [instructions](.opencode/skills/rustday-feature/SKILL.md). A fresh public checkout must build without private material.
+3. Use the [development runbook](docs/development.md) for tools and checks. For feature work load `boardcraft-feature` or read its [instructions](.opencode/skills/boardcraft-feature/SKILL.md). A fresh public checkout must build without private material.
 
 ## Implement the interaction
 
@@ -23,7 +23,7 @@ The target is the full existing independent product: the workflows it supports, 
 
 Translate C# business rules into Rust and React interactions into Longbridge GPUI Kit views. For example, follow a rename from the TSX draft through the C# save result so the native editor preserves focus, accepted values and recovery behavior. Do not use monday.com code or assets, including logos, icons, fonts, screenshots or templates.
 
-Use newly written Rustday code, synthetic fixtures and a dedicated test database. Compare with approved reference behavior where available; record unknowns rather than guessing. Keep private names, paths, screenshots, records, transcripts and credentials out of public files, including skills and handoffs. Do not publish, commit, push, select a license, deploy, or change runner gates during a worker packet.
+Use newly written boardcraft code, synthetic fixtures and a dedicated test database. Compare with approved reference behavior where available; record unknowns rather than guessing. Keep private names, paths, screenshots, records, transcripts and credentials out of public files, including skills and handoffs. Do not publish, commit, push, select a license, deploy, or change runner gates during a worker packet.
 
 Run focused success and failure tests, then the packet's workspace checks. For persistence, reconnect and read back accepted state. For interaction changes, exercise the control in a running GPUI window: compilation does not verify keyboard input, focus or recovery. Identify any checks that did not run and why.
 

@@ -1,6 +1,6 @@
+use boardcraft_board::{Board, BoardId, ItemId, RenameError, store};
+use boardcraft_desktop::{Failure, InlineEdit, Phase, database};
 use postgres::NoTls;
-use rustday_board::{Board, BoardId, ItemId, RenameError, store};
-use rustday_desktop::{Failure, InlineEdit, Phase, database};
 use uuid::Uuid;
 
 #[test]

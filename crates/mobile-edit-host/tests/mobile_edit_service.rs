@@ -1,7 +1,7 @@
+use boardcraft_board::{Board, BoardId, ItemId, store};
+use boardcraft_mobile_edit_client::{EditClient, EditError, NameEdit, SavedItem};
+use boardcraft_mobile_edit_host::Host;
 use postgres::{Client, Config, NoTls};
-use rustday_board::{Board, BoardId, ItemId, store};
-use rustday_mobile_edit_client::{EditClient, EditError, NameEdit, SavedItem};
-use rustday_mobile_edit_host::Host;
 use uuid::Uuid;
 
 const FIRST: Uuid = Uuid::from_u128(42);

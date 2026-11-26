@@ -1,11 +1,11 @@
+use boardcraft_board::store::SaveError;
+use boardcraft_board::{Board, BoardId, ItemId, RenameError, store};
 use postgres::{Client, Config, NoTls, error::SqlState};
-use rustday_board::store::SaveError;
-use rustday_board::{Board, BoardId, ItemId, RenameError, store};
 use uuid::Uuid;
 
 fn test_config() -> Config {
     let url = std::env::var("RUSTDAY_TEST_DATABASE_URL")
-        .expect("RUSTDAY_TEST_DATABASE_URL must name a disposable Rustday test database");
+        .expect("RUSTDAY_TEST_DATABASE_URL must name a disposable boardcraft test database");
     let config: Config = url.parse().expect("invalid PostgreSQL connection settings");
     assert!(
         config.get_dbname() == Some("rustday_test"),

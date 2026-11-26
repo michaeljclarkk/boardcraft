@@ -1,3 +1,5 @@
+use boardcraft_board::{Board, BoardId, Item, RenameError, store};
+use boardcraft_desktop::{Failure, InlineEdit, Phase, database};
 use gpui_kit::component::{
     Disableable,
     button::Button,
@@ -6,8 +8,6 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use postgres::{Config, NoTls};
-use rustday_board::{Board, BoardId, Item, RenameError, store};
-use rustday_desktop::{Failure, InlineEdit, Phase, database};
 use uuid::Uuid;
 
 #[cfg(all(windows, feature = "native-smoke"))]
@@ -220,7 +220,7 @@ impl Render for Workbench {
             .flex()
             .flex_col()
             .gap_3()
-            .child("Rustday · Board items")
+            .child("boardcraft · Board items")
             .child(self.message)
             .when(self.failed, |el| {
                 el.child(
@@ -240,7 +240,7 @@ fn main() {
         .and_then(BoardId::new)
     else {
         eprintln!(
-            "Usage: rustday-desktop <board-uuid> (run the seed_board example for a new synthetic board)"
+            "Usage: boardcraft-desktop <board-uuid> (run the seed_board example for a new synthetic board)"
         );
         std::process::exit(2);
     };
@@ -264,7 +264,7 @@ fn main() {
                 view
             })
         })
-        .expect("open Rustday board window");
+        .expect("open boardcraft board window");
         cx.activate(true);
         #[cfg(all(windows, feature = "native-smoke"))]
         native_smoke::install(_window, _board_view, cx);

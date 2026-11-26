@@ -1,12 +1,12 @@
 //! Single-board host for a disposable database. No database configuration crosses HTTP.
 use std::{io::Read, sync::Arc, thread};
 
-use postgres::{Client, Config, NoTls};
-use rustday_board::{
+use boardcraft_board::{
     BoardId, ItemId, RenameError,
     store::{self, SaveError, StoredItem},
 };
-use rustday_mobile_edit_client::{NameEdit, SavedItem};
+use boardcraft_mobile_edit_client::{NameEdit, SavedItem};
+use postgres::{Client, Config, NoTls};
 use tiny_http::{Header, Method, Request, Response, Server};
 use uuid::Uuid;
 

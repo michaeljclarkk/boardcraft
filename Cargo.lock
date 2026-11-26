@@ -706,6 +706,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "boardcraft-board"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "postgres",
+ "uuid",
+]
+
+[[package]]
+name = "boardcraft-desktop"
+version = "0.1.0"
+dependencies = [
+ "boardcraft-board",
+ "gpui-kit",
+ "postgres",
+ "uuid",
+]
+
+[[package]]
+name = "boardcraft-mobile-edit-client"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "ureq",
+ "uuid",
+]
+
+[[package]]
+name = "boardcraft-mobile-edit-host"
+version = "0.1.0"
+dependencies = [
+ "boardcraft-board",
+ "boardcraft-mobile-edit-client",
+ "log",
+ "postgres",
+ "serde_json",
+ "tiny_http",
+ "uuid",
+]
+
+[[package]]
 name = "borsh"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6261,47 +6302,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
  "semver",
-]
-
-[[package]]
-name = "rustday-board"
-version = "0.1.0"
-dependencies = [
- "log",
- "postgres",
- "uuid",
-]
-
-[[package]]
-name = "rustday-desktop"
-version = "0.1.0"
-dependencies = [
- "gpui-kit",
- "postgres",
- "rustday-board",
- "uuid",
-]
-
-[[package]]
-name = "rustday-mobile-edit-client"
-version = "0.1.0"
-dependencies = [
- "serde",
- "ureq",
- "uuid",
-]
-
-[[package]]
-name = "rustday-mobile-edit-host"
-version = "0.1.0"
-dependencies = [
- "log",
- "postgres",
- "rustday-board",
- "rustday-mobile-edit-client",
- "serde_json",
- "tiny_http",
- "uuid",
 ]
 
 [[package]]

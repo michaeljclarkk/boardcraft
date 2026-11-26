@@ -1,6 +1,6 @@
 ---
-name: rustday-feature
-description: Implement or review a Rustday workflow across Rust, PostgreSQL and GPUI, including state ownership, failure recovery and milestone evidence.
+name: boardcraft-feature
+description: Implement or review a boardcraft workflow across Rust, PostgreSQL and GPUI, including state ownership, failure recovery and milestone evidence.
 ---
 
 Start with a user action. What record does it affect, what must stay true, and what will the user see if saving fails?
