@@ -17,15 +17,15 @@ Run the native acceptance test from an interactive Windows session. No manual wi
 ```powershell
 . .\scripts\dev.ps1
 & .\scripts\postgres.ps1 start
-cargo test --locked -p boardcraft-desktop --features native-smoke --test windows_smoke -- --nocapture
+cargo test --locked -p boardcraft-desktop --features native-smoke --test windows_smoke -- --test-threads=1 --nocapture
 ```
 
-[`windows_smoke`](../crates/desktop/tests/windows_smoke.rs) creates two `Review` rows in `rustday_test` and launches the desktop binary twice with the same board UUID. The [in-app driver](../crates/desktop/src/native_smoke.rs) dispatches pointer and keyboard events to the real Kit window and checks rendered control values, focus, status text and row state. A lock on the second fixture row makes `Saving…` observable before commit. The parent checks IDs and order over a fresh database connection, waits for both processes to exit, and removes the fixture on success. A timeout or missing expected frame fails the test. Normal builds exclude the driver. This checks GPUI event routing and frames, not physical device input or pixel fidelity.
+Each [`windows_smoke`](../crates/desktop/tests/windows_smoke.rs) case creates two `Review` rows in `rustday_test`. The [in-app driver](../crates/desktop/src/native_smoke.rs) dispatches pointer and keyboard events to the name buttons and editor. It waits for the parent to check both IDs, order, spelling and revisions on a fresh connection before advancing. A submission count distinguishes an unchanged exit from a no-op transaction. The recovery case holds the second row locked until `Saving…` is visible with the accepted label, then reopens the same board in a second process. Normal builds exclude the driver. This checks GPUI event routing and frames, not physical device input or pixel fidelity.
 
 For a manual check, the `seed_board` example above creates a **new** synthetic board containing two rows titled `Review` and prints its UUID. To reopen, reuse `$board`; do not rerun the seed command.
 
-1. Click the second input, select its text and enter spaces only. Press Enter. Check the rejection message, draft and keyboard focus; the first row must still say `Review`.
-2. In the second row enter ` Review artwork `, including the surrounding spaces, and click Save. Check that the editor shows `Saved` and `Review artwork` without the spaces. A fast commit may make `Saving…` too brief to observe; record only what you see.
+1. Click the second name. It should have focus but no editor. Press F2 or double-click it, select its text and enter spaces only. Press Enter. Check the rejection message, exact draft and keyboard focus; the first row must still say `Review`.
+2. In the second row enter ` Review artwork `, including the surrounding spaces, and press Enter. Check that the editor closes and the row shows `Saved` and `Review artwork` without the spaces. A fast commit may make `Saving…` too brief to observe; record only what you see.
 3. Close the window normally. Run the desktop command again with the same `$board`; check that the two rows read `Review`, then `Review artwork`. Close the window before rebuilding on Windows.
 
 With normal tools on PATH the activation script needs no configuration. To place large builds on another drive, create ignored `.private/dev.json` with `toolHome` pointing to a directory containing the rustup `rustup/` and `cargo/` homes. It also places `target/` there. An optional `postgresBin` points to the folder containing `pg_ctl.exe`, `initdb.exe` and `psql.exe`.
@@ -111,7 +111,7 @@ The edit gate starts [`kit_edit_fixture`](../crates/mobile-edit-host/examples/ki
 
 ### Cross-client reopen gate
 
-Run `node scripts/cross-client-reopen.mjs` in a graphical Windows session with the Android Kit edit prerequisites above. The gate continues the live edit on the same fixture: it backgrounds and resumes the unsaved `Amber` editor, opens the Windows binary with `--smoke-delivery` and the fixture schema, then force-stops and reopens the Android package. The Windows driver reports the values of the two visible inputs with their bound IDs; `saved` readbacks check the committed titles and revisions separately.
+Run `node scripts/cross-client-reopen.mjs` in a graphical Windows session with the Android Kit edit prerequisites above. The gate continues the live edit on the same fixture: it backgrounds and resumes the unsaved `Amber` editor, opens the Windows binary with `--smoke-delivery` and the fixture schema, then force-stops and reopens the Android package. The Windows driver reports the two visible name button labels with their bound IDs and checks that neither editor is mounted; `saved` readbacks check the committed titles and revisions separately.
 
 ### Disposable PostgreSQL
 

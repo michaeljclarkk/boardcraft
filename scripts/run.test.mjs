@@ -180,3 +180,22 @@ test('08 requires actual delivery and Windows regression; missing activity or wr
   assert.throws(() => checkWindow('', 'board'));
   assert.throws(() => checkWindow('row board 00000000-0000-0000-0000-000000000011 Review sketch\nrow board 00000000-0000-0000-0000-00000000002a Coral','board'));
 });
+
+test('09 requires both enabled Windows journeys and inherits the real Android/Windows delivery gate', () => {
+  const packet = packets.find(p => p.id === '09-windows-name-cell');
+  const cases = ['rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter'];
+  const calls = [];
+  const run = names => verify(packet, (bin, args, capture) => {
+    calls.push(args);
+    if (args.includes('windows_smoke')) {
+      assert.ok(capture && args.includes('--test-threads=1'));
+      return [...names.map(n => `test ${n} ... ok`), `test result: ok. ${names.length} passed; 0 failed; 0 ignored`].join('\n');
+    }
+  });
+  for (const name of cases) assert.throws(() => run([name]), /Missing passing/);
+  calls.length = 0;
+  run(cases);
+  for (const gate of ['scripts/android-kit-frame.mjs', 'scripts/cross-client-reopen.mjs', '--workspace']) {
+    assert.ok(calls.some(args => args.includes(gate)));
+  }
+});

@@ -1,7 +1,6 @@
 use boardcraft_board::{Board, BoardId, Item, RenameError, store};
 use boardcraft_desktop::{Failure, InlineEdit, Phase, database};
 use gpui_kit::component::{
-    Disableable,
     button::Button,
     input::{Input, InputEvent, InputState},
 };
@@ -17,6 +16,15 @@ struct Row {
     cfg: Config,
     edit: InlineEdit,
     input: Entity<InputState>,
+    display_focus: FocusHandle,
+    // Present only while the Input is mounted. Take it before moving focus so
+    // cancellation and Enter cannot be submitted again by the ensuing blur.
+    baseline: Option<String>,
+    // Once a different stored title is observed, only an explicit completion
+    // may retry against it. Moving focus must not overwrite the other writer.
+    conflicted: bool,
+    #[cfg(all(windows, feature = "native-smoke"))]
+    submissions: usize,
     _events: Subscription,
 }
 
@@ -35,11 +43,16 @@ impl Row {
             &input,
             window,
             |this, input, event, window, cx| match event {
-                InputEvent::Change => {
+                InputEvent::Change if this.baseline.is_some() => {
                     this.edit.edit(input.read(cx).value().to_string());
                     cx.notify();
                 }
-                InputEvent::PressEnter { .. } => this.save(window, cx),
+                InputEvent::PressEnter { .. } => this.complete(true, window, cx),
+                InputEvent::Blur
+                    if !this.conflicted && !matches!(this.edit.phase(), Phase::Failed(_)) =>
+                {
+                    this.complete(false, window, cx)
+                }
                 _ => {}
             },
         );
@@ -47,22 +60,59 @@ impl Row {
             cfg,
             edit,
             input,
+            display_focus: cx.focus_handle(),
+            baseline: None,
+            conflicted: false,
+            #[cfg(all(windows, feature = "native-smoke"))]
+            submissions: 0,
             _events: events,
         }
     }
 
-    fn sync_input(&self, window: &mut Window, cx: &mut Context<Self>) {
+    fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.baseline.is_some() || self.edit.phase() == &Phase::Pending {
+            return;
+        }
+        self.baseline = Some(self.edit.accepted().to_owned());
         self.input.update(cx, |input, cx| {
-            input.set_value(self.edit.draft().to_owned(), window, cx)
+            input.set_value(self.edit.draft().to_owned(), window, cx);
+            input.focus(window, cx);
         });
+        cx.notify();
     }
 
-    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.edit.edit(self.input.read(cx).value().to_string());
+    fn discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.baseline = None;
+        self.conflicted = false;
+        self.edit.revert();
+        self.display_focus.focus(window, cx);
+        cx.notify();
+    }
+
+    fn complete(&mut self, return_focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(baseline) = self.baseline.take() else {
+            return;
+        };
+        let raw = self.input.read(cx).value().to_string();
+        self.conflicted = false;
+        if return_focus {
+            self.display_focus.focus(window, cx);
+        }
+        if raw == baseline {
+            self.edit.revert();
+            cx.notify();
+            return;
+        }
+        self.edit.edit(raw);
         let Some(save) = self.edit.submit() else {
+            cx.notify();
             return;
         };
         let cfg = self.cfg.clone();
+        #[cfg(all(windows, feature = "native-smoke"))]
+        {
+            self.submissions += 1;
+        }
         let work = cx
             .background_executor()
             .spawn(async move { save.connect_and_run(&cfg) });
@@ -70,8 +120,10 @@ impl Row {
             let result = work.await;
             _ = row.update_in(cx, |row, window, cx| {
                 row.edit.finish(result);
-                if row.edit.phase() == &Phase::Saved {
-                    row.sync_input(window, cx);
+                if matches!(row.edit.phase(), Phase::Failed(_)) {
+                    row.conflicted =
+                        matches!(row.edit.phase(), Phase::Failed(Failure::Conflict(_)));
+                    row.open(window, cx);
                 }
                 cx.notify();
             });
@@ -84,7 +136,6 @@ impl Row {
 impl Render for Row {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let phase = self.edit.phase();
-        let dirty = matches!(phase, Phase::Editing | Phase::Failed(_));
         let message = match phase {
             Phase::Clean => "",
             Phase::Editing => "Unsaved draft",
@@ -102,13 +153,12 @@ impl Render for Row {
             Phase::Failed(Failure::Database) => "Save failed. Check the connection and retry.",
             Phase::Failed(Failure::Conflict(current)) => {
                 return self.controls(
-                    dirty,
                     format!("Changed elsewhere: {current}. Revert to use it, or retry your draft."),
                     cx,
                 );
             }
         };
-        self.controls(dirty, message.to_owned(), cx)
+        self.controls(message.to_owned(), cx)
     }
 }
 
@@ -118,7 +168,11 @@ impl Row {
         format!("title-{}", item.as_uuid()).into()
     }
 
-    fn controls(&self, dirty: bool, message: String, cx: &mut Context<Self>) -> Div {
+    fn input_id(&self) -> SharedString {
+        format!("editor-{}", self.edit.identity().1.as_uuid()).into()
+    }
+
+    fn controls(&self, message: String, cx: &mut Context<Self>) -> Div {
         div()
             .flex()
             .flex_col()
@@ -128,32 +182,61 @@ impl Row {
                     .flex()
                     .gap_2()
                     .items_center()
-                    .child(
-                        div().flex_1().child(
-                            Input::new(&self.input)
-                                .id(self.title_id())
-                                .disabled(self.edit.phase() == &Phase::Pending),
-                        ),
+                    .when_else(
+                        self.baseline.is_some(),
+                        |line| {
+                            line.capture_action(cx.listener(
+                                |this, _: &component::input::Escape, window, cx| {
+                                    this.discard(window, cx);
+                                    cx.stop_propagation();
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .child(Input::new(&self.input).id(self.input_id())),
+                            )
+                        },
+                        |line| {
+                            line.on_key_down(cx.listener(
+                                |this, event: &KeyDownEvent, window, cx| {
+                                    if event.keystroke.key == "f2"
+                                        && this.display_focus.is_focused(window)
+                                    {
+                                        this.open(window, cx);
+                                        cx.stop_propagation();
+                                    }
+                                },
+                            ))
+                            .child(
+                                Button::new(self.title_id())
+                                    .label(self.edit.accepted().to_owned())
+                                    .track_focus(&self.display_focus)
+                                    .on_click(cx.listener(
+                                        |this, event: &ClickEvent, window, cx| {
+                                            this.display_focus.focus(window, cx);
+                                            if event.click_count() == 2 {
+                                                this.open(window, cx);
+                                            }
+                                        },
+                                    )),
+                            )
+                        },
                     )
-                    .child(
-                        Button::new("save")
-                            .label(if matches!(self.edit.phase(), Phase::Failed(_)) {
-                                "Retry"
-                            } else {
-                                "Save"
-                            })
-                            .disabled(!dirty)
-                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
-                    )
-                    .child(
-                        Button::new("revert")
-                            .label("Revert")
-                            .disabled(!dirty)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.edit.revert();
-                                this.sync_input(window, cx);
-                                cx.notify();
-                            })),
+                    .when(
+                        self.conflicted || matches!(self.edit.phase(), Phase::Failed(_)),
+                        |line| {
+                            line.child(
+                                Button::new("retry").label("Retry").on_click(
+                                    cx.listener(|this, _, w, cx| this.complete(true, w, cx)),
+                                ),
+                            )
+                            .child(
+                                Button::new("revert")
+                                    .label("Revert")
+                                    .on_click(cx.listener(|this, _, w, cx| this.discard(w, cx))),
+                            )
+                        },
                     ),
             )
             .child(component::label::Label::new(message))
@@ -192,7 +275,7 @@ impl Workbench {
                         view.message = if board.items().is_empty() {
                             "Empty board"
                         } else {
-                            "Edit a title and press Enter or Save."
+                            "Double-click a name or focus it and press F2. Enter to finish; Escape to discard."
                         };
                         view.rows = board
                             .items()

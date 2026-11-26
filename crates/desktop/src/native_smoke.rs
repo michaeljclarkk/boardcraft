@@ -1,11 +1,25 @@
-//! Fixed acceptance journey in this process's own, normally presented Kit window.
+//! Fixed journeys in a normally presented Kit window. Only production controls handle input.
 use super::*;
 use gpui_kit::test::{ElementSnapshot, TestEventExt, TestWindowExt};
 
 #[derive(Debug, Copy, Clone)]
 enum Step {
-    Open,
-    Focus,
+    Open(bool),
+    Focus(bool),
+    Editor(bool),
+    CancelDraft,
+    Cancelled,
+    UnchangedEditor,
+    Skipped,
+    BlurEditor,
+    BlurDraft,
+    Blurred,
+    PaddedEditor,
+    PaddedDraft,
+    Normalized,
+    EnterEditor,
+    EnterDraft,
+    Entered,
     Blank,
     Rejected,
     Corrected,
@@ -17,7 +31,8 @@ enum Step {
 
 pub(super) fn install(window: AnyWindowHandle, board: Entity<Workbench>, cx: &mut App) {
     let step = match std::env::args().nth(2).as_deref() {
-        Some("--smoke-edit") => Step::Open,
+        Some("--smoke-edit") => Step::Open(false),
+        Some("--smoke-cell") => Step::Open(true),
         Some("--smoke-reopen") => Step::Reopen,
         Some("--smoke-delivery") => Step::Delivery,
         _ => return,
@@ -40,108 +55,200 @@ fn message(w: &Window, expected: &str) -> bool {
         .any(|t| t.visible() && t.text() == expected)
 }
 
+// The parent acknowledges only after its independent read. No later UI event
+// can race that assertion. Its timeout also bounds a stalled window.
+fn checkpoint(name: &str) {
+    println!("check {name}");
+    let mut reply = String::new();
+    std::io::stdin().read_line(&mut reply).unwrap();
+    assert_eq!(reply.trim_end(), "ok");
+}
+
+fn replace(text: &str, w: &mut Window, cx: &mut App) {
+    w.press("ctrl-a", cx);
+    w.input(text, cx);
+}
+
+fn editor(control: &ElementSnapshot, value: &str) {
+    assert_eq!(control.value(), Some(value));
+    assert_eq!(control.focused(), Some(true));
+}
+
 fn schedule(step: Step, board: Entity<Workbench>, w: &Window) {
     w.on_next_frame(move |w, cx| {
         let view = board.read(cx);
         assert!(!view.failed, "{}", view.message);
-        // Read the previous completed native frame. Never set an input, phase or focus.
-        let rows = &view.rows;
-        if rows.is_empty() {
+        if view.rows.is_empty() {
             return schedule(step, board, w);
         }
-        assert_eq!(rows.len(), 2);
-        let titles: Vec<_> = rows
-            .iter()
-            .flat_map(|row| {
-                let hits = w.find_all(row.read(cx).title_id());
-                assert!(hits.len() <= 1, "duplicate title control");
-                hits
-            })
-            .collect();
-        let [first, second] = &titles[..] else {
-            assert!(titles.is_empty(), "expected both title controls");
+        let [first_row, second_row] = &view.rows[..] else {
+            panic!("expected two rows")
+        };
+        let first_row = first_row.read(cx);
+        let row = second_row.read(cx);
+        let first_hits = w.find_all(first_row.title_id());
+        if first_hits.is_empty() {
             return schedule(step, board, w);
+        }
+        assert_eq!(first_hits.len(), 1);
+        let first = &first_hits[0];
+        assert!(w.find_all(first_row.input_id()).is_empty());
+        let displays = w.find_all(row.title_id());
+        let editors = w.find_all(row.input_id());
+        let second = match (&displays[..], &editors[..]) {
+            ([display], []) => display,
+            ([], [editor]) => editor,
+            _ => panic!("expected one mounted second name control at {step:?}"),
         };
         assert!(
             first.visible() && second.visible() && first.bounds().bottom() <= second.bounds().top()
         );
-        if matches!(step, Step::Delivery) {
-            for (row, control) in rows.iter().zip(&titles) {
-                let edit = &row.read(cx).edit;
-                let (board_id, item_id) = edit.identity();
-                assert_eq!(board_id, view.board);
-                assert_eq!(edit.phase(), &Phase::Clean);
-                let value = control.value().expect("title input value");
-                assert_eq!(value, edit.accepted());
-                assert_eq!(value, edit.draft());
-                println!("row {} {} {value}", board_id.as_uuid(), item_id.as_uuid());
+        assert_eq!(first_row.edit.phase(), &Phase::Clean);
+        for (r, control) in [(first_row, first), (row, second)] {
+            let (id, item) = r.edit.identity();
+            assert_eq!(id, view.board);
+            if matches!(step, Step::Open(_) | Step::Reopen | Step::Delivery) {
+                assert!(editors.is_empty());
+                assert_eq!(r.edit.phase(), &Phase::Clean);
+                let label = control.label().expect("name display label");
+                assert_eq!(label, r.edit.accepted());
+                println!("row {} {} {label}", id.as_uuid(), item.as_uuid());
             }
+        }
+        if matches!(step, Step::Delivery) {
             w.remove_window();
             return;
         }
-        assert_eq!(first.value(), Some("Review"));
-        assert_eq!(rows[0].read(cx).edit.phase(), &Phase::Clean);
-        let row = rows[1].read(cx);
+        assert_eq!(first.label(), Some("Review"));
         let next = match step {
-            Step::Open => {
-                assert_eq!(second.value(), Some("Review"));
+            Step::Open(cell) => {
+                assert_eq!(second.label(), Some("Review"));
                 click(second, w, cx);
-                Step::Focus
+                Step::Focus(cell)
             }
-            Step::Focus => {
+            Step::Focus(cell) => {
+                assert_eq!(second.label(), Some("Review"));
                 assert_eq!(second.focused(), Some(true));
-                w.press("ctrl-a", cx);
-                w.input("   ", cx);
-                Step::Blank
+                w.double_click(row.title_id(), cx);
+                Step::Editor(cell)
+            }
+            Step::Editor(cell) => {
+                editor(second, "Review");
+                replace(if cell { "Discard me" } else { "   " }, w, cx);
+                if cell { Step::CancelDraft } else { Step::Blank }
+            }
+            Step::CancelDraft => {
+                editor(second, "Discard me");
+                w.press("escape", cx);
+                Step::Cancelled
+            }
+            Step::Cancelled | Step::Skipped => {
+                assert_eq!(second.label(), Some("Review"));
+                assert_eq!(second.focused(), Some(true));
+                assert_eq!(row.submissions, 0);
+                assert_eq!(row.edit.phase(), &Phase::Clean);
+                let cancelled = matches!(step, Step::Cancelled);
+                checkpoint(if cancelled { "cancelled" } else { "unchanged" });
+                w.press("f2", cx);
+                if cancelled {
+                    Step::UnchangedEditor
+                } else {
+                    Step::BlurEditor
+                }
+            }
+            Step::UnchangedEditor => {
+                editor(second, "Review");
+                w.press("enter", cx);
+                Step::Skipped
+            }
+            Step::BlurEditor => {
+                editor(second, "Review");
+                replace(" Coral ", w, cx);
+                Step::BlurDraft
+            }
+            Step::BlurDraft => {
+                editor(second, " Coral ");
+                click(first, w, cx);
+                Step::Blurred
+            }
+            Step::Blurred if message(w, "Saved") => {
+                assert_eq!(second.label(), Some("Coral"));
+                assert_eq!(first.focused(), Some(true));
+                assert_eq!(row.submissions, 1);
+                checkpoint("blurred");
+                w.double_click(row.title_id(), cx);
+                Step::PaddedEditor
+            }
+            Step::PaddedEditor => {
+                editor(second, "Coral");
+                replace(" Coral ", w, cx);
+                Step::PaddedDraft
+            }
+            Step::PaddedDraft => {
+                editor(second, " Coral ");
+                w.press("enter", cx);
+                Step::Normalized
+            }
+            Step::Normalized if message(w, "Saved") => {
+                assert_eq!(second.label(), Some("Coral"));
+                assert_eq!(row.submissions, 2);
+                checkpoint("normalized");
+                w.press("f2", cx);
+                Step::EnterEditor
+            }
+            Step::EnterEditor => {
+                editor(second, "Coral");
+                replace("Review artwork", w, cx);
+                Step::EnterDraft
+            }
+            Step::EnterDraft => {
+                editor(second, "Review artwork");
+                w.press("enter", cx);
+                Step::Entered
+            }
+            Step::Entered if message(w, "Saved") => {
+                assert_eq!(second.label(), Some("Review artwork"));
+                assert_eq!(second.focused(), Some(true));
+                assert_eq!(row.submissions, 3);
+                checkpoint("entered");
+                w.remove_window();
+                return;
             }
             Step::Blank => {
-                assert_eq!(second.value(), Some("   "));
-                assert_eq!(row.edit.draft(), "   ");
+                editor(second, "   ");
                 w.press("enter", cx);
                 Step::Rejected
             }
             Step::Rejected if message(w, "Not saved: enter a title.") => {
-                assert_eq!(
-                    row.edit.phase(),
-                    &Phase::Failed(Failure::Rejected(RenameError::BlankTitle))
-                );
-                assert_eq!(row.edit.accepted(), "Review");
+                editor(second, "   ");
                 assert_eq!(row.edit.draft(), "   ");
-                assert_eq!(second.value(), Some("   "));
-                assert_eq!(second.focused(), Some(true));
-                assert_eq!(w.find_all("save")[1].label(), Some("Retry"));
-                println!("blank rejected; exact draft and focus retained");
-                w.press("ctrl-a", cx);
-                w.input(" Review artwork ", cx);
+                assert_eq!(w.find("retry").label(), Some("Retry"));
+                checkpoint("rejected");
+                replace(" Review artwork ", w, cx);
                 Step::Corrected
             }
-            Step::Corrected if message(w, "Unsaved draft") => {
-                assert_eq!(second.value(), Some(" Review artwork "));
-                let save = &w.find_all("save")[1];
-                assert_eq!(save.label(), Some("Save"));
-                click(save, w, cx);
+            Step::Corrected => {
+                editor(second, " Review artwork ");
+                click(first, w, cx);
                 Step::Pending
             }
             Step::Pending if message(w, "Saving…") => {
                 assert_eq!(row.edit.phase(), &Phase::Pending);
-                assert_eq!(row.edit.accepted(), "Review");
-                assert_eq!(w.find_all("save")[1].disabled(), Some(true));
-                // The test parent releases its row lock only after this frame.
-                println!("pending frame");
+                assert_eq!(second.label(), Some("Review"));
+                checkpoint("pending");
                 Step::Saved
             }
             Step::Saved if message(w, "Saved") => {
-                assert_eq!(row.edit.phase(), &Phase::Saved);
-                assert_eq!(row.edit.accepted(), "Review artwork");
-                assert_eq!(second.value(), Some("Review artwork"));
-                println!("saved frame; closing");
+                assert_eq!(second.label(), Some("Review artwork"));
+                assert_eq!(first.focused(), Some(true));
+                assert_eq!(row.submissions, 2);
+                checkpoint("saved");
                 w.remove_window();
                 return;
             }
             Step::Reopen => {
-                assert_eq!(second.value(), Some("Review artwork"));
-                assert_eq!(row.edit.phase(), &Phase::Clean);
-                println!("reopened ordered titles; closing");
+                assert_eq!(second.label(), Some("Review artwork"));
+                checkpoint("reopened");
                 w.remove_window();
                 return;
             }

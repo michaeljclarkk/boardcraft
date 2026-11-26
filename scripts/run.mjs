@@ -14,6 +14,8 @@ export const packets = [
   { id: '06-android-kit-frame', database: true, kitFrame: true },
   { id: '07-android-kit-edit', database: true, kitFrame: true, kitEdit: true },
   { id: '08-cross-client-reopen', database: true, kitFrame: true, kitEdit: true, delivery: true },
+  { id: '09-windows-name-cell', database: true, kitFrame: true, kitEdit: true, delivery: true,
+    windowsCases: ['rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -45,7 +47,7 @@ export function requireKitEmulator(exec = command, env = process.env) {
   requireEditEmulator(exec, env.RUSTDAY_ANDROID_SERIAL ?? '');
 }
 
-export function verify({ target, buildBins, cases = [], android, kitFrame, kitEdit, delivery }, exec = command) {
+export function verify({ target, buildBins, cases = [], android, kitFrame, kitEdit, delivery, windowsCases }, exec = command) {
   exec('cargo', ['fmt', '--all', '--', '--check']);
   if (kitFrame) {
     exec('cargo', ['fmt', '--manifest-path', 'android/Cargo.toml', '--', '--check']);
@@ -54,7 +56,13 @@ export function verify({ target, buildBins, cases = [], android, kitFrame, kitEd
       exec('node', ['--test', 'scripts/run.test.mjs']);
       // The delivery gate drives every 07 step before continuing on the same fixture.
       exec('node', [delivery ? 'scripts/cross-client-reopen.mjs' : 'scripts/android-kit-edit.mjs']);
-      if (delivery) exec('cargo', ['test', '--locked', '-p', 'boardcraft-desktop', '--features', 'native-smoke', '--test', 'windows_smoke']);
+      if (delivery) {
+        const args = ['test', '--locked', '-p', 'boardcraft-desktop', '--features', 'native-smoke', '--test', 'windows_smoke'];
+        if (windowsCases) {
+          const output = exec('cargo', [...args, '--', '--test-threads=1'], true);
+          requireCases('windows_smoke', windowsCases, output);
+        } else exec('cargo', args);
+      }
     }
     exec('cargo', ['test', '--locked', '--workspace']);
     return;
@@ -66,13 +74,17 @@ export function verify({ target, buildBins, cases = [], android, kitFrame, kitEd
   const output = android
     ? exec('cargo', ['test', '--locked', '-p', 'boardcraft-mobile-edit-host', '--features', 'android-smoke', '--test', target, '--', '--test-threads=1'], true, 10 * 60_000)
     : exec('cargo', ['test', '--locked', '--workspace', '--test', target], true);
+  requireCases(target, cases, output);
+  exec('cargo', ['test', '--locked', '--workspace']);
+  if (buildBins) exec('cargo', ['build', '--locked', '--workspace', '--bins']);
+}
+
+function requireCases(target, cases, output) {
   if (!/test result: ok\. [1-9]\d* passed; 0 failed; 0 ignored/.test(output)) throw Error(`No passing, enabled ${target} suite`);
   const lines = output.split(/\r?\n/);
   for (const name of cases) {
     if (!lines.includes(`test ${name} ... ok`)) throw Error(`Missing passing ${target} case: ${name}`);
   }
-  exec('cargo', ['test', '--locked', '--workspace']);
-  if (buildBins) exec('cargo', ['build', '--locked', '--workspace', '--bins']);
 }
 
 export function validLimit(count) {
