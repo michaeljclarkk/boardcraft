@@ -1,0 +1,13 @@
+{
+  "status": "ready",
+  "summary": "Tapping Review artwork on the dedicated Android emulator opened the second item's Kit Input with its original title. Review sketch remained a button. This fixture stops at editor presentation; typing, save/retry, keyboard dismissal, Back, resume/recreation and same-board Windows window readback remain open.",
+  "evidence": [
+    "Operator ran node scripts/android-kit-frame.mjs after the APK staging fix. The gate installed a fresh signed x86_64 debug APK (dev.boardcraft.kitfixture) on Rustday_Edit_X64 and launched android.app.NativeActivity. The operator observed the Android Emulator OpenGL ES Translator (Gl).",
+    "Operator gate, before touch: foreground OCR read Sample board / Review sketch / Review artwork, with no editor heading. After a tap at the recognized Review artwork position, foreground OCR read Sample board / Review sketch / Editing name / Review artwork. Cleanup uninstalled the fixture and confirmed its absence.",
+    "Source review: android/src/lib.rs mounts one Kit Root. Each Button captures its item ID from scripts/fixtures/android-kit-board.json. BoardView::open_editor looks up that ID and copies its title into InputState; only the matching row renders Input instead of Button. Opening requests no IME, changes neither title and performs no save or network call.",
+    "Reviewed android/build-debug.ps1: it cross-builds the locked library, stages beside the requested output, signs and verifies the APK, and performs no device operations. cargo build --locked --manifest-path android/Cargo.toml --lib --target x86_64-linux-android passed in this review. Android uses Kit 0.8.1 with the mobile host at 7548ebc; desktop remains on Kit 0.11.0.",
+    "Fresh checks: cargo fmt --all -- --check, cargo fmt --manifest-path android/Cargo.toml -- --check and cargo clippy --locked --workspace --all-targets -- -D warnings passed. cargo test --locked --workspace passed all eight portable integration cases, including the disposable PostgreSQL checks.",
+    "Operator ran node --test scripts/run.test.mjs: all nine tests passed. This review used the operator's live gate result; the worker shell did not permit a fresh Node regression run."
+  ],
+  "next": "Let the runner independently verify 06-android-kit-frame on Rustday_Edit_X64."
+}

@@ -50,6 +50,19 @@ Direct test invocation must also check the explicit emulator serial, exact AVD n
 
 This proves Android process execution and persisted cross-client data, not an Android app. Next native milestone: render a real Kit input in a compatible Android activity, then exercise correction, keyboard/Back, background/resume and same-board Windows **window** readback. Leave those workflows open.
 
+### 06-android-kit-frame
+
+Open a synthetic board in an x86_64 **debug APK** and tap the second item's name to enter edit mode. This packet stops at the first visible Kit name input. Start with the [tested Android activity and renderer](docs/development.md#android-kit-frame-gate); keep desktop's tested Kit version. Use a separate locked Android Cargo workspace, stock Kit controls, and only the [synthetic fixture](scripts/fixtures/android-kit-board.json). Mount one Kit `Root`; bind controls to stable item IDs, not labels. No network, database write or save action in this fixture.
+
+Gate: `node scripts/android-kit-frame.mjs`. The worker supplies the build-only `android/build-debug.ps1 -OutputApk <path>` and native app. Package ID: `dev.boardcraft.kitfixture`. The gate installs the fresh package on the dedicated AVD, reads Android's composited screen and sends a touch at the second title's observed position. Render these separately legible lines, top to bottom:
+
+- Before touch: `Sample board`, `Review sketch`, `Review artwork`. No editor heading. Make the names actual tappable Kit row controls.
+- After touching `Review artwork`: `Sample board`, `Review sketch`, `Editing name`, `Review artwork`. The last value must now belong to the second row's **Kit Input**, initialized from its title. Do not render a duplicate label in place of its value. The sibling remains a display control. Opening the editor does not change either stored title. Do not request the IME on initial presentation for this gate.
+
+A blank/splash screen, wrong activity, wrong row, stale board frame, failed build/launch or missing expected text fails. Source review checks the Root/control types and ID binding; a screenshot alone cannot identify a widget's implementation. No Java/Web UI, offscreen render, PNG assets standing in for text, test-mode event injection or log breadcrumbs as acceptance. Use a debug fixture package independent of any installed client. The operator gate owns device mutations and cleanup; never install or run adb in the build script. Also run workspace checks (the portable tests need `rustday_test`). Record the two observed frames, renderer and interaction in the handoff; keep captures and keys out of Git.
+
+Next: connect the Kit draft to the verified `EditClient`, show blank rejection without losing the draft, then accept a correction. Gate keyboard dismissal/Back, activity resume/recreation and the same-board Windows **window** separately. A first visible control closes none of those workflows.
+
 ## Delivery phases after the first slice
 
 Each row is a group of independently testable packets. For each area, inventory the user actions, persisted settings, contracts and supported clients **before** estimating it. Add newly identified behavior to the register even if it falls between phases. The exit scenarios below are representative gates, not the entire inventory.

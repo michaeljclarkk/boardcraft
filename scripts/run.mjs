@@ -11,6 +11,7 @@ export const packets = [
     cases: ['rename_then_reconnect', 'reject_then_retry'] },
   { id: '05-android-emulator-edit', target: 'android_emulator_edit', database: true, android: true,
     cases: ['emulator_rename_then_reopen', 'emulator_reject_then_correct'] },
+  { id: '06-android-kit-frame', database: true, kitFrame: true },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -33,8 +34,23 @@ export function requireEditEmulator(exec = command, serial = process.env.RUSTDAY
   if (adb('shell', 'getprop', 'ro.product.cpu.abi') !== 'x86_64') throw Error('Expected x86_64 Android');
 }
 
-export function verify({ target, buildBins, cases = [], android }, exec = command) {
+export function requireKitEmulator(exec = command, env = process.env) {
+  const port = env.ANDROID_ADB_SERVER_PORT;
+  if (!/^[1-9]\d{0,4}$/.test(port ?? '') || Number(port) > 65535 || port === '5037' ||
+      env.ADB_SERVER_SOCKET !== `tcp:${port}` || env.ADB_USB !== '0' || env.ADB_EMU !== '0') {
+    throw Error('Expected private loopback adb server with discovery disabled');
+  }
+  requireEditEmulator(exec, env.RUSTDAY_ANDROID_SERIAL ?? '');
+}
+
+export function verify({ target, buildBins, cases = [], android, kitFrame }, exec = command) {
   exec('cargo', ['fmt', '--all', '--', '--check']);
+  if (kitFrame) {
+    exec('cargo', ['fmt', '--manifest-path', 'android/Cargo.toml', '--', '--check']);
+    exec('node', ['scripts/android-kit-frame.mjs']);
+    exec('cargo', ['test', '--locked', '--workspace']);
+    return;
+  }
   if (android) {
     requireEditEmulator(exec);
     exec('cargo', ['build', '--locked', '-p', 'boardcraft-mobile-edit-client', '--bin', 'android-edit-probe', '--target', 'x86_64-linux-android']);
@@ -98,9 +114,10 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
       const cli = process.env.OPENCODE_BIN || 'opencode';
       command('cargo', ['--version']);
       command(cli, ['--version']);
-      runQueue(Number(count), ({ id, database, android }, state) => {
+      runQueue(Number(count), ({ id, database, android, kitFrame }, state) => {
         if (database && !process.env.RUSTDAY_TEST_DATABASE_URL) throw Error('Set RUSTDAY_TEST_DATABASE_URL to the disposable boardcraft DB.');
         if (android) requireEditEmulator();
+        if (kitFrame) requireKitEmulator();
         command(cli, ['run', '--standalone', '--agent', 'build', '--title', `boardcraft ${id}`, `Complete only ${id} from ROADMAP.md. Read AGENTS.md, prior handoffs and any ${state}/${id}.previous.json. Inspect existing edits before continuing. Write handoffs/${id}.json and stop.`]);
       }, verify);
     } else throw Error(`Usage: node scripts/run.mjs status | run <1-${packets.length}>`);

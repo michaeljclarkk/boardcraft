@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+
+[package]
+name = "boardcraft-kit-fixture"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+gpui-kit = { version = "=0.8.1", default-features = false, features = ["component"] }
+gpui-mobile = { package = "gpui-pre-mobile", git = "https://github.com/longbridge/gpui-mobile", rev = "7548ebc4b24f00494af9976af8852c7163ded9ce", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.dev]
+debug = 0
+
+[profile.dev.package.wgpu-types]
+debug-assertions = false

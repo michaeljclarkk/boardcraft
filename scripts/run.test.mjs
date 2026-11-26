@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { packets, requireEditEmulator, runQueue, validLimit, verify } from './run.mjs';
+import { packets, requireEditEmulator, requireKitEmulator, runQueue, validLimit, verify } from './run.mjs';
+import { matchBoard } from './android-kit-frame.mjs';
 
 test('resume skips verified work; a stale handoff or failed gate cannot advance the queue', () => {
   const cwd = process.cwd(), dir = mkdtempSync(join(tmpdir(), 'boardcraft-'));
@@ -95,7 +96,7 @@ test('emulator preflight fails closed before any device mutation', () => {
 });
 
 test('05 cross-builds the device binary and requires both enabled real-suite cases before workspace checks', t => {
-  const packet = packets.at(-1);
+  const packet = packets.find(p => p.id === '05-android-emulator-edit');
   assert.equal(packet.id, '05-android-emulator-edit');
   assert.equal(packet.database, true);
   const prior = process.env.RUSTDAY_ANDROID_SERIAL;
@@ -123,4 +124,32 @@ test('05 cross-builds the device binary and requires both enabled real-suite cas
     'cargo build --locked -p boardcraft-mobile-edit-client --bin android-edit-probe --target x86_64-linux-android',
     'cargo test --locked -p boardcraft-mobile-edit-host --features android-smoke --test android_emulator_edit -- --test-threads=1',
     'cargo test --locked --workspace']);
+});
+
+test('06 rejects shared/remote servers and requires the dedicated AVD', () => {
+  const env = { ANDROID_ADB_SERVER_PORT: '5039', ADB_SERVER_SOCKET: 'tcp:5039', ADB_USB: '0', ADB_EMU: '0', RUSTDAY_ANDROID_SERIAL: 'emulator-5682' };
+  for (const change of [{ ADB_SERVER_SOCKET: 'tcp:remote:5039' }, { ANDROID_ADB_SERVER_PORT: '5037', ADB_SERVER_SOCKET: 'tcp:5037' }, { ADB_USB: '1' }]) {
+    assert.throws(() => requireKitEmulator(assert.fail, { ...env, ...change }), /private loopback/);
+  }
+  assert.throws(() => requireKitEmulator(() => 'another', env), /Expected Rustday_Edit_X64/);
+});
+
+test('06 requires the frame gate, not the process probe or just a successful build', () => {
+  const p = packets.at(-1);
+  assert.equal(p.id, '06-android-kit-frame');
+  const calls = [];
+  verify(p, (bin, args) => calls.push([bin, ...args].join(' ')));
+  assert.deepEqual(calls, ['cargo fmt --all -- --check', 'cargo fmt --manifest-path android/Cargo.toml -- --check', 'node scripts/android-kit-frame.mjs', 'cargo test --locked --workspace']);
+  assert.throws(() => verify(p, bin => { if (bin === 'node') throw Error('missing editor frame'); }), /missing editor frame/);
+});
+
+test('ordered OCR frames distinguish an editor from a stale, blank or unrelated screen', () => {
+  const frame = ['Sample board', 'Review sketch', 'Editing name', 'Review artwork'].map((text, i) => ({ text, x: 64, y: 80 + 80*i }));
+  const board = frame.filter(l => l.text !== 'Editing name');
+  assert.deepEqual(matchBoard(board, false), frame[3]);
+  assert.deepEqual(matchBoard(frame, true), frame[3]);
+  for (const wrong of [[], board, frame.slice(1), [...frame, frame[1]], [...frame.slice(0,3), { ...frame[3], y: 20 }]]) {
+    assert.equal(matchBoard(wrong, true), undefined);
+  }
+  assert.equal(matchBoard(frame, false), undefined);
 });
