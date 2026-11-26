@@ -30,57 +30,69 @@ fn save_failure_and_retry_at_the_row_boundary() {
     store::create_board(&mut db, &expected).unwrap();
     let mut row = InlineEdit::new(board, reload(board).items()[1].clone());
 
-    row.edit(" Review artwork  ".into());
-    let save = row.submit().unwrap();
+    let save = row.submit(" Review artwork  ".into()).unwrap();
     assert_eq!(row.phase(), &Phase::Pending);
     assert_eq!(row.accepted(), "Review");
-    assert!(row.submit().is_none());
-    row.revert();
-    assert_eq!(row.draft(), " Review artwork  ");
+    assert!(row.submit("unrelated".into()).is_none());
+    row.dismiss();
+    assert_eq!(row.display(), " Review artwork  ");
     row.finish(save.run(&mut db));
     assert_eq!(row.phase(), &Phase::Saved);
-    assert_eq!(row.draft(), "Review artwork");
+    assert_eq!(row.display(), "Review artwork");
     expected.rename_item(second, "Review artwork").unwrap();
     assert_eq!(reload(board), expected);
 
     db.batch_execute("ALTER TABLE board_items ADD CONSTRAINT distinct_titles UNIQUE (board_id, title) DEFERRABLE INITIALLY DEFERRED").unwrap();
-    row.edit(" Review ".into());
-    let save = row.submit().unwrap();
+    let save = row.submit(" Review ".into()).unwrap();
     row.finish(save.run(&mut db));
     assert_eq!(row.phase(), &Phase::Failed(Failure::Database));
-    assert_eq!(row.draft(), " Review ");
+    assert_eq!(row.request(), Some(" Review "));
     assert_eq!(row.accepted(), "Review artwork");
     assert_eq!(reload(board), expected);
 
     db.batch_execute("ALTER TABLE board_items DROP CONSTRAINT distinct_titles")
         .unwrap();
-    let retry = row.submit().unwrap();
+    let retry = row.retry().unwrap();
     row.finish(retry.run(&mut db));
     assert_eq!(row.phase(), &Phase::Saved);
     expected.rename_item(second, "Review").unwrap();
     assert_eq!(reload(board), expected);
 
-    row.edit("  ".into());
-    let blank = row.submit().unwrap();
+    let blank = row.submit("  ".into()).unwrap();
     row.finish(blank.run(&mut db));
     assert_eq!(
         row.phase(),
         &Phase::Failed(Failure::Rejected(RenameError::BlankTitle))
     );
-    assert_eq!(row.draft(), "  ");
+    assert_eq!(row.request(), Some("  "));
 
     store::rename_item(&mut db, board, second, "Newer title").unwrap();
-    row.edit("Stale edit".into());
-    let stale = row.submit().unwrap();
+    let stale = row.retry().unwrap();
     row.finish(stale.run(&mut db));
     assert_eq!(
         row.phase(),
         &Phase::Failed(Failure::Conflict("Newer title".into()))
     );
-    assert_eq!(row.draft(), "Stale edit");
-    row.revert();
-    assert_eq!(row.draft(), "Newer title");
+    assert_eq!(row.request(), Some("  "));
+    row.dismiss();
+    assert_eq!(row.display(), "Newer title");
+    assert!(row.retry().is_none());
     expected.rename_item(second, "Newer title").unwrap();
+    assert_eq!(reload(board), expected);
+
+    store::rename_item(&mut db, board, second, "Changed again").unwrap();
+    let stale = row.submit(" My edit ".into()).unwrap();
+    row.finish(stale.run(&mut db));
+    assert_eq!(
+        row.phase(),
+        &Phase::Failed(Failure::Conflict("Changed again".into()))
+    );
+    expected.rename_item(second, "Changed again").unwrap();
+    assert_eq!(reload(board), expected);
+    let retry = row.retry().unwrap();
+    row.finish(retry.run(&mut db));
+    assert_eq!(row.phase(), &Phase::Saved);
+    expected.rename_item(second, "My edit").unwrap();
     assert_eq!(reload(board), expected);
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
         .unwrap();

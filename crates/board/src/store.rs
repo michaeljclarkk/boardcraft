@@ -97,6 +97,30 @@ pub enum SaveError {
     Database(Error),
 }
 
+/// Re-read just the name targeted by a user-requested retry.
+pub fn current_title(
+    client: &mut Client,
+    board: BoardId,
+    item: ItemId,
+) -> Result<String, SaveError> {
+    client
+        .query_opt(
+            "SELECT title FROM board_items WHERE board_id=$1 AND id=$2",
+            &[&board.0, &item.0],
+        )
+        .and_then(|row| row.map(|r| r.try_get(0)).transpose())
+        .map_err(|error| {
+            log::error!(
+                "current_title board={} item={} sqlstate={:?}",
+                board.0,
+                item.0,
+                error.code()
+            );
+            SaveError::Database(error)
+        })?
+        .ok_or(SaveError::Rejected(RenameError::MissingItem(item)))
+}
+
 pub fn rename_item(
     client: &mut Client,
     board: BoardId,

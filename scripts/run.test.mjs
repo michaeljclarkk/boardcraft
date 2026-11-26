@@ -199,3 +199,18 @@ test('09 requires both enabled Windows journeys and inherits the real Android/Wi
     assert.ok(calls.some(args => args.includes(gate)));
   }
 });
+
+test('10 requires parent recovery, both Windows regressions, same-board delivery and the binary build', () => {
+  const packet = packets.find(p => p.id === '10-windows-name-recovery');
+  const cases = [...packets.find(p => p.id === '09-windows-name-cell').windowsCases, 'parent_failure_retry_dismiss_and_commit'];
+  const calls = [];
+  const run = names => verify(packet, (bin, args) => {
+    calls.push([bin, ...args].join(' '));
+    return [...names.map(n => `test ${n} ... ok`), `test result: ok. ${names.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  for (const name of cases) assert.throws(() => run(cases.filter(n => n !== name)), /Missing passing windows_smoke case/);
+  calls.length = 0;
+  run(cases);
+  for (const gate of ['node scripts/android-kit-frame.mjs', 'node scripts/cross-client-reopen.mjs',
+    'cargo test --locked --workspace', 'cargo build --locked --workspace --bins']) assert.ok(calls.includes(gate));
+});

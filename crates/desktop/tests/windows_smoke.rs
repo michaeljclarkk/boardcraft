@@ -3,7 +3,7 @@
 
 use boardcraft_board::{Board, BoardId, ItemId, store};
 use boardcraft_desktop::database;
-use postgres::NoTls;
+use postgres::{Config, NoTls};
 use std::{
     io::{BufRead, BufReader, Write},
     process::{Child, Command, Stdio},
@@ -22,12 +22,13 @@ impl Drop for SmokeProcess {
     }
 }
 
-fn exercise(fixture: &Board, mode: &str, checks: &[&str], mut check: impl FnMut(&str)) {
-    let board = fixture.id();
+fn exercise(fixture: &Fixture, mode: &str, checks: &[&str], mut check: impl FnMut(&str)) {
+    let board = fixture.board.id();
     let mut child = SmokeProcess(
         Command::new(env!("CARGO_BIN_EXE_boardcraft-desktop"))
             .arg(board.as_uuid().to_string())
             .arg(mode)
+            .env("RUSTDAY_TEST_DATABASE_URL", &fixture.url)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -50,7 +51,7 @@ fn exercise(fixture: &Board, mode: &str, checks: &[&str], mut check: impl FnMut(
             Ok(line) => {
                 println!("{mode}: {line}");
                 if line.starts_with("row ") {
-                    let item = &fixture.items()[presented];
+                    let item = &fixture.board.items()[presented];
                     let label = if mode == "--smoke-reopen" && presented == 1 {
                         "Review artwork"
                     } else {
@@ -84,23 +85,54 @@ fn exercise(fixture: &Board, mode: &str, checks: &[&str], mut check: impl FnMut(
     }
 }
 
-fn fixture() -> Board {
-    let cfg = database().unwrap();
-    let mut db = cfg.connect(NoTls).unwrap();
+struct Fixture {
+    schema: String,
+    url: String,
+    cfg: Config,
+    board: Board,
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if let Ok(mut db) = self.cfg.connect(NoTls) {
+            db.batch_execute(&format!("DROP SCHEMA {} CASCADE", self.schema))
+                .expect("drop smoke schema");
+        }
+    }
+}
+
+fn fixture() -> Fixture {
+    let mut db = database().unwrap().connect(NoTls).unwrap();
+    let schema = format!("windows_test_{}", Uuid::new_v4().simple());
+    let base = std::env::var("RUSTDAY_TEST_DATABASE_URL").unwrap();
+    let separator = if base.contains('?') { '&' } else { '?' };
+    let url =
+        format!("{base}{separator}options=-csearch_path%3D{schema}%20-cstatement_timeout%3D15000");
+    let cfg: Config = url.parse().expect("scoped database URL");
+    db.batch_execute(&format!(
+        "CREATE SCHEMA {schema}; SET search_path TO {schema}"
+    ))
+    .unwrap();
     store::migrate(&mut db).unwrap();
     let id = BoardId::new(Uuid::new_v4()).unwrap();
-    let second = ItemId::new(Uuid::new_v4()).unwrap();
+    let second = ItemId::new(Uuid::from_u128(17)).unwrap();
     let mut expected = Board::new(id);
     expected
-        .add_item(ItemId::new(Uuid::new_v4()).unwrap(), "Review")
+        .add_item(ItemId::new(Uuid::from_u128(42)).unwrap(), "Review")
         .unwrap();
     expected.add_item(second, "Review").unwrap();
     store::create_board(&mut db, &expected).unwrap();
-    expected
+    Fixture {
+        schema,
+        url,
+        cfg,
+        board: expected,
+    }
 }
 
-fn readback(board: &Board, title: &str, revision: i64) {
-    let mut fresh = database().unwrap().connect(NoTls).unwrap();
+fn readback(fixture: &Fixture, title: &str, revision: i64) {
+    let board = &fixture.board;
+    let mut fresh = fixture.cfg.connect(NoTls).unwrap();
     let rows = store::load_items(&mut fresh, board.id()).unwrap().unwrap();
     let actual: Vec<_> = rows
         .iter()
@@ -118,9 +150,9 @@ fn readback(board: &Board, title: &str, revision: i64) {
 #[test]
 fn rejected_edit_then_save_close_and_reopen() {
     let expected = fixture();
-    let id = expected.id();
-    let second = expected.items()[1].id;
-    let mut db = database().unwrap().connect(NoTls).unwrap();
+    let id = expected.board.id();
+    let second = expected.board.items()[1].id;
+    let mut db = expected.cfg.connect(NoTls).unwrap();
     let mut tx = db.transaction().unwrap();
     tx.query_one(
         "SELECT id FROM board_items WHERE board_id=$1 AND id=$2 FOR UPDATE",
@@ -147,7 +179,6 @@ fn rejected_edit_then_save_close_and_reopen() {
     exercise(&expected, "--smoke-reopen", &["reopened"], |_| {
         readback(&expected, "Review artwork", 2)
     });
-    cleanup(id);
 }
 
 #[test]
@@ -164,20 +195,44 @@ fn display_edit_cancel_blur_and_enter() {
             _ => unreachable!(),
         },
     );
-    cleanup(expected.id());
 }
 
-fn cleanup(id: BoardId) {
-    let mut fresh = database().unwrap().connect(NoTls).unwrap();
-    let mut cleanup = fresh.transaction().unwrap();
-    cleanup
-        .execute(
-            "DELETE FROM board_items WHERE board_id=$1",
-            &[&id.as_uuid()],
-        )
-        .unwrap();
-    cleanup
-        .execute("DELETE FROM boards WHERE id=$1", &[&id.as_uuid()])
-        .unwrap();
-    cleanup.commit().unwrap();
+#[test]
+fn parent_failure_retry_dismiss_and_commit() {
+    let f = fixture();
+    let mut db = f.cfg.connect(NoTls).unwrap();
+    let second = f.board.items()[1].id.as_uuid();
+    exercise(
+        &f,
+        "--smoke-recovery",
+        &[
+            "rejected",
+            "cancel_kept",
+            "unchanged_kept",
+            "retried_blank",
+            "dismissed",
+            "write_failed",
+            "retry_pending",
+            "retry_saved",
+        ],
+        |name| {
+            if name == "retry_saved" {
+                readback(&f, "Coral", 2);
+            } else {
+                readback(&f, "Review", 1);
+            }
+            match name {
+                "dismissed" => db.batch_execute(
+                    "ALTER TABLE board_items ADD CONSTRAINT temporary_fault CHECK (title <> 'Coral')"
+                ).unwrap(),
+                "write_failed" => {
+                    db.batch_execute("ALTER TABLE board_items DROP CONSTRAINT temporary_fault").unwrap();
+                    db.batch_execute("BEGIN").unwrap();
+                    db.query_one("SELECT id FROM board_items WHERE id=$1 FOR UPDATE", &[&second]).unwrap();
+                }
+                "retry_pending" => db.batch_execute("COMMIT").unwrap(),
+                _ => (),
+            }
+        },
+    );
 }

@@ -14,7 +14,6 @@ pub fn database() -> Result<Config, &'static str> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Phase {
     Clean,
-    Editing,
     Pending,
     Saved,
     Failed(Failure),
@@ -37,11 +36,13 @@ impl From<store::SaveError> for Failure {
     }
 }
 
+#[derive(Clone)]
 pub struct Save {
     board: BoardId,
     item: ItemId,
     expected: String,
     draft: String,
+    retry: bool,
 }
 
 impl Save {
@@ -58,6 +59,12 @@ impl Save {
     }
 
     pub fn run(self, db: &mut Client) -> Result<String, Failure> {
+        if self.retry {
+            let current = store::current_title(db, self.board, self.item)?;
+            if current != self.expected {
+                return Err(Failure::Conflict(current));
+            }
+        }
         store::rename_item_if_current(db, self.board, self.item, &self.expected, &self.draft)
             .map_err(Into::into)
     }
@@ -67,7 +74,7 @@ impl Save {
 pub struct InlineEdit {
     board: BoardId,
     item: Item,
-    draft: String,
+    request: Option<String>,
     phase: Phase,
 }
 
@@ -75,7 +82,7 @@ impl InlineEdit {
     pub fn new(board: BoardId, item: Item) -> Self {
         Self {
             board,
-            draft: item.title.clone(),
+            request: None,
             item,
             phase: Phase::Clean,
         }
@@ -85,8 +92,15 @@ impl InlineEdit {
         (self.board, self.item.id)
     }
 
-    pub fn draft(&self) -> &str {
-        &self.draft
+    pub fn request(&self) -> Option<&str> {
+        self.request.as_deref()
+    }
+    pub fn display(&self) -> &str {
+        if self.phase == Phase::Pending {
+            self.request().expect("pending name")
+        } else {
+            self.accepted()
+        }
     }
     pub fn accepted(&self) -> &str {
         &self.item.title
@@ -95,42 +109,41 @@ impl InlineEdit {
         &self.phase
     }
 
-    pub fn edit(&mut self, draft: String) {
-        if self.phase != Phase::Pending && draft != self.draft {
-            self.phase = if draft == self.item.title {
-                Phase::Clean
-            } else {
-                Phase::Editing
-            };
-            self.draft = draft;
-        }
-    }
-
-    pub fn revert(&mut self) {
-        if self.phase != Phase::Pending {
-            self.draft.clone_from(&self.item.title);
+    pub fn dismiss(&mut self) {
+        if matches!(self.phase, Phase::Failed(_)) {
+            self.request = None;
             self.phase = Phase::Clean;
         }
     }
 
-    pub fn submit(&mut self) -> Option<Save> {
-        if !matches!(self.phase, Phase::Editing | Phase::Failed(_)) {
+    pub fn submit(&mut self, raw: String) -> Option<Save> {
+        if self.phase == Phase::Pending || raw == self.accepted() {
             return None;
         }
+        self.request = Some(raw);
+        Some(self.start(false))
+    }
+
+    pub fn retry(&mut self) -> Option<Save> {
+        matches!(self.phase, Phase::Failed(_)).then(|| self.start(true))
+    }
+
+    fn start(&mut self, retry: bool) -> Save {
         self.phase = Phase::Pending;
-        Some(Save {
+        Save {
             board: self.board,
             item: self.item.id,
             expected: self.item.title.clone(),
-            draft: self.draft.clone(),
-        })
+            draft: self.request().unwrap().to_owned(),
+            retry,
+        }
     }
 
     pub fn finish(&mut self, result: Result<String, Failure>) {
         debug_assert_eq!(self.phase, Phase::Pending);
         match result {
             Ok(title) => {
-                self.draft.clone_from(&title);
+                self.request = None;
                 self.item.title = title;
                 self.phase = Phase::Saved;
             }

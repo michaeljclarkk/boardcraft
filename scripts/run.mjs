@@ -16,6 +16,8 @@ export const packets = [
   { id: '08-cross-client-reopen', database: true, kitFrame: true, kitEdit: true, delivery: true },
   { id: '09-windows-name-cell', database: true, kitFrame: true, kitEdit: true, delivery: true,
     windowsCases: ['rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter'] },
+  { id: '10-windows-name-recovery', database: true, buildBins: true, kitFrame: true, kitEdit: true, delivery: true,
+    windowsCases: ['rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -65,6 +67,7 @@ export function verify({ target, buildBins, cases = [], android, kitFrame, kitEd
       }
     }
     exec('cargo', ['test', '--locked', '--workspace']);
+    if (buildBins) exec('cargo', ['build', '--locked', '--workspace', '--bins']);
     return;
   }
   if (android) {
