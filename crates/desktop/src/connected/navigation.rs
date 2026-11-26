@@ -9,7 +9,7 @@ enum ReadPage {
 
 pub(super) enum Page {
     List(Vec<BoardSummary>),
-    Items(Uuid, MainTable),
+    Items(Uuid, Box<MainTable>),
     Recover(Uuid, FocusHandle),
     Unavailable,
     Fault(Option<Uuid>),
@@ -60,7 +60,7 @@ impl Connected {
                             let table =
                                 MainTable::new(read, board.expect("selected board"), None, w, cx);
                             table.focus_first(w, cx);
-                            Page::Items(board.expect("selected board"), table)
+                            Page::Items(board.expect("selected board"), Box::new(table))
                         }
                         Err(EditError::PermissionDenied | EditError::Missing)
                             if board.is_some() =>
@@ -98,7 +98,7 @@ impl Connected {
     }
 
     fn reload_main_table(&mut self, board: Uuid, w: &mut Window, cx: &mut Context<Self>) {
-        if self.refresh_item_entry(board, w, cx) {
+        if self.refresh_item_entry(board, true, w, cx) {
             return;
         }
         let Screen::Navigation(nav) = &self.screen else {

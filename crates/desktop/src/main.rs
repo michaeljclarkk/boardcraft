@@ -161,6 +161,9 @@ impl Row {
     }
 
     fn complete(&mut self, return_focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.editable {
+            return;
+        }
         let Some((entry, revision)) = self.baseline.take() else {
             return;
         };
@@ -214,9 +217,11 @@ impl Row {
                         },
                     ))
                     .child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&self.input).id(self.input_id())),
+                        div().flex_1().child(
+                            Input::new(&self.input)
+                                .id(self.input_id())
+                                .disabled(!self.editable),
+                        ),
                     )
                 },
                 |line| {
@@ -559,6 +564,15 @@ fn main() {
                             | "--entry-ack-name"
                             | "--entry-refresh-name"
                             | "--entry-revoked-name"
+                            | "--selection-move"
+                            | "--selection-conflict"
+                            | "--selection-missing"
+                            | "--selection-demoted"
+                            | "--selection-denied"
+                            | "--selection-ack"
+                            | "--selection-refresh"
+                            | "--selection-viewer"
+                            | "--selection-viewer-range"
                     )
                 } else {
                     matches!(

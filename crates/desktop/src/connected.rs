@@ -82,7 +82,7 @@ pub(super) fn open(port: u16, board: Option<Uuid>, cx: &mut App) {
     cx.activate(true);
     #[cfg(all(windows, feature = "native-smoke"))]
     if let Some(mode) = std::env::args().nth(if board.is_some() { 4 } else { 3 }) {
-        cx.update_window(_window, |_, w, _| {
+        cx.update_window(_window, |_, w, cx| {
             if mode.starts_with("--name-") {
                 super::native_smoke::name::install(_view, &mode, w);
             } else if mode.starts_with("--logout-") {
@@ -93,6 +93,9 @@ pub(super) fn open(port: u16, board: Option<Uuid>, cx: &mut App) {
                 super::native_smoke::main_table::install(_view, &mode, w);
             } else if mode.starts_with("--entry-") {
                 super::native_smoke::grouped_entry::install(_view, &mode, w);
+            } else if mode.starts_with("--selection-") {
+                cx.set_reduce_motion(true);
+                super::native_smoke::selection_move::install(_view, &mode, w);
             } else if let Some(board) = board {
                 super::native_smoke::login::install(board, mode == "--smoke-session", w);
             } else {

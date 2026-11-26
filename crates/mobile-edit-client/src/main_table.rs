@@ -62,6 +62,61 @@ fn revision(headers: &ureq::http::HeaderMap, key: &str) -> Result<i64, EditError
 }
 
 impl EditClient {
+    /// Append roots in request order using the shared batch operation. Submit once;
+    /// an uncertain acknowledgment requires an authorized read before another write.
+    pub fn move_main_table_selection(
+        &self,
+        board: Uuid,
+        operation: Uuid,
+        group: &str,
+        board_revision: i64,
+        items: &[(Uuid, i64)],
+    ) -> Result<(), EditError> {
+        #[derive(Serialize)]
+        struct Root {
+            id: Uuid,
+            revision: i64,
+        }
+        #[derive(Serialize)]
+        struct Draft<'a> {
+            operation_id: Uuid,
+            group_id: &'a str,
+            board_revision: i64,
+            items: Vec<Root>,
+        }
+        #[derive(Deserialize)]
+        struct Saved {
+            board_id: Uuid,
+            operation_id: Uuid,
+            affected_ids: Vec<Uuid>,
+        }
+        let url = format!(
+            "http://127.0.0.1:{}/navigation/boards/{board}/main-table/items/move-selection",
+            self.port
+        );
+        let saved: Saved = decode(
+            self.authorize(self.http.post(url)).send_json(Draft {
+                operation_id: operation,
+                group_id: group,
+                board_revision,
+                items: items
+                    .iter()
+                    .map(|&(id, revision)| Root { id, revision })
+                    .collect(),
+            }),
+        )?;
+        let affected: HashSet<_> = saved.affected_ids.iter().copied().collect();
+        if saved.board_id != board
+            || saved.operation_id != operation
+            || saved.affected_ids.len() != items.len()
+            || affected.len() != items.len()
+            || items.iter().any(|(id, _)| !affected.contains(id))
+        {
+            return Err(EditError::Transport);
+        }
+        Ok(())
+    }
+
     /// Native selected-board create. Never replay automatically after a failed acknowledgment.
     pub fn create_main_table_item(
         &self,

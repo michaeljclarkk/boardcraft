@@ -322,6 +322,18 @@ fn handle(
             (board, SelectedWrite, None)
         }
         (
+            Method::Post,
+            [
+                "",
+                "navigation",
+                "boards",
+                board,
+                "main-table",
+                "items",
+                "move-selection",
+            ],
+        ) if mode != Mode::Scoped => (board, SelectedWrite, None),
+        (
             Method::Put,
             [
                 "",

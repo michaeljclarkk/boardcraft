@@ -10,10 +10,19 @@ mod fold_checks;
 mod grouped_entry;
 #[path = "fixture/grouped_entry_checks.rs"]
 mod grouped_entry_checks;
+#[path = "fixture/native_selection.rs"]
+mod native_selection;
+#[path = "fixture/native_selection_checks.rs"]
+mod native_selection_checks;
 #[path = "fixture/native_table.rs"]
 mod native_table;
 #[path = "fixture/native_table_checks.rs"]
 mod native_table_checks;
+
+#[test]
+fn native_selection_move_checks_access_and_order() {
+    native_selection_checks::access_and_order();
+}
 
 #[test]
 fn native_grouped_item_entry_checks_current_access() {

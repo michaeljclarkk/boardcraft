@@ -6,7 +6,7 @@ use super::{
 use std::sync::atomic::Ordering::SeqCst;
 use uuid::Uuid;
 
-fn wait_for_write(lock: &mut postgres::Client) {
+pub(super) fn wait_for_write(lock: &mut postgres::Client) {
     let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
     while !lock.query_one("SELECT EXISTS (SELECT FROM pg_locks WHERE NOT granted AND pg_backend_pid() = ANY(pg_blocking_pids(pid)))", &[]).unwrap().get::<_, bool>(0) {
         assert!(std::time::Instant::now() < until, "entry did not reach the fixture lock");

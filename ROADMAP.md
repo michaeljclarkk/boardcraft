@@ -59,6 +59,7 @@ Each packet is one file under [packets](packets/) and is loaded only when dispat
 - [43-browser-group-collapse](packets/43-browser-group-collapse.md) — Fold and reopen physical groups on the selected board's **main table**.
 - [44-windows-main-table](packets/44-windows-main-table.md) — Open the grouped main table in Windows browse and share its saved folds.
 - [45-windows-grouped-item-entry](packets/45-windows-grouped-item-entry.md) — Add a root in a selected physical group and edit its name inline in Windows browse.
+- [46-windows-selection-move](packets/46-windows-selection-move.md) — Select roots and move them together to a physical group in Windows browse.
 
 ## Delivery phases after the first slice
 

@@ -32,6 +32,26 @@ mod logout;
 mod main_table;
 #[path = "windows/main_table_relay.rs"]
 mod main_table_relay;
+#[path = "../../mobile-edit-host/tests/fixture/native_selection.rs"]
+mod native_selection;
+#[path = "../../mobile-edit-host/tests/fixture/reorder_state.rs"]
+#[allow(
+    dead_code,
+    reason = "shared oracle includes other browser order workflows"
+)]
+mod reorder_state;
+#[path = "windows/selection_move.rs"]
+mod selection_move;
+
+#[test]
+fn windows_moves_selected_roots_to_group() {
+    selection_move::moves();
+}
+
+#[test]
+fn windows_reviews_selected_move() {
+    selection_move::reviews();
+}
 #[path = "../../mobile-edit-host/tests/fixture/native_table.rs"]
 mod native_table;
 #[path = "windows/navigation.rs"]

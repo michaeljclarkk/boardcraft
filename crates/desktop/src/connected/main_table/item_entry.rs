@@ -256,7 +256,7 @@ impl Connected {
                     entry.update(cx, |entry, cx| entry.clear(w, cx));
                 }
                 let next = MainTable::new(read, board, Some(table), w, cx);
-                nav.page = Page::Items(board, next);
+                nav.page = Page::Items(board, Box::new(next));
                 self.message = "";
             }
             Err(EntryFailure::Save(EditError::InvalidDraft))
@@ -313,7 +313,7 @@ impl Connected {
                     }
                 };
                 if matches!(failure, EntryFailure::Save(EditError::PermissionDenied)) {
-                    self.refresh_item_entry(board, w, cx);
+                    self.refresh_item_entry(board, false, w, cx);
                 }
             }
         }
@@ -323,6 +323,7 @@ impl Connected {
     pub(in crate::connected) fn refresh_item_entry(
         &mut self,
         board: Uuid,
+        reset_selection: bool,
         w: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -362,9 +363,12 @@ impl Connected {
                 }
                 match result {
                     Ok(read) => {
-                        let table = MainTable::new(read, board, Some(old), w, cx);
+                        let mut table = MainTable::new(read, board, Some(old), w, cx);
+                        if reset_selection {
+                            table.selection = Selection::default();
+                        }
                         table.focus_first(w, cx);
-                        nav.page = Page::Items(board, table);
+                        nav.page = Page::Items(board, Box::new(table));
                         v.message = if denied {
                             "Not saved: permission denied."
                         } else {
