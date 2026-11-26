@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { packets, requireEditEmulator, requireKitEmulator, runQueue, validLimit, verify } from './run.mjs';
 import { matchBoard } from './android-kit-frame.mjs';
 import { editFrame } from './android-kit-edit.mjs';
+import { checkWindow, instance } from './cross-client-reopen.mjs';
 
 test('resume skips verified work; a stale handoff or failed gate cannot advance the queue', () => {
   const cwd = process.cwd(), dir = mkdtempSync(join(tmpdir(), 'boardcraft-'));
@@ -167,4 +168,15 @@ test('07 requires live editor, recovery and store gate after the existing frame 
   for (const bad of [frame.slice(0,-1), [...frame,frame[3]], [...frame.slice(0,3),frame[4],{...frame[3],y:500}], [...frame,{text:'Ink',x:30,y:65}]]) {
     assert.equal(editFrame(bad, expected, ['Ink']), undefined);
   }
+});
+
+test('08 requires actual delivery and Windows regression; missing activity or wrong frame cannot pass', () => {
+  const packet = packets.find(p => p.id === '08-cross-client-reopen');
+  const calls = [];
+  verify(packet, (bin, args) => calls.push([bin,...args].join(' ')));
+  assert.ok(calls.includes('node scripts/cross-client-reopen.mjs'));
+  assert.ok(calls.some(c => c.endsWith('--test windows_smoke')));
+  assert.equal(instance('ACTIVITY dev.boardcraft.kitfixture/.App abcd pid=42'), undefined);
+  assert.throws(() => checkWindow('', 'board'));
+  assert.throws(() => checkWindow('row board 00000000-0000-0000-0000-000000000011 Review sketch\nrow board 00000000-0000-0000-0000-00000000002a Coral','board'));
 });

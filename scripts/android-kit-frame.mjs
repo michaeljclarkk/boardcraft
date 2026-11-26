@@ -26,8 +26,8 @@ export function matchBoard(lines, editing) {
   return lines.find(l => l.text === board.items[1].title);
 }
 
-export function run(bin, args, { timeout = 30_000, binary = false, inherit = false } = {}) {
-  const r = spawnSync(bin, args, { cwd: root, encoding: binary ? null : 'utf8', timeout,
+export function run(bin, args, { timeout = 30_000, binary = false, inherit = false, env = process.env } = {}) {
+  const r = spawnSync(bin, args, { cwd: root, env, encoding: binary ? null : 'utf8', timeout,
     maxBuffer: 16 * 1024 * 1024, stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'] });
   if (r.error) throw r.error;
   if (r.status !== 0) throw Error(`${bin} failed (${r.status}): ${r.stderr ?? ''}`);

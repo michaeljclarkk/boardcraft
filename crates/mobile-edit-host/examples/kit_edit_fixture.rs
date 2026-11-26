@@ -11,7 +11,7 @@ fn main() -> io::Result<()> {
     writeln!(
         output,
         "{}",
-        serde_json::json!({"board": f.board, "port": f.host.port})
+        serde_json::json!({"board": f.board, "port": f.host.port, "schema": f.schema.name})
     )?;
     output.flush()?;
     for command in io::stdin().lock().lines() {

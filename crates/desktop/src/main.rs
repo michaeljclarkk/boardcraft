@@ -113,6 +113,11 @@ impl Render for Row {
 }
 
 impl Row {
+    fn title_id(&self) -> SharedString {
+        let (_, item) = self.edit.identity();
+        format!("title-{}", item.as_uuid()).into()
+    }
+
     fn controls(&self, dirty: bool, message: String, cx: &mut Context<Self>) -> Div {
         div()
             .flex()
@@ -126,7 +131,7 @@ impl Row {
                     .child(
                         div().flex_1().child(
                             Input::new(&self.input)
-                                .id("title")
+                                .id(self.title_id())
                                 .disabled(self.edit.phase() == &Phase::Pending),
                         ),
                     )

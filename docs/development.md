@@ -109,6 +109,10 @@ node scripts/android-kit-edit.mjs        # live Kit input and independent store 
 
 The edit gate starts [`kit_edit_fixture`](../crates/mobile-edit-host/examples/kit_edit_fixture.rs) against a fresh schema. Only a board UUID and reversed loopback port go into the activity intent. The fixture's stdin replies reflect new store connections; EOF stops the host and drops the schema. Record the live gate outcomes in the handoff before runner verification.
 
+### Cross-client reopen gate
+
+Run `node scripts/cross-client-reopen.mjs` in a graphical Windows session with the Android Kit edit prerequisites above. The gate continues the live edit on the same fixture: it backgrounds and resumes the unsaved `Amber` editor, opens the Windows binary with `--smoke-delivery` and the fixture schema, then force-stops and reopens the Android package. The Windows driver reports the values of the two visible inputs with their bound IDs; `saved` readbacks check the committed titles and revisions separately.
+
 ### Disposable PostgreSQL
 
 The product rename does not migrate PostgreSQL. Keep the existing cluster path, `rustday_admin` and `rustday_test` roles, database name and `RUSTDAY_TEST_DATABASE_URL`. The `rustday_migrations` table and `rustday.board.migrations` advisory lock are shared with earlier binaries so they see the same applied versions and serialize migrations. Do not create a second cluster or rename these identifiers. The ignored `.private/dev.json` tool settings are unchanged. Historical handoffs keep the command and package names actually tested at the time.

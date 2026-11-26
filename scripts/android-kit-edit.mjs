@@ -43,13 +43,13 @@ async function withFixture(journey) {
     return r.value;
   };
   try {
-    const {board, port} = JSON.parse(await line());
+    const {board, port, schema} = JSON.parse(await line());
     if (!/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(board) || !Number.isInteger(port) || port < 1 || port > 65535) throw Error('Invalid loopback fixture');
     await journey(board, port, async state => {
       child.stdin.write(`${state}\n`);
       if (await line() !== 'ok') throw Error(`Store mismatch: ${state}`);
       console.log(`Fresh store connection: ${state}`);
-    });
+    }, schema);
   } finally {
     child.stdin.end();
     try { if (await bounded(exit, 30_000, 'fixture cleanup') !== 0) throw Error('Fixture failed'); }
@@ -57,9 +57,9 @@ async function withFixture(journey) {
   }
 }
 
-async function gate() {
+export async function gate(afterSave) {
   requireKitEmulator();
-  await withKitApp(async ({adb, start, frame, tap, foreground}) => withFixture(async (board, port, check) => {
+  await withKitApp(async ({adb, start, frame, tap, foreground}) => withFixture(async (board, port, check, schema) => {
     // A concrete ephemeral host port avoids the Windows adb tcp:0 cache issue (05).
     const spec = `tcp:${port}`;
     adb('reverse', '--no-rebind', spec, spec);
@@ -103,6 +103,7 @@ async function gate() {
       tap(dismissed.Save);
       await screen('committed', ['Coral'], ['Ink','Editing name','Save','Name required']);
       await check('saved');
+      if (afterSave) await afterSave({board, port, schema, check, adb, start, screen, tap, input, ime, foreground});
     } finally { requireKitEmulator(); adb('reverse','--remove', spec); }
   }));
   console.log('Android Kit: cleared, rejected, corrected, dismissed IME with Back, saved; store readbacks agree');

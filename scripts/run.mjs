@@ -13,6 +13,7 @@ export const packets = [
     cases: ['emulator_rename_then_reopen', 'emulator_reject_then_correct'] },
   { id: '06-android-kit-frame', database: true, kitFrame: true },
   { id: '07-android-kit-edit', database: true, kitFrame: true, kitEdit: true },
+  { id: '08-cross-client-reopen', database: true, kitFrame: true, kitEdit: true, delivery: true },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -44,14 +45,16 @@ export function requireKitEmulator(exec = command, env = process.env) {
   requireEditEmulator(exec, env.RUSTDAY_ANDROID_SERIAL ?? '');
 }
 
-export function verify({ target, buildBins, cases = [], android, kitFrame, kitEdit }, exec = command) {
+export function verify({ target, buildBins, cases = [], android, kitFrame, kitEdit, delivery }, exec = command) {
   exec('cargo', ['fmt', '--all', '--', '--check']);
   if (kitFrame) {
     exec('cargo', ['fmt', '--manifest-path', 'android/Cargo.toml', '--', '--check']);
     exec('node', ['scripts/android-kit-frame.mjs']);
     if (kitEdit) {
       exec('node', ['--test', 'scripts/run.test.mjs']);
-      exec('node', ['scripts/android-kit-edit.mjs']);
+      // The delivery gate drives every 07 step before continuing on the same fixture.
+      exec('node', [delivery ? 'scripts/cross-client-reopen.mjs' : 'scripts/android-kit-edit.mjs']);
+      if (delivery) exec('cargo', ['test', '--locked', '-p', 'boardcraft-desktop', '--features', 'native-smoke', '--test', 'windows_smoke']);
     }
     exec('cargo', ['test', '--locked', '--workspace']);
     return;

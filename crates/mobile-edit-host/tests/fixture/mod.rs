@@ -8,9 +8,9 @@ use uuid::Uuid;
 pub const FIRST: Uuid = Uuid::from_u128(42);
 pub const SECOND: Uuid = Uuid::from_u128(17);
 
-struct Schema {
+pub struct Schema {
     config: Config,
-    name: String,
+    pub name: String,
 }
 
 impl Drop for Schema {
@@ -32,7 +32,7 @@ impl Drop for Schema {
 pub struct Fixture {
     // Fields drop in order: stop serving before disposing of the schema.
     pub host: Host,
-    schema: Schema,
+    pub schema: Schema,
     pub board: Uuid,
 }
 

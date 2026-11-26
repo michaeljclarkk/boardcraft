@@ -81,6 +81,10 @@ impl InlineEdit {
         }
     }
 
+    pub fn identity(&self) -> (BoardId, ItemId) {
+        (self.board, self.item.id)
+    }
+
     pub fn draft(&self) -> &str {
         &self.draft
     }

@@ -12,12 +12,14 @@ enum Step {
     Pending,
     Saved,
     Reopen,
+    Delivery,
 }
 
 pub(super) fn install(window: AnyWindowHandle, board: Entity<Workbench>, cx: &mut App) {
     let step = match std::env::args().nth(2).as_deref() {
         Some("--smoke-edit") => Step::Open,
         Some("--smoke-reopen") => Step::Reopen,
+        Some("--smoke-delivery") => Step::Delivery,
         _ => return,
     };
     cx.update_window(window, |_, w, _| schedule(step, board, w))
@@ -43,17 +45,41 @@ fn schedule(step: Step, board: Entity<Workbench>, w: &Window) {
         let view = board.read(cx);
         assert!(!view.failed, "{}", view.message);
         // Read the previous completed native frame. Never set an input, phase or focus.
-        let titles = w.find_all("title");
+        let rows = &view.rows;
+        if rows.is_empty() {
+            return schedule(step, board, w);
+        }
+        assert_eq!(rows.len(), 2);
+        let titles: Vec<_> = rows
+            .iter()
+            .flat_map(|row| {
+                let hits = w.find_all(row.read(cx).title_id());
+                assert!(hits.len() <= 1, "duplicate title control");
+                hits
+            })
+            .collect();
         let [first, second] = &titles[..] else {
-            assert!(titles.is_empty(), "expected two title controls");
+            assert!(titles.is_empty(), "expected both title controls");
             return schedule(step, board, w);
         };
         assert!(
             first.visible() && second.visible() && first.bounds().bottom() <= second.bounds().top()
         );
+        if matches!(step, Step::Delivery) {
+            for (row, control) in rows.iter().zip(&titles) {
+                let edit = &row.read(cx).edit;
+                let (board_id, item_id) = edit.identity();
+                assert_eq!(board_id, view.board);
+                assert_eq!(edit.phase(), &Phase::Clean);
+                let value = control.value().expect("title input value");
+                assert_eq!(value, edit.accepted());
+                assert_eq!(value, edit.draft());
+                println!("row {} {} {value}", board_id.as_uuid(), item_id.as_uuid());
+            }
+            w.remove_window();
+            return;
+        }
         assert_eq!(first.value(), Some("Review"));
-        let rows = &view.rows;
-        assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].read(cx).edit.phase(), &Phase::Clean);
         let row = rows[1].read(cx);
         let next = match step {
