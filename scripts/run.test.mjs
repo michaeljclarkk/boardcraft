@@ -283,6 +283,7 @@ for (const [id, addedHost, addedWindows] of [
   ['20-windows-connected-name', [], []],
   ['21-windows-connected-logout', ['explicit_logout_isolates_sessions'], ['configured_logout_failure_then_retry', 'interactive_viewer_logs_out']],
   ['22-visible-board-list', ['explicit_logout_isolates_sessions', 'list_visible_boards_in_navigation_order', 'workspace_membership_changes_refresh_list_and_access'], ['configured_logout_failure_then_retry', 'interactive_viewer_logs_out']],
+  ['24-android-board-navigation', ['explicit_logout_isolates_sessions', 'list_visible_boards_in_navigation_order', 'workspace_membership_changes_refresh_list_and_access', 'selected_board_read_checks_current_membership'], ['configured_logout_failure_then_retry', 'interactive_viewer_logs_out', 'opens_selected_board_by_id', 'revoked_membership_blocks_board_selection']],
   ['23-windows-board-navigation', ['explicit_logout_isolates_sessions', 'list_visible_boards_in_navigation_order', 'workspace_membership_changes_refresh_list_and_access', 'selected_board_read_checks_current_membership'], ['configured_logout_failure_then_retry', 'interactive_viewer_logs_out', 'opens_selected_board_by_id', 'revoked_membership_blocks_board_selection']],
 ]) test(`${id} requires every named host and Windows journey and the locked workspace checks`, () => {
   const p = packets.find(p => p.id === id);
@@ -291,8 +292,9 @@ for (const [id, addedHost, addedWindows] of [
   const windows = [...packets.find(p => p.id === '19-windows-env-session').windowsCases,
     'connected_member_renames_then_reopens', 'connected_viewer_cannot_rename', ...addedWindows];
   const calls = [];
-  const run = (absent, ignored = 0) => verify(p, (bin, args, capture) => {
+  const run = (absent, ignored = 0, fail) => verify(p, (bin, args, capture) => {
     calls.push([bin, ...args].join(' '));
+    if (calls.at(-1) === fail) throw Error('missing device journey');
     const names = args.includes('windows_smoke') ? windows : args.includes('loopback_board_access') ? host : undefined;
     if (!names) return;
     assert.ok(capture);
@@ -305,5 +307,10 @@ for (const [id, addedHost, addedWindows] of [
   run();
   assert.deepEqual(calls, ['cargo fmt --all -- --check', 'node --test scripts/run.test.mjs',
     'cargo test --locked --workspace --test loopback_board_access', 'cargo test --locked --workspace',
-    'cargo test --locked -p boardcraft-desktop --features native-smoke --test windows_smoke -- --test-threads=1']);
+    'cargo test --locked -p boardcraft-desktop --features native-smoke --test windows_smoke -- --test-threads=1',
+    ...(id === '24-android-board-navigation' ? ['cargo fmt --manifest-path android/Cargo.toml -- --check', 'node scripts/android-kit-frame.mjs', 'node scripts/android-kit-edit.mjs', 'node scripts/android-kit-edit.mjs --browse'] : [])]);
+  if (id === '24-android-board-navigation') {
+    assert.equal(p.kitBrowse, true);
+    for (const cmd of calls.slice(-3)) assert.throws(() => run(undefined, 0, cmd), /missing device journey/);
+  }
 });

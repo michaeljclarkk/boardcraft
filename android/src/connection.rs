@@ -4,7 +4,8 @@ use uuid::Uuid;
 
 #[derive(Clone, Copy)]
 pub struct Connection {
-    pub board: Uuid,
+    /// None is the explicit browse action, never an inferred missing UUID.
+    pub board: Option<Uuid>,
     pub port: u16,
 }
 
@@ -33,7 +34,18 @@ pub fn launch_connection() -> Result<Option<Connection>, String> {
                 )?
                 .z()
             };
-            if !has(&board)? && !has(&port)? {
+            let has_board = has(&board)?;
+            let has_port = has(&port)?;
+            let action = env
+                .call_method(
+                    &intent,
+                    jni_str!("getAction"),
+                    jni_sig!("()Ljava/lang/String;"),
+                    &[],
+                )?
+                .l()?;
+            let browse = !action.is_null() && get_string(env, &action) == "dev.boardcraft.BROWSE";
+            if !browse && !has_board && !has_port {
                 return Ok(None);
             }
             let id = env
@@ -52,17 +64,27 @@ pub fn launch_connection() -> Result<Option<Connection>, String> {
                     &[JValue::Object(&port), JValue::Int(0)],
                 )?
                 .i()?;
-            Ok(Some((get_string(env, &id), number)))
+            Ok(Some((
+                browse,
+                has_board,
+                (!id.is_null()).then(|| get_string(env, &id)),
+                number,
+            )))
         })()
         .map_err(|err| {
             env.exception_clear();
             err.to_string()
         })?;
-        args.map(|(id, number)| {
-            let board = Uuid::parse_str(&id)
-                .ok()
-                .filter(|id| !id.is_nil())
-                .ok_or("Invalid board")?;
+        args.map(|(browse, has_board, id, number)| {
+            let board = match (browse, has_board) {
+                (true, false) => None,
+                (false, true) => Some(
+                    id.and_then(|s| Uuid::parse_str(&s).ok())
+                        .filter(|id| !id.is_nil())
+                        .ok_or("Invalid board")?,
+                ),
+                _ => return Err("Invalid destination".into()),
+            };
             let port = u16::try_from(number)
                 .ok()
                 .filter(|n| *n != 0)

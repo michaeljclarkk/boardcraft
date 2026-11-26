@@ -165,6 +165,12 @@ impl BoardView {
                         view.login = None;
                         view.message = "";
                     }
+                    Open::Browse(client, list) => {
+                        view.client = Some(client);
+                        view.navigation = Some(navigation::Page::List(list));
+                        view.login = None;
+                        view.message = "";
+                    }
                     Open::Rejected => {
                         view.forget_session(conn, identifier, cx);
                     }
@@ -191,6 +197,7 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) {
         self.client = None;
+        self.navigation = None;
         self.editor = None;
         self.board.items.clear();
         self.message = "";

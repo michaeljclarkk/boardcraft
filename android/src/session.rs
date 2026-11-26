@@ -97,6 +97,7 @@ pub enum Open {
     Unavailable,
     Denied(EditClient),
     Board(EditClient, Vec<SavedItem>),
+    Browse(EditClient, Vec<boardcraft_mobile_edit_client::BoardSummary>),
 }
 
 /// Called only on a worker. Issuance, cold launch and explicit retry all pass
@@ -115,7 +116,14 @@ pub fn open(conn: Connection, issued: Option<EditClient>) -> Open {
         Err(EditError::SessionRejected) => return Open::Rejected,
         Err(_) => return Open::Unavailable,
     }
-    match client.read(conn.board) {
+    let Some(board) = conn.board else {
+        return match client.list_boards() {
+            Ok(list) => Open::Browse(client, list),
+            Err(EditError::SessionRejected) => Open::Rejected,
+            Err(_) => Open::Unavailable,
+        };
+    };
+    match client.read(board) {
         Ok(rows) => Open::Board(client, rows),
         Err(EditError::PermissionDenied) => Open::Denied(client),
         Err(EditError::SessionRejected) => Open::Rejected,

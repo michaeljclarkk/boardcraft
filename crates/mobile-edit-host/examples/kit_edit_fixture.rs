@@ -2,6 +2,8 @@
 mod fixture;
 #[path = "../tests/fixture/peer.rs"]
 mod peer;
+#[path = "../tests/fixture/selection.rs"]
+mod selection;
 #[path = "../tests/fixture/stored_session.rs"]
 mod stored_session;
 
@@ -32,6 +34,9 @@ fn main() -> io::Result<()> {
         }
     };
     let member = f.seed_account(&login.identifier, &login.password, Role::Member);
+    if std::env::args().nth(1).as_deref() == Some("--browse") {
+        return browse(&f, member, input);
+    }
     f.set_creator(member);
     let mut credentials = Some(login);
     let mut peer = None;
@@ -123,6 +128,47 @@ fn main() -> io::Result<()> {
             client.resolve().unwrap();
             assert_eq!(client.read(f.board).unwrap(), rows);
         }
+        writeln!(output, "ok")?;
+        output.flush()?;
+    }
+    Ok(())
+}
+
+fn browse(f: &Fixture, member: uuid::Uuid, input: impl BufRead) -> io::Result<()> {
+    let catalog = selection::Catalog::new(f, member);
+    let host = boardcraft_mobile_edit_host::Host::start_with_navigation(
+        &f.schema.config,
+        boardcraft_board::BoardId::new(f.board).unwrap(),
+    )
+    .unwrap();
+    let mut output = io::stdout().lock();
+    writeln!(
+        output,
+        "{}",
+        serde_json::json!({"board":f.board,"port":host.port,"schema":f.schema.name})
+    )?;
+    output.flush()?;
+    let mut original = None;
+    for command in input.lines() {
+        let joined = match command?.as_str() {
+            "remember" if original.is_none() => {
+                original = Some(StoredSession::only(f, member));
+                true
+            }
+            "revoke-membership" => {
+                catalog.membership(f, false);
+                false
+            }
+            "restore-membership" => {
+                catalog.membership(f, true);
+                true
+            }
+            "joined" => true,
+            "outside" => false,
+            _ => return Err(io::Error::other("unexpected navigation checkpoint")),
+        };
+        assert!(original.as_ref() == Some(&StoredSession::only(f, member)));
+        catalog.check(f, joined);
         writeln!(output, "ok")?;
         output.flush()?;
     }

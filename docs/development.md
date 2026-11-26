@@ -143,9 +143,12 @@ node scripts/android-kit-frame.mjs       # no extras: original offline fixture
 node --test scripts/run.test.mjs
 node scripts/android-kit-edit.mjs        # live Kit input and independent store readbacks
 node scripts/android-kit-edit.mjs --logout # disconnect, edit after failure, log out and sign in again
+node scripts/android-kit-edit.mjs --browse # authenticated board taps, Android Back and stale membership
 ```
 
 The edit gate starts [`kit_edit_fixture`](../crates/mobile-edit-host/examples/kit_edit_fixture.rs) against a fresh schema. Only a board UUID and reversed loopback port go into the activity intent. The fixture's stdin replies reflect new store connections; EOF stops the host and drops the schema. Record the live gate outcomes in the handoff before runner verification.
+
+For the board picker, the driver passes `-a dev.boardcraft.BROWSE --ei port <port>` instead. It uses a navigation-enabled host, signs in through the same masked Kit input and checks each selected board's displayed rows against independent store reads. Passing a board UUID with the browse action is invalid. A port alone without that action is not a browse request.
 
 ### Cross-client reopen gate
 

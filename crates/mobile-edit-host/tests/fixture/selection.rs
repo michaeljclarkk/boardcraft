@@ -1,8 +1,13 @@
 //! Shared database oracle for the HTTP and graphical destination checks.
-use crate::{fixture::Fixture, stored_session::StoredSession};
-use boardcraft_account::{Role, Token};
+use crate::fixture::Fixture;
+#[cfg(test)]
+use crate::stored_session::StoredSession;
+use boardcraft_account::Role;
+#[cfg(test)]
+use boardcraft_account::Token;
 use boardcraft_board::{Board, BoardId, ItemId, store};
 use boardcraft_mobile_edit_client::SavedItem;
+#[cfg(test)]
 use boardcraft_mobile_edit_host::Host;
 use uuid::Uuid;
 
@@ -25,18 +30,48 @@ fn rows(items: &[(u128, &str)]) -> Vec<SavedItem> {
         .collect()
 }
 
+#[cfg(test)]
 pub struct Selection {
     pub host: Host,
     pub token: Token,
     pub session: StoredSession,
-    member: Uuid,
-    workspace: Uuid,
+    catalog: Catalog,
 }
 
+#[cfg(test)]
 impl Selection {
     pub fn new(f: &Fixture) -> Self {
         let password = Uuid::new_v4().simple().to_string();
         let member = f.seed_account("reader", &password, Role::Member);
+        let catalog = Catalog::new(f, member);
+        let host =
+            Host::start_with_navigation(&f.schema.config, BoardId::new(f.board).unwrap()).unwrap();
+        let token = boardcraft_account::sign_in(&f.schema.config, "reader", &password).unwrap();
+        let session = StoredSession::only(f, member);
+        Self {
+            host,
+            token,
+            session,
+            catalog,
+        }
+    }
+
+    pub fn membership(&self, f: &Fixture, joined: bool) {
+        self.catalog.membership(f, joined);
+    }
+    pub fn check(&self, f: &Fixture, joined: bool) {
+        assert!(StoredSession::only(f, self.catalog.member) == self.session);
+        self.catalog.check(f, joined);
+    }
+}
+
+pub struct Catalog {
+    member: Uuid,
+    workspace: Uuid,
+}
+
+impl Catalog {
+    pub fn new(f: &Fixture, member: Uuid) -> Self {
         let creator = f.seed_account("creator", &Uuid::new_v4().to_string(), Role::Member);
         let workspace = Uuid::new_v4();
         let mut db = f.connect();
@@ -64,17 +99,7 @@ impl Selection {
                 .unwrap();
             }
         }
-        let host =
-            Host::start_with_navigation(&f.schema.config, BoardId::new(f.board).unwrap()).unwrap();
-        let token = boardcraft_account::sign_in(&f.schema.config, "reader", &password).unwrap();
-        let session = StoredSession::only(f, member);
-        let s = Self {
-            host,
-            token,
-            session,
-            member,
-            workspace,
-        };
+        let s = Self { member, workspace };
         s.membership(f, true);
         s
     }
@@ -94,7 +119,6 @@ impl Selection {
     }
 
     pub fn check(&self, f: &Fixture, joined: bool) {
-        assert!(StoredSession::only(f, self.member) == self.session);
         let mut db = f.connect();
         assert_eq!(db.query_one("SELECT EXISTS(SELECT FROM workspace_members WHERE workspace_id=$1 AND account_id=$2)", &[&self.workspace,&self.member]).unwrap().get::<_,bool>(0),joined);
         let subscriptions: Vec<Uuid> = db

@@ -31,11 +31,11 @@ async function bounded(promise, ms, what) {
   } finally { clearTimeout(timer); }
 }
 
-async function withFixture(journey) {
+async function withFixture(journey, browse) {
   const name = 'kit_edit_fixture';
   run('cargo', ['build', '--locked', '-p', 'boardcraft-mobile-edit-host', '--example', name], {inherit: true, timeout: 600_000});
   const meta = JSON.parse(run('cargo', ['metadata', '--locked', '--no-deps', '--format-version', '1']));
-  const child = spawn(join(meta.target_directory, 'debug', 'examples', `${name}.exe`), [], {stdio:['pipe','pipe','inherit']});
+  const child = spawn(join(meta.target_directory, 'debug', 'examples', `${name}.exe`), browse ? ['--browse'] : [], {stdio:['pipe','pipe','inherit']});
   const exit = new Promise((res, rej) => { child.once('exit', res); child.once('error', rej); });
   const lines = createInterface({input: child.stdout, crlfDelay:Infinity})[Symbol.asyncIterator]();
   const line = async () => {
@@ -60,14 +60,15 @@ async function withFixture(journey) {
   }
 }
 
-export async function gate(afterSave) {
+export async function gate(afterSave, browse = false) {
   requireKitEmulator();
   await withKitApp(async ({adb, start, frame, tap, foreground}) => withFixture(async (board, port, check, schema, password) => {
     // A concrete ephemeral host port avoids the Windows adb tcp:0 cache issue (05).
     const spec = `tcp:${port}`;
     adb('reverse', '--no-rebind', spec, spec);
     try {
-      start('--es', 'board', board, '--ei', 'port', String(port));
+      if (browse) start('-a', 'dev.boardcraft.BROWSE', '--ei', 'port', String(port));
+      else start('--es', 'board', board, '--ei', 'port', String(port));
       const boardText = ['Sample board', 'Review sketch'];
       const screen = async (name, texts, absent = [], required = []) => {
         const hits = await frame(name, l => required.every(t => l.some(row => row.text === t)) && editFrame(l, [...boardText, ...texts], absent));
@@ -118,6 +119,10 @@ export async function gate(afterSave) {
         }
         typeMasked(password); await hideIme(); tap(form['Sign in']);
       };
+      if (browse) {
+        await signIn(false);
+        return await browseJourney({check, frame, tap, input});
+      }
       await signIn(true);
       const loaded = await screen('loaded', ['Ink'], ['Editing name','Save']);
       await check('signed-in');
@@ -146,8 +151,44 @@ export async function gate(afterSave) {
       await check('saved');
       if (afterSave) await afterSave({board, port, schema, check, adb, start, screen, tap, input, ime, foreground, frame, signIn});
     } finally { requireKitEmulator(); adb('reverse','--remove', spec); }
-  }));
-  console.log('Android Kit: cleared, rejected, corrected, dismissed IME with Back, saved; store readbacks agree');
+  }, browse));
+  console.log(browse ? 'Android Kit: selected both boards, denied stale tap, restored membership and reopened by ID' : 'Android Kit: cleared, rejected, corrected, dismissed IME with Back, saved; store readbacks agree');
+}
+
+async function browseJourney({check, frame, tap, input}) {
+  // Compare every fixture label, including duplicates. Ignore only OS chrome and
+  // incidental OCR; a stale sibling, hidden board or editor must fail the match.
+  const list = ['Boards','Quartz','Review','Review','Refresh','Log out'];
+  const items = ['Board items','Sketch','Ink','Back to boards','Log out'];
+  const sibling = ['Board items','Outline','Back to boards','Log out'];
+  const denied = ['Destination unavailable','Back to boards','Log out'];
+  const empty = ['No boards','Refresh','Log out'];
+  const known = new Set([...list,...items,...sibling,...denied,...empty,'Sample board','Review sketch','Hidden','Save','Editing name','Username or email','Next','Empty board','Retry board list']);
+  const screen = async (name, expected) => {
+    const matched = await frame(name, lines => {
+      const top = lines.find(r => r.text === expected[0]);
+      const bottom = lines.find(r => r.text === 'Log out');
+      if (!top || !bottom) return;
+      const rows = lines.filter(r => known.has(r.text) || (r.y >= top.y && r.y <= bottom.y)).sort((a,b) => a.y-b.y);
+      if (rows.length === expected.length && rows.every((r,i) => r.text === expected[i] && Number.isSafeInteger(r.x) && r.x > 0 && Number.isSafeInteger(r.y) && r.y > (rows[i-1]?.y ?? 0))) return rows;
+    });
+    console.log(`${name}: ${matched.map(r => r.text).join(' / ')}`);
+    return matched;
+  };
+  const listed = await screen('initial list',list);
+  await check('remember'); tap(listed[3]);
+  await screen('second Review',items); await check('joined');
+  input('keyevent','4');
+  tap((await screen('system Back to list',list))[2]);
+  const first = await screen('first Review',sibling); await check('joined'); tap(first[2]);
+  const stale = await screen('list before revoke',list);
+  await check('revoke-membership'); tap(stale[3]);
+  await screen('unavailable',denied); await check('outside');
+  input('keyevent','4');
+  const cleared = await screen('empty list',empty); await check('outside');
+  await check('restore-membership'); tap(cleared[1]);
+  const restored = await screen('refreshed list',list); await check('joined'); tap(restored[3]);
+  await screen('second Review after recovery',items); await check('joined');
 }
 
 async function logoutJourney({port, check, adb, screen, tap, input, ime, frame, signIn}) {
@@ -188,6 +229,6 @@ async function logoutJourney({port, check, adb, screen, tap, input, ime, frame, 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   process.chdir(fileURLToPath(new URL('../', import.meta.url)));
   const args = process.argv.slice(2);
-  if (args.length && (args.length !== 1 || args[0] !== '--logout')) throw Error('Usage: android-kit-edit.mjs [--logout]');
-  await gate(args.length ? logoutJourney : undefined);
+  if (args.length && (args.length !== 1 || !['--logout','--browse'].includes(args[0]))) throw Error('Usage: android-kit-edit.mjs [--logout|--browse]');
+  await gate(args[0] === '--logout' ? logoutJourney : undefined, args[0] === '--browse');
 }

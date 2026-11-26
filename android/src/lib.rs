@@ -1,5 +1,6 @@
 mod connection;
 mod login;
+mod navigation;
 mod session;
 
 use boardcraft_mobile_edit_client::{EditClient, EditError, NameEdit, SavedItem};
@@ -45,6 +46,8 @@ struct BoardView {
     connection: Option<Connection>,
     client: Option<EditClient>,
     login: Option<Login>,
+    navigation: Option<navigation::Page>,
+    navigation_focus: FocusHandle,
     logging_out: bool,
     message: &'static str,
     editor: Option<Editor>,
@@ -69,6 +72,8 @@ impl BoardView {
             connection: None,
             client: None,
             login: None,
+            navigation: None,
+            navigation_focus: cx.focus_handle(),
             logging_out: false,
             message: "",
             editor: None,
@@ -90,7 +95,8 @@ impl BoardView {
     }
 
     fn open_editor(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        if self.logging_out
+        if self.navigation.is_some()
+            || self.logging_out
             || self.login.is_some()
             || (self.connection.is_some() && self.editor.is_some())
         {
@@ -127,6 +133,7 @@ impl BoardView {
         let Some(revision) = editor.revision else {
             return;
         };
+        let Some(board) = conn.board else { return };
         if editor.pending || self.logging_out {
             return;
         }
@@ -141,7 +148,7 @@ impl BoardView {
         let identifier = Login::identifier(window, cx);
         let work = cx
             .background_executor()
-            .spawn(async move { client.rename(conn.board, id, &request) });
+            .spawn(async move { client.rename(board, id, &request) });
         cx.spawn(async move |view, cx| {
             let result = work.await;
             _ = view.update(cx, |view, cx| {
@@ -192,6 +199,7 @@ impl BoardView {
         // no new edit or save can start while the logout request is in flight.
         if (self.login.is_some() && !matches!(self.login, Some(Login::Denied)))
             || self.logging_out
+            || matches!(self.navigation, Some(navigation::Page::Loading))
             || self.editor.as_ref().is_some_and(|e| e.pending)
         {
             return;
@@ -220,6 +228,14 @@ impl BoardView {
         .detach();
         cx.notify();
     }
+
+    fn logout_button(&self, cx: &mut Context<Self>) -> Button {
+        Button::new("logout")
+            .large()
+            .label("Log out")
+            .disabled(self.logging_out || self.editor.as_ref().is_some_and(|e| e.pending))
+            .on_click(cx.listener(|view, _, w, cx| view.logout(w, cx)))
+    }
 }
 
 impl Render for BoardView {
@@ -227,6 +243,9 @@ impl Render for BoardView {
         let mut column = div().flex().flex_col().size_full().p_8().gap_6();
         if let Some(login) = &self.login {
             return login.form(column, self.message, cx);
+        }
+        if let Some(page) = &self.navigation {
+            return self.navigation_page(page, column, cx);
         }
         column = column.child(Label::new(self.board.title.clone()).text_xl());
         if !self.message.is_empty() {
@@ -265,13 +284,7 @@ impl Render for BoardView {
             }
         }
         if self.client.is_some() {
-            column = column.child(
-                Button::new("logout")
-                    .large()
-                    .label("Log out")
-                    .disabled(self.logging_out || self.editor.as_ref().is_some_and(|e| e.pending))
-                    .on_click(cx.listener(|view, _, window, cx| view.logout(window, cx))),
-            );
+            column = column.child(self.logout_button(cx));
         }
         column
     }

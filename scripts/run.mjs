@@ -14,6 +14,10 @@ const connectedLogout = { ...connectedName,
 const visibleBoardList = { ...connectedLogout,
   cases: [...connectedLogout.cases, 'list_visible_boards_in_navigation_order', 'workspace_membership_changes_refresh_list_and_access'] };
 
+const boardNavigation = { ...visibleBoardList,
+    cases: [...visibleBoardList.cases, 'selected_board_read_checks_current_membership'],
+    windowsCases: [...visibleBoardList.windowsCases, 'opens_selected_board_by_id', 'revoked_membership_blocks_board_selection'] };
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -50,9 +54,8 @@ export const packets = [
   { id: '20-windows-connected-name', ...connectedName },
   { id: '21-windows-connected-logout', ...connectedLogout },
   { id: '22-visible-board-list', ...visibleBoardList },
-  { id: '23-windows-board-navigation', ...visibleBoardList,
-    cases: [...visibleBoardList.cases, 'selected_board_read_checks_current_membership'],
-    windowsCases: [...visibleBoardList.windowsCases, 'opens_selected_board_by_id', 'revoked_membership_blocks_board_selection'] },
+  { id: '23-windows-board-navigation', ...boardNavigation },
+  { id: '24-android-board-navigation', ...boardNavigation, kitBrowse: true },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -84,7 +87,7 @@ export function requireKitEmulator(exec = command, env = process.env) {
   requireEditEmulator(exec, env.RUSTDAY_ANDROID_SERIAL ?? '');
 }
 
-export function verify({ target, buildBins, cases = [], android, kitFrame, kitEdit, delivery, probeRegression, windowsCases, logout, restore }, exec = command) {
+export function verify({ target, buildBins, cases = [], android, kitBrowse, kitFrame, kitEdit, delivery, probeRegression, windowsCases, logout, restore }, exec = command) {
   exec('cargo', ['fmt', '--all', '--', '--check']);
   const windows = () => {
     const args = ['test', '--locked', '-p', 'boardcraft-desktop', '--features', 'native-smoke', '--test', 'windows_smoke'];
@@ -98,6 +101,12 @@ export function verify({ target, buildBins, cases = [], android, kitFrame, kitEd
       exec('cargo', ['test', '--locked', '--workspace']);
     } else exec('cargo', ['test', '--locked', '-p', 'boardcraft-desktop']);
     windows();
+    if (kitBrowse) {
+      exec('cargo', ['fmt', '--manifest-path', 'android/Cargo.toml', '--', '--check']);
+      exec('node', ['scripts/android-kit-frame.mjs']);
+      exec('node', ['scripts/android-kit-edit.mjs']);
+      exec('node', ['scripts/android-kit-edit.mjs', '--browse']);
+    }
     return;
   }
   if (kitFrame) {
@@ -187,10 +196,10 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
       const cli = process.env.OPENCODE_BIN || 'opencode';
       command('cargo', ['--version']);
       command(cli, ['--version']);
-      runQueue(Number(count), ({ id, database, android, kitFrame, model }, state) => {
+      runQueue(Number(count), ({ id, database, android, kitFrame, kitBrowse, model }, state) => {
         if (database && !process.env.RUSTDAY_TEST_DATABASE_URL) throw Error('Set RUSTDAY_TEST_DATABASE_URL to the disposable boardcraft DB.');
         if (android) requireEditEmulator();
-        if (kitFrame) requireKitEmulator();
+        if (kitFrame || kitBrowse) requireKitEmulator();
         command(cli, ['run', '--standalone', '--agent', 'build', ...(model ? ['--model', model] : []), '--title', `boardcraft ${id}`, `Complete only ${id} from ROADMAP.md. Read AGENTS.md, prior handoffs and any ${state}/${id}.previous.json. Inspect existing edits before continuing. Write handoffs/${id}.json and stop.`]);
       }, verify);
     } else throw Error(`Usage: node scripts/run.mjs status | run <1-${packets.length}>`);
