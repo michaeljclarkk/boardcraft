@@ -121,9 +121,19 @@ impl Preview {
             json!({"action":"peer entry","otherPort":port}),
         );
     }
+
+    #[cfg(test)]
+    pub fn viewer_profile(&self, password: &str) -> Driver {
+        let mut driver = Driver::start(self._host.port, false);
+        driver.command(
+            "viewer entry",
+            json!({"action":"fold viewer entry","password":password}),
+        );
+        driver
+    }
 }
 
-struct Driver {
+pub(super) struct Driver {
     child: Child,
     replies: Receiver<Result<Option<Uuid>, ()>>,
     profile: Option<TempDir>,

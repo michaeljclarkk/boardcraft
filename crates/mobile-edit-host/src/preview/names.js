@@ -15,6 +15,7 @@ export function mountNames(board, list, failureArea, api) {
   failureArea.replaceChildren(reorderStatus, failures, moveFailures);
   const rejected = new Map();
   const drafts = new Map(); // Group IDs are local to this board visit.
+  const localFolds = new Map(); // Viewer overrides last only for this mount.
   let busy = false;
   const controls = {api, button, setBusy, busy: () => busy, board: () => board, refresh: next => {
       board = next;
@@ -85,8 +86,8 @@ export function mountNames(board, list, failureArea, api) {
     setBusy(true);
     rejected.delete(id); showFailures();
     const accepted = board.rows.find(r => r.id === id);
-    const display = list.querySelector(`[data-item-id="${CSS.escape(id)}"] button`);
-    display.textContent = edit.title;
+    const display = list.querySelector(`[data-item-id="${CSS.escape(id)}"] .item-name`);
+    if (display) display.textContent = edit.title;
     try {
       const saved = await api.save(id, edit);
       if (!api.current()) return;
@@ -94,13 +95,14 @@ export function mountNames(board, list, failureArea, api) {
         throw Error('Unexpected saved item');
       }
       Object.assign(accepted, saved);
+      if (!display) return;
       display.textContent = accepted.title;
       display.parentNode.querySelector('[type=checkbox]').setAttribute('aria-label', `Select ${accepted.title}`);
       display.parentNode.querySelector('.row-menu button').setAttribute('aria-label', `More options for ${accepted.title}`);
     } catch (error) {
       if (!api.current()) return;
       if (error === 422) {
-        display.textContent = accepted.title;
+        if (display) display.textContent = accepted.title;
         rejected.set(id, edit); showFailures();
       } else failed(error, error === 409 ? 'Name changed. Reload the board.' : 'Save outcome unavailable. Reload the board.');
     } finally { if (api.current()) setBusy(false); }
@@ -197,6 +199,44 @@ export function mountNames(board, list, failureArea, api) {
     present(); form.append(input, add, status); return form;
   }
 
+  async function changeFold(group, collapsed, all) {
+    if (busy || !api.current()) return;
+    const ids = all ? board.groups.map(g => g.id) : [group.id];
+    const focusToggle = () => list.querySelector(`[data-group-id="${CSS.escape(group.id)}"] .fold-toggle`)?.focus();
+    if (!board.editable) {
+      for (const id of ids) localFolds.set(id, collapsed);
+      render(); focusToggle(); return;
+    }
+    setBusy(true); notice.textContent = 'Saving main table…';
+    function recovery(message) {
+      notice.replaceChildren(message+' ', button('Reload board', readAccepted));
+    }
+    function access(error) {
+      if (error === 401) api.expired();
+      else if (error === 403) api.denied('Main table change denied.');
+      else return false;
+      return true;
+    }
+    async function readAccepted() {
+      if (!api.current()) return;
+      notice.textContent = 'Reading main table…';
+      try {
+        const latest = await api.read();
+        if (!api.current()) return;
+        setBusy(false); controls.refresh(latest); notice.replaceChildren(); focusToggle();
+      } catch (error) {
+        if (api.current() && !access(error)) recovery('Could not read main table.');
+      }
+    }
+    try { await api.saveFold(board.viewRevision, ids, collapsed); }
+    catch (error) {
+      if (!api.current() || access(error)) return;
+      recovery(error === 409 ? 'Main table changed.' : [400,404,413,422,500].includes(error) ? 'Main table change rejected.' : 'Could not confirm main table change.');
+      return;
+    }
+    await readAccepted();
+  }
+
   function section(group, index) {
     const region = document.createElement('section');
     region.dataset.groupId = group.id;
@@ -208,10 +248,21 @@ export function mountNames(board, list, failureArea, api) {
     heading.id = `group-${group.id}`;
     heading.style.borderLeft = `0.3rem solid ${group.colour}`;
     region.setAttribute('aria-labelledby', heading.id);
+    const folded = (!board.editable && localFolds.has(group.id)) ? localFolds.get(group.id) : group.collapsed;
+    const toggle = button(folded ? '▸' : '▾', () => changeFold(group, !folded, false));
+    toggle.className = 'fold-toggle'; toggle.setAttribute('aria-label', `Toggle ${group.name}`);
+    toggle.setAttribute('aria-expanded', String(!folded));
+    const verb = folded ? 'Expand' : 'Collapse';
+    const select = button('Select all items in group', () => selection.selectGroup(group));
+    select.disabled = count === 0;
+    if (!folded) region.append(selection.checkbox(group));
+    region.append(toggle, groupMenu(group, index, [button(verb+' group', () => changeFold(group, !folded, false)),
+      button(verb+' all groups', () => changeFold(group, !folded, true)), select]), heading);
+    if (folded) return region;
     const rows = document.createElement('ul');
     rows.setAttribute('aria-label', 'Board items');
     rows.append(...group.items.map(row => cell(row, group)));
-    region.append(selection.checkbox(group), groupMenu(group, index), heading, rows, addEntry(group));
+    region.append(rows, addEntry(group));
     return region;
   }
   function render() {

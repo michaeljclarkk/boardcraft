@@ -20,7 +20,7 @@ export async function headingDragJourney(step, {browser,uuid,click,key,wait,chec
   const travel = (p,b) => mouse('mouseMoved',p,b);
   const release = (p,b,n) => mouse('mouseReleased',p,b,n);
   const esc = () => key('Escape','Escape',27);
-  const clean = () => wait(`!${cue} && !${marked} && !document.querySelector('dialog[open], #items input:checked, #items [aria-expanded=true]')`,'clean table after drag');
+  const clean = () => wait(`!${cue} && !${marked} && !document.querySelector('dialog[open], #items input:checked, #items [aria-expanded=true]:not(.fold-toggle)')`,'clean table after drag');
   const label = id => wait(`${cue}?.innerText==='${id===C?'Reserve':'Work'}' && ${cue}.getBoundingClientRect().width>0`, 'moving group name');
   const mark = (id,side) => wait(`${marked}?.parentNode.dataset.groupId==='${id}' && ${marked}.dataset.dropEdge==='${side}' && getComputedStyle(${marked}).boxShadow!=='none'`, 'visible '+side+' mark on '+id);
   async function hold(source=C,target=A,dy=-2) {

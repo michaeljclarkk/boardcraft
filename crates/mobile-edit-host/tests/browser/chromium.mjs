@@ -48,8 +48,8 @@ export function launch(profile, foreground) {
       if (msg.method === 'Target.targetDestroyed' && msg.params.targetId === pageId) windowClosed();
       const tab = logs.get(msg.sessionId);
       if (tab?.failRefresh && msg.method === 'Fetch.requestPaused') {
-        // Only the exact grouped GET on this owned tab is intercepted. The
-        // preceding lifecycle POST still reaches the fixture and commits.
+        // Only the selected URL on this owned tab is intercepted. For a
+        // confirmation fault the host has already responded to the POST.
         send('Fetch.fulfillRequest',{requestId:msg.params.requestId,responseCode:503},msg.sessionId).catch(() => {});
       }
       if (tab?.probe && msg.method === 'Network.requestWillBeSentExtraInfo') {
@@ -69,6 +69,7 @@ export function launch(profile, foreground) {
           && msg.params.type === 'Fetch') {
         const req = msg.params.request;
         tab.traffic.push([req.method, req.url]); // no headers or bodies
+        if (req.method === 'POST' && new URL(req.url).pathname.endsWith('/main-table-fold')) tab.foldIds.push(msg.params.requestId);
         if (req.method === 'POST' && new URL(req.url).pathname.endsWith('/group-order')) tab.groupOrderIds.push(msg.params.requestId);
         if (req.method === 'PUT' && new URL(req.url).pathname === '/preview/api/navigation/boards/00000000-0000-0000-0000-0000000000c9/groups/g-z') tab.editGroupIds.push(msg.params.requestId);
         if (req.method === 'POST' && /\/(items|groups)\/[^/]+\/(archive|restore)$/.test(new URL(req.url).pathname)) tab.lifecycleIds.push(msg.params.requestId);
@@ -110,7 +111,7 @@ export function launch(profile, foreground) {
   async function attach(name, targetId, url) {
     ({sessionId: session} = await send('Target.attachToTarget', {targetId, flatten:true}, null));
     tabs.set(name, session);
-    logs.set(session, {traffic:[], responses:[], selectionStatuses:[], renameIds:[], createIds:[], editGroupIds:[], groupOrderIds:[], moveIds:[], batchIds:[], lifecycleIds:[], probe:name === 'peer' && {extra:new Map()}});
+    logs.set(session, {traffic:[], responses:[], selectionStatuses:[], renameIds:[], createIds:[], editGroupIds:[], groupOrderIds:[], foldIds:[], moveIds:[], batchIds:[], lifecycleIds:[], probe:name === 'peer' && {extra:new Map()}});
     await send('Network.enable', {maxPostDataSize:0});
     await send('Page.navigate', {url});
   }
@@ -123,12 +124,17 @@ export function launch(profile, foreground) {
     get createIds() { return logs.get(session).createIds; },
     get editGroupIds() { return logs.get(session).editGroupIds; },
     get groupOrderIds() { return logs.get(session).groupOrderIds; },
+    get foldIds() { return logs.get(session).foldIds; },
     get moveIds() { return logs.get(session).moveIds; },
     get batchIds() { return logs.get(session).batchIds; },
     get lifecycleIds() { return logs.get(session).lifecycleIds; },
     async failGroupRead(url) {
       logs.get(session).failRefresh = true;
       await send('Fetch.enable',{patterns:[{urlPattern:url,resourceType:'Fetch',requestStage:'Request'}]});
+    },
+    async failFoldConfirmation(url) {
+      logs.get(session).failRefresh = true;
+      await send('Fetch.enable',{patterns:[{urlPattern:url,resourceType:'Fetch',requestStage:'Response'}]});
     },
     async restoreGroupRead() {
       await send('Fetch.disable'); logs.get(session).failRefresh = false;

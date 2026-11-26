@@ -126,7 +126,9 @@ async function loadDestination(id, current, notice = '', recovery = false) {
     const response = await fetchResponse(path);
     const groups = await response.json();
     const revision = Number(response.headers.get('boardcraft-board-revision'));
-    return {id, revision, groups, rows: groups.flatMap(g => g.items), owner: response.headers.get('boardcraft-root-lifecycle') === 'owner', editable: response.headers.get('boardcraft-board-access') === 'edit'};
+    const viewRevision = Number(response.headers.get('boardcraft-view-revision'));
+    if (!Number.isSafeInteger(viewRevision) || viewRevision < 1) throw Error('Missing main table revision');
+    return {id, revision, viewRevision, groups, rows: groups.flatMap(g => g.items), owner: response.headers.get('boardcraft-root-lifecycle') === 'owner', editable: response.headers.get('boardcraft-board-access') === 'edit'};
   }
   async function transition(item, action, draft) {
     const ack = await request(`${path}/items/${encodeURIComponent(item)}/${action}`, {method:'POST', body:JSON.stringify(draft)});
@@ -162,6 +164,10 @@ async function loadDestination(id, current, notice = '', recovery = false) {
       read,
       transition,
       transitionGroup, readArchive,
+      saveFold: async (view_revision, group_ids, collapsed) => {
+        const ack = await request(path+'/main-table-fold', {method:'POST', body:JSON.stringify({view_revision,group_ids,collapsed})});
+        if (ack.board_id !== id || ack.view_revision !== view_revision + 1) throw Error('Unexpected acknowledgment');
+      },
       reorderGroups: async (revision, ids) => {
         const ack = await request(path+'/group-order', {method:'POST', body:JSON.stringify({board_revision:revision, group_ids:ids})});
         if (ack.board_id !== id || ack.board_revision !== revision + 1) throw Error('Unexpected acknowledgment');

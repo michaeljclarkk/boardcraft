@@ -34,12 +34,12 @@ export function groupMenus({api, board, busy, setBusy, refresh, button}, notice,
     }
   }
   return {menu, move};
-  function menu(group, index) {
+  function menu(group, index, tableActions) {
     const menu = document.createElement('span'); menu.className = 'group-menu';
     const toggle = button('⋯', () => {
       if (busy()) return;
       expand(archive.hidden);
-      if (!archive.hidden && !archive.disabled) archive.focus();
+      if (!archive.hidden) (archive.disabled ? tableActions[0] : archive).focus();
     });
     toggle.setAttribute('aria-label', `Group menu for ${group.name}`);
     const archive = button('Archive group', () => { expand(false); submit(group, 'archive'); });
@@ -60,6 +60,10 @@ export function groupMenus({api, board, busy, setBusy, refresh, button}, notice,
     for (const action of actions) {
       if (!board().owner) { action.disabled = true; action.title = 'Owner access required.'; }
     }
+    actions.splice(actions.length - 1, 0, ...tableActions);
+    for (const action of tableActions) action.addEventListener('click', () => {
+      expand(false); if (toggle.isConnected) toggle.focus();
+    });
     function expand(open) { for (const action of actions) action.hidden = !open; toggle.setAttribute('aria-expanded', String(open)); }
     menu.onkeydown = e => { if (e.key === 'Escape') { expand(false); toggle.focus(); } };
     menu.onfocusout = e => { if (!menu.contains(e.relatedTarget)) expand(false); };

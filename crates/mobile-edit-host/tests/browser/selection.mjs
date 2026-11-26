@@ -41,7 +41,7 @@ export async function selectionJourney(action, {uuid, send, click, key, wait, re
         document.querySelectorAll('#items button.item-name').length===${viewer?0:5} &&
         document.querySelectorAll('#items .reorder-grip').length===${viewer?0:5} &&
         ${viewer ? "!document.querySelector('.row-menu button:last-child:enabled,.add-item :enabled') &&" : ''}
-        !document.querySelector('#items li input:not([type=checkbox]),dialog,[aria-expanded=true],[data-drop-edge]');
+        !document.querySelector('#items li input:not([type=checkbox]),dialog,[aria-expanded=true]:not(.fold-toggle),[data-drop-edge]');
     })()`, 'selection marks counts and controls');
     if (ids.length) { await named('toolbar','Selected item actions'); await named('button','Clear item selection'); }
     requests(exchanges.map(([req]) => req)); statuses(...exchanges);

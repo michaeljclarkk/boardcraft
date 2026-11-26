@@ -7,7 +7,9 @@ mod group_fields;
 pub use group_fields::{create_group, edit_group};
 mod group_lifecycle;
 mod group_order;
+mod main_table;
 pub use group_order::reorder_groups;
+pub use main_table::set_main_table_fold;
 mod lifecycle;
 pub use group_lifecycle::{archived_groups, transition_group};
 pub use lifecycle::{ArchivePage, Lifecycle, RootCommand, archive_page, transition_root};
@@ -122,6 +124,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
     {
         tx.batch_execute(include_str!("../migrations/0010_group_colour.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (10)", &[])?;
+    }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version=11",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0011_main_table.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (11)", &[])?;
     }
     tx.commit()
 }
@@ -288,6 +300,7 @@ pub fn load_items(
 }
 
 pub struct ItemGroup {
+    pub collapsed: bool,
     pub revision: i64,
     pub id: String,
     pub name: String,
@@ -315,10 +328,20 @@ pub fn load_group_snapshot(
     client: &mut impl postgres::GenericClient,
     board: BoardId,
 ) -> Result<(i64, Vec<ItemGroup>), GroupReadError> {
+    load_main_table(client, board).map(|(board_revision, _, groups)| (board_revision, groups))
+}
+
+pub fn load_main_table(
+    client: &mut impl postgres::GenericClient,
+    board: BoardId,
+) -> Result<(i64, i64, Vec<ItemGroup>), GroupReadError> {
     let rows = client
         .query(
-            "SELECT g.id, g.name, i.id, i.title, i.revision, b.revision, g.colour, g.revision FROM boards b
+            "SELECT g.id, g.name, i.id, i.title, i.revision, b.revision, g.colour, g.revision,
+                coalesce(v.revision,1), f.group_id IS NOT NULL FROM boards b
+         LEFT JOIN main_tables v ON v.board_id=b.id
          LEFT JOIN board_groups g ON g.board_id=b.id AND g.active
+         LEFT JOIN main_table_folds f ON (f.board_id,f.group_id)=(g.board_id,g.id)
          LEFT JOIN board_items i ON (i.board_id,i.group_id)=(g.board_id,g.id) AND i.state=0
          WHERE b.id=$1 ORDER BY g.position,g.id,i.position,i.created_at NULLS FIRST,i.id LIMIT $2",
             &[&board.0, &(GROUPED_ROW_LIMIT + 1)],
@@ -332,12 +355,14 @@ pub fn load_group_snapshot(
     }
     let mut groups: Vec<ItemGroup> = Vec::new();
     let revision = rows[0].get(5);
+    let view_revision = rows[0].get(8);
     for row in rows {
         let Some(id) = row.get::<_, Option<String>>(0) else {
             continue;
         };
         if groups.last().is_none_or(|g| g.id != id) {
             groups.push(ItemGroup {
+                collapsed: row.get(9),
                 id,
                 name: row.get(1),
                 colour: row.get(6),
@@ -353,7 +378,7 @@ pub fn load_group_snapshot(
             });
         }
     }
-    Ok((revision, groups))
+    Ok((revision, view_revision, groups))
 }
 
 #[derive(Debug)]

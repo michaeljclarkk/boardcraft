@@ -589,3 +589,18 @@ test('42 requires heading drag, cancellation, scroll and recovery alongside the 
   run();
   for (const name of [...browser, ...previous.cases]) assert.throws(() => run(name), /Missing passing/);
 });
+
+test('43 requires shared and local collapse, selection, ordering, recovery and all inherited gates', () => {
+  const previous = packets.find(p => p.id === '42-browser-group-heading-drag');
+  const packet = packets.find(p => p.id === '43-browser-group-collapse');
+  const browser = [...previous.browserCases, 'browser_collapses_physical_groups_by_id', 'browser_collapses_all_and_preserves_order', 'browser_viewer_temporarily_expands_groups', 'browser_recovers_group_presentation_save'];
+  const host = [...previous.cases, 'preview_group_collapse_checks_view_revision_and_scope', 'preview_group_collapse_requires_write_access_and_commit'];
+  assert.deepEqual(packet, { ...previous, id: '43-browser-group-collapse', browserCases: browser, cases: host });
+  const run = missing => verify(packet, (_bin, args) => {
+    const names = args.includes('browser_preview') ? browser : args.includes('loopback_board_access') ? host : [];
+    const present = names.filter(n => n !== missing);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  run();
+  for (const name of [...browser, ...host]) assert.throws(() => run(name), /Missing passing/);
+});

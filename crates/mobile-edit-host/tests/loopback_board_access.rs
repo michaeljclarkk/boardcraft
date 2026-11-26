@@ -4,6 +4,8 @@ mod browser_transport;
 mod caller;
 #[path = "fixture/create.rs"]
 mod create;
+#[path = "fixture/fold_checks.rs"]
+mod fold_checks;
 #[path = "fixture/group_create.rs"]
 mod group_create;
 #[path = "fixture/group_create_checks.rs"]
@@ -14,6 +16,15 @@ mod group_edit;
 mod group_edit_checks;
 #[path = "fixture/group_order_checks.rs"]
 mod group_order_checks;
+
+#[test]
+fn preview_group_collapse_checks_view_revision_and_scope() {
+    fold_checks::scope();
+}
+#[test]
+fn preview_group_collapse_requires_write_access_and_commit() {
+    fold_checks::access();
+}
 
 #[test]
 fn preview_group_reorder_requires_current_owner() {

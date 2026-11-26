@@ -95,9 +95,9 @@ pub(super) fn groups() {
     }
     let row = |n, title| json!({"id":Uuid::from_u128(n),"title":title,"revision":1});
     let expected = json!([
-        {"id":"g-90","name":"Work","colour":"#579bfc","revision":1,"items":[row(73,"Sketch"),row(61,"Ink")]},
-        {"id":"g-10","name":"Reserve","colour":"#579bfc","revision":1,"items":[]},
-        {"id":"g-20","name":"Work","colour":"#579bfc","revision":1,"items":[row(59,"Ink")]}
+        {"id":"g-90","name":"Work","colour":"#579bfc","revision":1,"collapsed":false,"items":[row(73,"Sketch"),row(61,"Ink")]},
+        {"id":"g-10","name":"Reserve","colour":"#579bfc","revision":1,"collapsed":false,"items":[]},
+        {"id":"g-20","name":"Work","colour":"#579bfc","revision":1,"collapsed":false,"items":[row(59,"Ink")]}
     ]);
     for (role, hint) in [("viewer", "read"), ("member", "edit")] {
         f.connect()

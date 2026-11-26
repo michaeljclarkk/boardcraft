@@ -1,4 +1,6 @@
 mod browser;
+#[path = "browser/fold.rs"]
+mod fold_browser;
 #[path = "fixture/group_create.rs"]
 mod group_create;
 #[path = "browser/group_create.rs"]
@@ -9,6 +11,23 @@ mod group_edit;
 mod group_edit_browser;
 #[path = "browser/group_order.rs"]
 mod group_order_browser;
+
+#[test]
+fn browser_collapses_physical_groups_by_id() {
+    fold_browser::single();
+}
+#[test]
+fn browser_collapses_all_and_preserves_order() {
+    fold_browser::all();
+}
+#[test]
+fn browser_viewer_temporarily_expands_groups() {
+    fold_browser::viewer();
+}
+#[test]
+fn browser_recovers_group_presentation_save() {
+    fold_browser::recover();
+}
 
 #[test]
 fn browser_drags_group_across_sections() {

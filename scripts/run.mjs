@@ -75,6 +75,9 @@ const previewGroupOrder = { ...previewGroupEdit,
   cases: [...previewGroupEdit.cases, 'preview_group_reorder_requires_current_owner', 'preview_group_reorder_checks_active_permutation_and_commit'],
   browserCases: [...previewGroupEdit.browserCases, 'browser_moves_group_one_place_from_menu', 'browser_reloads_order_before_moving_group_again', 'browser_demoted_owner_cannot_reorder_groups'] };
 
+const previewHeadingDrag = { ...previewGroupOrder,
+  browserCases: [...previewGroupOrder.browserCases, 'browser_drags_group_across_sections', 'browser_cancels_group_heading_drag', 'browser_scrolls_to_group_drop_target', 'browser_recovers_group_drag_after_refusal'] };
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -131,8 +134,10 @@ export const packets = [
   { id: '39-browser-group-create', ...previewGroupCreate },
   { id: '40-browser-group-edit', ...previewGroupEdit },
   { id: '41-browser-group-reorder', ...previewGroupOrder },
-  { id: '42-browser-group-heading-drag', ...previewGroupOrder,
-    browserCases: [...previewGroupOrder.browserCases, 'browser_drags_group_across_sections', 'browser_cancels_group_heading_drag', 'browser_scrolls_to_group_drop_target', 'browser_recovers_group_drag_after_refusal'] },
+  { id: '42-browser-group-heading-drag', ...previewHeadingDrag },
+  { id: '43-browser-group-collapse', ...previewHeadingDrag,
+    cases: [...previewHeadingDrag.cases, 'preview_group_collapse_checks_view_revision_and_scope', 'preview_group_collapse_requires_write_access_and_commit'],
+    browserCases: [...previewHeadingDrag.browserCases, 'browser_collapses_physical_groups_by_id', 'browser_collapses_all_and_preserves_order', 'browser_viewer_temporarily_expands_groups', 'browser_recovers_group_presentation_save'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -289,7 +294,8 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
         if (database && !process.env.RUSTDAY_TEST_DATABASE_URL) throw Error('Set RUSTDAY_TEST_DATABASE_URL to the disposable boardcraft DB.');
         if (android) requireEditEmulator();
         if (kitFrame || kitBrowse) requireKitEmulator();
-        command(cli, ['run', '--standalone', '--agent', 'build', ...(model ? ['--model', model] : []), '--title', `boardcraft ${id}`, `Complete only ${id} from ROADMAP.md. Read AGENTS.md, prior handoffs and any ${state}/${id}.previous.json. Inspect existing edits before continuing. Write handoffs/${id}.json and stop.`]);
+        const brief = existsSync(`packets/${id}.md`) ? `packets/${id}.md` : 'ROADMAP.md';
+        command(cli, ['run', '--standalone', '--agent', 'build', ...(model ? ['--model', model] : []), '--title', `boardcraft ${id}`, `Complete only ${id} from ${brief}. Read AGENTS.md, prior handoffs and any ${state}/${id}.previous.json. Inspect existing edits before continuing. Write handoffs/${id}.json and stop.`]);
       }, verify);
     } else throw Error(`Usage: node scripts/run.mjs status | run <1-${packets.length}>`);
   } catch (error) { console.error(error.message); process.exitCode = 1; }

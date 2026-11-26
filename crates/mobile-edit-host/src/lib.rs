@@ -16,7 +16,7 @@ use uuid::Uuid;
 struct ReadMetadata {
     can_edit: bool,
     owner: bool,
-    revision: Option<i64>,
+    revision: Option<(i64, i64)>,
 }
 type ApiResult = Result<(Vec<u8>, Option<ReadMetadata>), u16>;
 
@@ -126,7 +126,14 @@ impl Host {
                             owner,
                         }) = hint
                         {
-                            if let Some(revision) = revision {
+                            if let Some((revision, view_revision)) = revision {
+                                response.add_header(
+                                    Header::from_bytes(
+                                        "Boardcraft-View-Revision",
+                                        view_revision.to_string(),
+                                    )
+                                    .unwrap(),
+                                );
                                 response.add_header(
                                     Header::from_bytes(
                                         "Boardcraft-Root-Lifecycle",
@@ -250,24 +257,28 @@ enum ReadShape {
     Grouped,
 }
 
-fn grouped_body(tx: &mut postgres::Transaction<'_>, board: BoardId) -> Result<(i64, Vec<u8>), u16> {
-    let (revision, groups) = store::load_group_snapshot(tx, board).map_err(|err| match err {
-        store::GroupReadError::Missing => 404u16,
-        store::GroupReadError::TooLarge => 413,
-        store::GroupReadError::Database(error) => {
-            log::error!(
-                "load_groups board={} sqlstate={:?}",
-                board.as_uuid(),
-                error.code()
-            );
-            500
-        }
-    })?;
+fn grouped_body(
+    tx: &mut postgres::Transaction<'_>,
+    board: BoardId,
+) -> Result<((i64, i64), Vec<u8>), u16> {
+    let (revision, view_revision, groups) =
+        store::load_main_table(tx, board).map_err(|err| match err {
+            store::GroupReadError::Missing => 404u16,
+            store::GroupReadError::TooLarge => 413,
+            store::GroupReadError::Database(error) => {
+                log::error!(
+                    "load_groups board={} sqlstate={:?}",
+                    board.as_uuid(),
+                    error.code()
+                );
+                500
+            }
+        })?;
     let groups: Vec<_> = groups.into_iter().map(|group| serde_json::json!({
-        "id": group.id, "name": group.name, "colour": group.colour, "revision":group.revision, "items": group.items.into_iter().map(wire).collect::<Vec<_>>()
+        "id": group.id, "name": group.name, "colour": group.colour, "revision":group.revision, "collapsed":group.collapsed, "items": group.items.into_iter().map(wire).collect::<Vec<_>>()
     })).collect();
     Ok((
-        revision,
+        (revision, view_revision),
         serde_json::to_vec(&groups).expect("serializable groups"),
     ))
 }
@@ -333,6 +344,7 @@ fn handle(
             (board, SelectedWrite, Some(id))
         }
         (Method::Post, ["", "navigation", "boards", board, "items"])
+        | (Method::Post, ["", "navigation", "boards", board, "main-table-fold"])
         | (Method::Post, ["", "navigation", "boards", board, "items", "move-selection"])
             if matches!(shape, ReadShape::Grouped) =>
         {
@@ -361,6 +373,7 @@ fn handle(
         Read,
         CreateGroup(Result<CreateGroupDraft, u16>),
         GroupOrder(Result<GroupOrderDraft, u16>),
+        Fold(Result<FoldDraft, u16>),
         EditGroup(String, Result<EditGroupDraft, u16>),
         ArchivePage(Option<(i64, i64)>),
         Group(String, store::Lifecycle, Result<GroupDraft, u16>),
@@ -383,6 +396,9 @@ fn handle(
         }
         None if path.get(4) == Some(&"group-order") => {
             Action::GroupOrder(read_json_limit(req, 1024 * 1024))
+        }
+        None if path.get(4) == Some(&"main-table-fold") => {
+            Action::Fold(read_json_limit(req, 1024 * 1024))
         }
         None if path.get(4) == Some(&"groups") => {
             let id = percent_encoding::percent_decode_str(path[5])
@@ -432,7 +448,21 @@ fn handle(
     let can_edit = access::authorize(&mut tx, &account, board, operation)?;
     let owner = account.role == boardcraft_account::Role::Owner;
     let mut revision = None;
+    let fold = matches!(action, Action::Fold(_));
     let body = match action {
+        Action::Fold(draft) => {
+            let d = draft?;
+            let saved = store::set_main_table_fold(
+                &mut tx,
+                board,
+                d.view_revision,
+                &d.group_ids,
+                d.collapsed,
+            )
+            .map_err(|e| order_error(e, requested, "set_main_table_fold"))?;
+            serde_json::to_vec(&serde_json::json!({"board_id":requested,"view_revision":saved}))
+                .unwrap()
+        }
         Action::GroupOrder(draft) => {
             let d = draft?;
             store::reorder_groups(&mut tx, board, d.board_revision, &d.group_ids)
@@ -606,7 +636,24 @@ fn handle(
             serde_json::to_vec(&wire(saved)).expect("serializable item")
         }
     };
-    tx.commit().map_err(|_| {
+    tx.commit().map_err(|error| {
+        if fold {
+            log::error!(
+                "set_main_table_fold commit board={requested} sqlstate={:?}",
+                error.code()
+            );
+            // A deferred constraint or trigger can reject COMMIT. Losing the
+            // connection instead gives us no reliable acknowledgment either way.
+            return if error.as_db_error().is_some_and(|e| {
+                e.severity() == "ERROR"
+                    && !e.code().code().starts_with("08")
+                    && e.code().code() != "40003"
+            }) {
+                500u16
+            } else {
+                503u16
+            };
+        }
         log::error!("board request commit failed board={requested}");
         500u16
     })?;
@@ -670,6 +717,14 @@ struct GroupDraft {
 struct GroupOrderDraft {
     board_revision: i64,
     group_ids: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FoldDraft {
+    view_revision: i64,
+    group_ids: Vec<String>,
+    collapsed: bool,
 }
 
 #[derive(serde::Deserialize)]

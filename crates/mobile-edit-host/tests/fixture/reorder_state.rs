@@ -30,8 +30,28 @@ pub struct Snapshot {
     boards: Vec<Value>,
     groups: Vec<Value>,
     receipts: Vec<Value>,
+    views: Vec<Value>,
+    folds: Vec<Value>,
 }
 impl Snapshot {
+    pub fn folded(&self, f: &Fixture, revision: i64, ids: &[&str]) -> Self {
+        let mut expected = self.clone();
+        let b = expected
+            .boards
+            .iter_mut()
+            .find(|b| b["id"] == json!(SELECTED))
+            .unwrap();
+        b["revision"] = json!(b["revision"].as_i64().unwrap() + 1);
+        expected.views = vec![json!({"board_id":SELECTED,"revision":revision})];
+        let mut ids = ids.to_vec();
+        ids.sort_unstable();
+        expected.folds = ids
+            .into_iter()
+            .map(|id| json!({"board_id":SELECTED,"group_id":id}))
+            .collect();
+        assert_eq!(Self::read(f), expected);
+        expected
+    }
     pub fn reordered_groups(&self, f: &Fixture, ids: &[&str]) -> Self {
         let mut expected = self.clone();
         let board = expected
@@ -286,6 +306,10 @@ impl Snapshot {
                 .collect()
         };
         Self {
+            views: rows("SELECT row_to_json(v)::text FROM main_tables v ORDER BY board_id"),
+            folds: rows(
+                "SELECT row_to_json(f)::text FROM main_table_folds f ORDER BY board_id,group_id",
+            ),
             items: rows("SELECT row_to_json(i)::text FROM board_items i ORDER BY id"),
             boards: rows("SELECT row_to_json(b)::text FROM boards b ORDER BY id"),
             groups: rows("SELECT row_to_json(g)::text FROM board_groups g ORDER BY board_id,id"),

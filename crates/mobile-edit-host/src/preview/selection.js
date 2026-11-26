@@ -4,7 +4,7 @@ import {openSelectionMove} from './selection-move.js';
 export function mountSelection(controls, area) {
   const {api, board, busy, setBusy, button} = controls;
   const checked = new Set(), rowControls = new Map(), headers = new Map();
-  let anchor, resolved;
+  let anchor, resolved, snapshot;
   const toolbar = document.createElement('div'), count = document.createElement('span');
   toolbar.setAttribute('role', 'toolbar'); toolbar.setAttribute('aria-label', 'Selected item actions');
   const notice = document.createElement('div'); notice.setAttribute('role', 'status');
@@ -23,6 +23,7 @@ export function mountSelection(controls, area) {
     }
     for (const group of board().groups) {
       const box = headers.get(group.id), n = group.items.filter(r => checked.has(r.id)).length;
+      if (!box) continue;
       box.checked = n > 0 && n === group.items.length;
       box.indeterminate = n > 0 && !box.checked;
     }
@@ -36,7 +37,7 @@ export function mountSelection(controls, area) {
   }
   const layout = groups => groups.map(g => [g.id, g.items.map(r => r.id)]);
 
-  async function toggle(group, row, shift) {
+  async function toggle(group, row, shift, selectAll = false) {
     // Native checkbox activation has already flipped the target; show only accepted state.
     paint();
     if (busy() || !api.current()) return;
@@ -55,7 +56,7 @@ export function mountSelection(controls, area) {
         resolved = new Map(ordered);
       }
       const members = resolved.get(group.id);
-      if (!row) { apply(members, !members.every(id => checked.has(id))); return; }
+      if (!row) { apply(members, selectAll || !members.every(id => checked.has(id))); return; }
       if (!resolved.get(anchor.group)?.includes(anchor.id) || !members.includes(row.id)) throw Error('Range unavailable');
       const order = Array.from(resolved.values()).flat();
       const a = order.indexOf(anchor.id), b = order.indexOf(row.id);
@@ -81,9 +82,12 @@ export function mountSelection(controls, area) {
     return box;
   }
   function resetSnapshot() {
-    resolved = undefined; rowControls.clear(); headers.clear(); notice.replaceChildren();
+    rowControls.clear(); headers.clear();
+    // A Viewer folding a section remounts controls, not the accepted grid.
+    if (snapshot === board()) return;
+    snapshot = board(); resolved = undefined; notice.replaceChildren();
     const visible = new Set(board().rows.map(r => r.id));
     for (const id of checked) if (!visible.has(id)) checked.delete(id);
   }
-  return {checkbox, paint, resetSnapshot, multiDrag: id => checked.size > 1 && checked.has(id)};
+  return {checkbox, paint, resetSnapshot, selectGroup: group => toggle(group, null, false, true), multiDrag: id => checked.size > 1 && checked.has(id)};
 }

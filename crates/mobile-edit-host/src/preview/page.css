@@ -20,6 +20,7 @@ li { padding: .45rem; border-bottom: 1px solid #c5d6d1; overflow-wrap: anywhere;
 .add-item input { margin: 0; min-width: 0; }
 .row-menu { float: right; }
 .group-menu { float: right; }
+.fold-toggle { float: left; padding: 0 .35rem; margin: 0 .3rem; }
 .group-menu button { padding: .1rem .45rem; }
 #recovery-nav details:not([open]) > a,
 #new-item-options details:not([open]) > button { display: none; }

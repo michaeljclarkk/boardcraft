@@ -19,7 +19,7 @@ export async function reorderJourney(action, {uuid, send, click, key, wait, requ
     await wait(`(() => { const rows=[...document.querySelectorAll('#items li')];
       return rows.map(r=>r.dataset.itemId).join()==='${ids}' && rows.map(r=>r.querySelector('.item-name')?.innerText).join()==='Sketch,Ink,Ink,Fold,Ink' &&
         [...document.querySelectorAll('#items section')].map(s=>s.dataset.groupId+':'+s.querySelector('h2').innerText).join()==='g-90:Work / 4 items,g-10:Reserve / No Items,g-20:Work / 1 item' &&
-        document.querySelectorAll('.reorder-grip').length===${viewer?0:5} && !document.querySelector('#items li input:not([type=checkbox]),dialog,[aria-expanded=true]'); })()`, 'accepted rows, counts and controls');
+        document.querySelectorAll('.reorder-grip').length===${viewer?0:5} && !document.querySelector('#items li input:not([type=checkbox]),dialog,[aria-expanded=true]:not(.fold-toggle)'); })()`, 'accepted rows, counts and controls');
   }
   let movement='stay';
   switch(action) {

@@ -12,6 +12,7 @@ import {groupLifecycleJourney} from './group-lifecycle.mjs';
 import {groupCreateJourney} from './group-create.mjs';
 import {groupEditJourney} from './group-edit.mjs';
 import {groupOrderJourney} from './group-order.mjs';
+import {foldJourney} from './fold.mjs';
 
 const [profile, mode, port] = process.argv.slice(2);
 const primary = `http://127.0.0.1:${port}`;
@@ -195,8 +196,8 @@ async function destination(expected, fresh = true) {
     id === uuid(expected[i][0]) && title === expected[i][1] && hit && bottom > top && (!i || top >= rows[i-1][3])), 'ordered destination items');
   const visibleControls = await observe(`Array.from(document.querySelectorAll('input, textarea, button, a, [contenteditable=true]'))
     .filter(c => c.getClientRects().length && !c.matches('.row-menu [aria-expanded=false],.group-menu [aria-expanded=false],input[type=checkbox]')).map(c => c.innerText)`);
-  check(JSON.stringify(visibleControls) === JSON.stringify(denied ? ['Retry destination','Back to boards'] : ['', '+ Add item', 'Back to boards']) &&
-    await observe(`!document.querySelector('#items input:enabled:not([type=checkbox]), #items button:enabled:not([aria-expanded])')`), 'read only destination controls');
+  check(JSON.stringify(visibleControls) === JSON.stringify(denied ? ['Retry destination','Back to boards'] : ['▾','', '+ Add item', 'Back to boards']) &&
+    await observe(`!document.querySelector('#items input:enabled:not([type=checkbox]), #items button:enabled:not([aria-expanded],[hidden])')`), 'read only destination controls');
   check(JSON.stringify(browser.selectionStatuses.splice(0)) === JSON.stringify(fresh ? [denied ? 403 : 200] : []), 'selected response status');
 }
 
@@ -213,6 +214,7 @@ async function resumed(n, denied = false) {
   requests([resolve,selectedGet(n)]); statuses([resolve,200],[selectedGet(n),denied ? 403 : 200]); await historyAt(boardPath(n));
 }
 async function perform({action, password, rows, otherPort}) {
+  if (action.startsWith('fold ')) return foldJourney(action.slice(5), {browser,uuid,click,key,wait,check,requests,statuses,reload,selectedGet,resolve,observe,list,origin,choose,password,passwordStep,identifierScreen,type,enter,login});
   if (action.startsWith('new group ')) return groupCreateJourney(action.slice(10), {browser,uuid,click,key,type,wait,check,requests,statuses,reload,selectedGet,resolve,observe,login,list,origin});
   if (action.startsWith('edit group ')) return groupEditJourney(action.slice(11), {browser,uuid,click,key,type,wait,check,requests,statuses,reload,selectedGet,resolve,observe,login,list,origin});
   if (action.startsWith('order groups ')) return groupOrderJourney(action.slice(13), {browser,uuid,click,key,wait,check,requests,statuses,reload,selectedGet,resolve,observe,list,origin});
