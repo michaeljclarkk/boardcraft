@@ -144,6 +144,23 @@ async function noRows(empty) {
 // Fixture UUIDs, independent of the page's labels, dataset and requests.
 const uuid = n => '00000000-0000-0000-0000-' + n.toString(16).padStart(12, '0');
 const selectedGet = n => ['GET', `/navigation/boards/${uuid(n)}`];
+async function grouped(board, editable, saved = false) {
+  const expected = board === 202 ? [['g-70','Work / 1 item',[[62,'Outline']]]] : [
+    ['g-90','Work / 2 items',[[73,'Sketch'],[61,'Ink']]], ['g-10','Reserve / No Items',[]],
+    ['g-20','Work / 1 item',[[59,saved ? 'Coral' : 'Ink']]]
+  ];
+  const shape = expected.map(([id,heading,items]) => [id,heading,items.map(([n,title]) => [uuid(n),title,editable])]);
+  await wait(`(() => {
+    const visible = e => { const r=e.getBoundingClientRect(); return r.height>0 && e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)); };
+    const actual = [...document.querySelectorAll('#items > section')].map(s => {
+      const h = s.querySelector('h2');
+      return [s.dataset.groupId,visible(h) && h.innerText,[...s.querySelectorAll('li')].map(r =>
+        [r.dataset.itemId,visible(r) && r.innerText,!!r.querySelector('button:not(:disabled)')])];
+    });
+    return JSON.stringify(actual)===${JSON.stringify(JSON.stringify(shape))} && !document.querySelector('#items input, #failures button');
+  })()`, 'visible grouped board');
+  for (const [,heading] of expected) { await named('region',heading); await named('heading',heading); }
+}
 async function destination(expected, fresh = true) {
   const denied = !expected;
   await wait(`${focus(denied ? 'retry-destination' : 'back')} && document.querySelector('#boards').hidden
@@ -178,6 +195,32 @@ async function resumed(n, denied = false) {
 }
 async function perform({action, password, rows, otherPort}) {
   switch (action) {
+    case 'groups member': case 'groups viewer':
+      statuses([login,200],[resolve,200],[list,200]);
+      await send('Emulation.setDeviceMetricsOverride',{width:1000,height:900,deviceScaleFactor:1,mobile:false});
+      await click('#boards li:last-child a','Review','link'); await grouped(201,action==='groups member');
+      requests([selectedGet(201)]); statuses([selectedGet(201),200]); await historyAt(boardPath(201),'push'); break;
+    case 'groups save': {
+      const row = `[data-group-id="g-20"] [data-item-id="${uuid(59)}"]`;
+      await click(row+' button','Ink'); await key('F2','F2',113);
+      await wait(`document.activeElement.matches('${row} input') && document.activeElement.value==='Ink'`, 'group editor identity');
+      await key('a','KeyA',65,2); await type(' Coral '); await enter(); await grouped(201,true,true);
+      const put = ['PUT',selectedGet(201)[1]+`/items/${uuid(59)}/name`];
+      requests([put]); statuses([put,200]); await historyAt(boardPath(201)); break;
+    }
+    case 'groups reload':
+      await reload(); await grouped(201,true,true); requests([resolve,selectedGet(201)]);
+      statuses([resolve,200],[selectedGet(201),200]); await historyAt(boardPath(201)); break;
+    case 'groups sibling':
+      statuses([list,200]); await click(`[data-board-id="${uuid(202)}"]`,'Review','link');
+      await grouped(202,true); requests([selectedGet(202)]); statuses([selectedGet(202),200]); await historyAt(boardPath(202),'push'); break;
+    case 'groups denied':
+      check(JSON.stringify(browser.selectionStatuses.splice(0))==='[200]', 'initial grouped read');
+      await reload(); await resumed(201,true);
+      check(await observe(`!document.querySelector('#items > *, #failures > *')`), 'denied groups removed'); break;
+    case 'groups retry':
+      await click('#retry-destination','Retry destination'); await grouped(201,false); requests([selectedGet(201)]);
+      statuses([selectedGet(201),200]); await historyAt(boardPath(201)); break;
     case 'waiting sibling':
       await choose('B',primary+boardPath(202)); await identifierScreen(); await historyAt(boardPath(202)); requests([]); statuses();
       await choose('A'); break;

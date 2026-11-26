@@ -114,7 +114,8 @@ async function loadDestination(id, current, notice = '') {
   const path = `/navigation/boards/${encodeURIComponent(id)}`;
   async function read() {
     const response = await fetchResponse(path);
-    return {rows: await response.json(), editable: response.headers.get('boardcraft-board-access') === 'edit'};
+    const groups = await response.json();
+    return {groups, rows: groups.flatMap(g => g.items), editable: response.headers.get('boardcraft-board-access') === 'edit'};
   }
   try {
     const board = await read();
@@ -137,7 +138,9 @@ async function loadDestination(id, current, notice = '') {
   } catch (error) {
     if (!current()) return;
     if (error === 401) return forgetSession();
-    alert.textContent = [notice, error === 403 || error === 404 ? 'Destination unavailable' : 'Could not load board'].filter(Boolean).join(' ');
+    const message = error === 413 ? 'Board too large for this preview' :
+      error === 403 || error === 404 ? 'Destination unavailable' : 'Could not load board';
+    alert.textContent = [notice, message].filter(Boolean).join(' ');
     retry.onclick = () => run(loadRoute);
     retry.hidden = false;
   }

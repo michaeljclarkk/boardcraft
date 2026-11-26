@@ -17,6 +17,124 @@ fn preview_browser_session_is_origin_bound() {
     browser_transport::check();
 }
 
+#[test]
+fn preview_groups_require_active_membership() {
+    browser_transport::groups();
+}
+
+#[test]
+fn group_migration_preserves_flat_boards() {
+    use boardcraft_board::{Board, BoardId, ItemId, store};
+    use uuid::Uuid;
+    let schema = fixture::Schema::new();
+    let connect = || schema.config.connect(postgres::NoTls).unwrap();
+    let empty = selection::SIBLING;
+    let full = selection::SELECTED;
+    let mut db = connect();
+    db.batch_execute(include_str!("../../board/migrations/0001_boards.sql"))
+        .unwrap();
+    db.batch_execute(include_str!(
+        "../../board/migrations/0002_item_revision.sql"
+    ))
+    .unwrap();
+    db.batch_execute("CREATE TABLE rustday_migrations(version integer PRIMARY KEY); INSERT INTO rustday_migrations VALUES (1),(2)").unwrap();
+    db.execute("INSERT INTO boards VALUES ($1),($2)", &[&empty, &full])
+        .unwrap();
+    db.execute("INSERT INTO board_items(id,board_id,position,title,revision) VALUES ($1,$3,9,' Padded ',5),($2,$3,3,'Review',1)", &[&SECOND,&FIRST,&full]).unwrap();
+    for _ in 0..2 {
+        store::migrate(&mut db).unwrap();
+        db = connect();
+        let groups = db
+            .query(
+                "SELECT board_id,id,name,position,active FROM board_groups ORDER BY board_id",
+                &[],
+            )
+            .unwrap();
+        assert_eq!(groups.len(), 2);
+        for (r, board) in groups.iter().zip([full, empty]) {
+            assert_eq!(
+                (
+                    r.get::<_, Uuid>(0),
+                    r.get::<_, &str>(1),
+                    r.get::<_, &str>(2),
+                    r.get::<_, i64>(3),
+                    r.get::<_, bool>(4)
+                ),
+                (board, "main", "Items", 0, true)
+            );
+        }
+        let items = db.query("SELECT board_id,group_id,id,position,title,revision FROM board_items ORDER BY position",&[]).unwrap();
+        assert_eq!(items.len(), 2);
+        for (r, (id, pos, title, rev)) in items
+            .iter()
+            .zip([(FIRST, 3, "Review", 1), (SECOND, 9, " Padded ", 5)])
+        {
+            assert_eq!(
+                (
+                    r.get::<_, Uuid>(0),
+                    r.get::<_, &str>(1),
+                    r.get::<_, Uuid>(2),
+                    r.get::<_, i64>(3),
+                    r.get::<_, &str>(4),
+                    r.get::<_, i64>(5)
+                ),
+                (full, "main", id, pos, title, rev)
+            );
+        }
+        assert!(
+            store::load_items(&mut db, BoardId::new(empty).unwrap())
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+    }
+    let mut snapshot = Board::new(BoardId::new(Uuid::new_v4()).unwrap());
+    snapshot
+        .add_item(ItemId::new(Uuid::from_u128(91)).unwrap(), "New")
+        .unwrap();
+    store::create_board(&mut db, &snapshot).unwrap();
+    let groups = store::load_groups(&mut connect(), snapshot.id())
+        .ok()
+        .unwrap();
+    assert_eq!(groups.len(), 1);
+    let g = &groups[0];
+    assert_eq!(g.id, "main");
+    assert_eq!(g.items.len(), 1);
+    assert_eq!(
+        (
+            g.items[0].id.as_uuid().as_u128(),
+            g.items[0].title.as_str(),
+            g.items[0].revision
+        ),
+        (91, "New", 1)
+    );
+    db.execute("INSERT INTO board_groups SELECT $1,'empty-'||n,'Empty',0,true FROM generate_series(1,$2::bigint) n", &[&empty,&(store::GROUPED_ROW_LIMIT-1)]).unwrap();
+    let err = db
+        .execute(
+            "UPDATE board_items SET group_id='empty-1' WHERE id=$1",
+            &[&FIRST],
+        )
+        .unwrap_err();
+    assert_eq!(
+        err.code(),
+        Some(&postgres::error::SqlState::FOREIGN_KEY_VIOLATION)
+    );
+    let empty = BoardId::new(empty).unwrap();
+    assert_eq!(
+        store::load_groups(&mut db, empty).ok().unwrap().len(),
+        store::GROUPED_ROW_LIMIT as usize
+    );
+    db.execute(
+        "INSERT INTO board_groups VALUES ($1,'overflow','Overflow',0,true)",
+        &[&empty.as_uuid()],
+    )
+    .unwrap();
+    assert!(matches!(
+        store::load_groups(&mut db, empty),
+        Err(store::GroupReadError::TooLarge)
+    ));
+}
+
 use boardcraft_account::{Role, revoke};
 use boardcraft_mobile_edit_client::{Credentials, EditClient, EditError, NameEdit, SavedItem};
 use caller::Caller;

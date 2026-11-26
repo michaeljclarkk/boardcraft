@@ -98,6 +98,20 @@ export function mountNames(board, list, failures, api) {
     }
     li.append(display); return li;
   }
-  function render() { list.replaceChildren(...board.rows.map(cell)); }
+  function section(group) {
+    const region = document.createElement('section');
+    region.dataset.groupId = group.id;
+    const heading = document.createElement('h2');
+    const count = group.items.length;
+    heading.textContent = `${group.name} / ${count ? count + (count === 1 ? ' item' : ' items') : 'No Items'}`;
+    heading.id = `group-${group.id}`;
+    region.setAttribute('aria-labelledby', heading.id);
+    const rows = document.createElement('ul');
+    rows.setAttribute('aria-label', 'Board items');
+    rows.append(...group.items.map(cell));
+    region.append(heading, rows);
+    return region;
+  }
+  function render() { list.replaceChildren(...board.groups.map(section)); }
   render();
 }

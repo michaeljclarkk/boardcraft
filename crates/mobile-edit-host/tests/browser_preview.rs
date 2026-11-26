@@ -31,6 +31,49 @@ fn check_catalog(app: &Preview, session: &StoredSession, joined: bool) {
     app.catalog.check(&app.f, joined);
 }
 
+fn grouped_board(role: boardcraft_account::Role) -> (Preview, StoredSession) {
+    let mut app = Preview::with_role(false, "open", role);
+    assert_no_session(&app.f);
+    app.act("login");
+    let session = StoredSession::only(&app.f, app.account);
+    selection::seed_groups(&app.f);
+    (app, session)
+}
+
+fn grouped_checkpoint(app: &Preview, session: &StoredSession, joined: bool, saved: bool) {
+    assert!(StoredSession::only(&app.f, app.account) == *session);
+    app.catalog.check_grants(&app.f, joined);
+    selection::check_groups(&app.f, saved);
+}
+
+#[test]
+fn browser_opens_and_edits_grouped_board() {
+    let (mut app, session) = grouped_board(boardcraft_account::Role::Member);
+    for (action, saved) in [
+        ("groups member", false),
+        ("groups save", true),
+        ("groups reload", true),
+        ("back saved", true),
+        ("groups sibling", true),
+    ] {
+        app.act(action);
+        grouped_checkpoint(&app, &session, true, saved);
+    }
+}
+
+#[test]
+fn browser_grouped_board_rechecks_membership() {
+    let (mut app, session) = grouped_board(boardcraft_account::Role::Viewer);
+    app.act("groups viewer");
+    grouped_checkpoint(&app, &session, true, false);
+    app.catalog.membership(&app.f, false);
+    app.act("groups denied");
+    grouped_checkpoint(&app, &session, false, false);
+    app.catalog.membership(&app.f, true);
+    app.act("groups retry");
+    grouped_checkpoint(&app, &session, true, false);
+}
+
 #[test]
 fn browser_direct_board_survives_sign_in() {
     let mut app = Preview::start(false, "open direct");

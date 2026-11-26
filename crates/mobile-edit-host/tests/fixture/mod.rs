@@ -38,17 +38,8 @@ pub struct Fixture {
     pub board: Uuid,
 }
 
-impl Fixture {
-    #[cfg(test)]
-    pub fn start() -> Self {
-        Self::with_titles(["Review", "Review"])
-    }
-
-    pub fn with_titles(titles: [&str; 2]) -> Self {
-        Self::before_host(titles, |_, _, _| {})
-    }
-
-    pub fn before_host(titles: [&str; 2], setup: impl FnOnce(&Config, &mut Client, Uuid)) -> Self {
+impl Schema {
+    pub fn new() -> Self {
         let mut config: Config = std::env::var("RUSTDAY_TEST_DATABASE_URL")
             .expect("RUSTDAY_TEST_DATABASE_URL is required")
             .parse()
@@ -62,7 +53,23 @@ impl Fixture {
             ));
         let mut db = config.connect(NoTls).unwrap();
         db.batch_execute(&format!("CREATE SCHEMA {name}")).unwrap();
-        let schema = Schema { config, name };
+        Self { config, name }
+    }
+}
+
+impl Fixture {
+    #[cfg(test)]
+    pub fn start() -> Self {
+        Self::with_titles(["Review", "Review"])
+    }
+
+    pub fn with_titles(titles: [&str; 2]) -> Self {
+        Self::before_host(titles, |_, _, _| {})
+    }
+
+    pub fn before_host(titles: [&str; 2], setup: impl FnOnce(&Config, &mut Client, Uuid)) -> Self {
+        let schema = Schema::new();
+        let mut db = schema.config.connect(NoTls).unwrap();
         store::migrate(&mut db).unwrap();
         let board = Uuid::new_v4();
         let mut seed = Board::new(BoardId::new(board).unwrap());

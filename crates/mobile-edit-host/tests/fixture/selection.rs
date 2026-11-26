@@ -16,6 +16,106 @@ pub const SIBLING: Uuid = Uuid::from_u128(202);
 pub const SELECTED: Uuid = Uuid::from_u128(201);
 pub const HIDDEN: Uuid = Uuid::from_u128(204);
 
+#[cfg(test)]
+pub fn seed_groups(f: &Fixture) {
+    let mut db = f.connect();
+    let mut tx = db.transaction().unwrap();
+    for (board, id, name, pos, active) in [
+        (SELECTED, "g-20", "Work", 2i64, true),
+        (SIBLING, "g-70", "Work", 1, true),
+        (SELECTED, "g-10", "Reserve", 2, true),
+        (SELECTED, "g-30", "Retired", 0, false),
+        (SELECTED, "g-90", "Work", 1, true),
+    ] {
+        tx.execute(
+            "INSERT INTO board_groups(board_id,id,name,position,active) VALUES ($1,$2,$3,$4,$5)",
+            &[&board, &id, &name, &pos, &active],
+        )
+        .unwrap();
+    }
+    tx.execute(
+        "UPDATE board_items SET group_id='g-90',position=position*2 WHERE board_id=$1",
+        &[&SELECTED],
+    )
+    .unwrap();
+    tx.execute(
+        "UPDATE board_items SET group_id='g-70' WHERE board_id=$1",
+        &[&SIBLING],
+    )
+    .unwrap();
+    for (id, group, title) in [(59, "g-20", "Ink"), (57, "g-30", "Stored")] {
+        tx.execute(
+            "INSERT INTO board_items (id,board_id,group_id,title,position) VALUES ($1,$2,$3,$4,0)",
+            &[&Uuid::from_u128(id), &SELECTED, &group, &title],
+        )
+        .unwrap();
+    }
+    tx.execute(
+        "DELETE FROM board_groups WHERE board_id IN ($1,$2) AND id='main'",
+        &[&SELECTED, &SIBLING],
+    )
+    .unwrap();
+    tx.commit().unwrap();
+}
+
+// Independent oracle includes inactive rows, which no product read returns.
+#[cfg(test)]
+pub fn check_groups(f: &Fixture, saved: bool) {
+    let mut db = f.connect();
+    let groups = db.query("SELECT board_id,id,name,position,active FROM board_groups WHERE board_id IN ($1,$2) ORDER BY board_id,id", &[&SELECTED,&SIBLING]).unwrap();
+    let expected = [
+        (SELECTED, "g-10", "Reserve", 2, true),
+        (SELECTED, "g-20", "Work", 2, true),
+        (SELECTED, "g-30", "Retired", 0, false),
+        (SELECTED, "g-90", "Work", 1, true),
+        (SIBLING, "g-70", "Work", 1, true),
+    ];
+    assert_eq!(groups.len(), expected.len());
+    for (r, e) in groups.iter().zip(expected) {
+        assert_eq!(
+            (
+                r.get::<_, Uuid>(0),
+                r.get::<_, &str>(1),
+                r.get::<_, &str>(2),
+                r.get::<_, i64>(3),
+                r.get::<_, bool>(4)
+            ),
+            e
+        );
+    }
+    let items = db.query("SELECT board_id,group_id,id,position,title,revision FROM board_items WHERE board_id IN ($1,$2,$3) ORDER BY id", &[&SELECTED,&SIBLING,&f.board]).unwrap();
+    let expected = [
+        (f.board, "main", 17, 1, "Review", 1),
+        (f.board, "main", 42, 0, "Review", 1),
+        (SELECTED, "g-30", 57, 0, "Stored", 1),
+        (
+            SELECTED,
+            "g-20",
+            59,
+            0,
+            if saved { "Coral" } else { "Ink" },
+            if saved { 2 } else { 1 },
+        ),
+        (SELECTED, "g-90", 61, 2, "Ink", 1),
+        (SIBLING, "g-70", 62, 0, "Outline", 1),
+        (SELECTED, "g-90", 73, 0, "Sketch", 1),
+    ];
+    assert_eq!(items.len(), expected.len());
+    for (r, e) in items.iter().zip(expected) {
+        assert_eq!(
+            (
+                r.get::<_, Uuid>(0),
+                r.get::<_, &str>(1),
+                r.get::<_, Uuid>(2).as_u128(),
+                r.get::<_, i64>(3),
+                r.get::<_, &str>(4),
+                r.get::<_, i64>(5)
+            ),
+            e
+        );
+    }
+}
+
 pub fn selected_rows() -> Vec<SavedItem> {
     rows(&[(73, "Sketch"), (61, "Ink")])
 }

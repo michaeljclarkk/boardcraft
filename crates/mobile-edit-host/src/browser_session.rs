@@ -105,6 +105,7 @@ impl Sessions {
                 req,
                 path,
                 Ok(token.clone()),
+                crate::ReadShape::Grouped,
             ),
             _ => Err(404),
         };

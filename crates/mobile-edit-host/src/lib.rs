@@ -98,7 +98,15 @@ impl Host {
                         }
                         _ => {
                             let token = access::bearer(&req);
-                            handle(&mut db, board, mode, &mut req, &path, token)
+                            handle(
+                                &mut db,
+                                board,
+                                mode,
+                                &mut req,
+                                &path,
+                                token,
+                                ReadShape::Flat,
+                            )
                         }
                     }
                 };
@@ -210,6 +218,30 @@ fn navigation_boards(
     Ok(serde_json::to_vec(&summaries).expect("serializable summaries"))
 }
 
+enum ReadShape {
+    Flat,
+    Grouped,
+}
+
+fn grouped_body(tx: &mut postgres::Transaction<'_>, board: BoardId) -> Result<Vec<u8>, u16> {
+    let groups = store::load_groups(tx, board).map_err(|err| match err {
+        store::GroupReadError::Missing => 404u16,
+        store::GroupReadError::TooLarge => 413,
+        store::GroupReadError::Database(error) => {
+            log::error!(
+                "load_groups board={} sqlstate={:?}",
+                board.as_uuid(),
+                error.code()
+            );
+            500
+        }
+    })?;
+    let groups: Vec<_> = groups.into_iter().map(|group| serde_json::json!({
+        "id": group.id, "name": group.name, "items": group.items.into_iter().map(wire).collect::<Vec<_>>()
+    })).collect();
+    Ok(serde_json::to_vec(&groups).expect("serializable groups"))
+}
+
 fn handle(
     db: &mut Client,
     scoped_board: BoardId,
@@ -217,6 +249,7 @@ fn handle(
     req: &mut Request,
     path: &str,
     token: Result<Token, u16>,
+    shape: ReadShape,
 ) -> ApiResult {
     let path: Vec<_> = path.split('/').collect();
     use access::Operation::*;
@@ -254,6 +287,9 @@ fn handle(
     let board = BoardId::new(requested).ok_or(404u16)?;
     let can_edit = access::authorize(&mut tx, account, board, operation)?;
     let body = match rename {
+        None if matches!((operation, shape), (SelectedRead, ReadShape::Grouped)) => {
+            grouped_body(&mut tx, board)?
+        }
         None => {
             let rows = store::load_items(&mut tx, board)
                 .map_err(|error| {

@@ -11,3 +11,5 @@ ul { padding-left: 1.5rem; }
 li { padding: .45rem; border-bottom: 1px solid #c5d6d1; overflow-wrap: anywhere; }
 [role=alert] { color: #8a331e; }
 #items button { white-space: pre-wrap; }
+#items h2 { font-size: 1.1rem; margin: .75rem 0 .25rem; }
+#items ul { margin: 0; }

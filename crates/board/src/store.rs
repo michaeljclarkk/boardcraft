@@ -30,6 +30,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
         tx.batch_execute(include_str!("../migrations/0002_item_revision.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (2)", &[])?;
     }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version = 3",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0003_board_groups.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (3)", &[])?;
+    }
     tx.commit()
 }
 
@@ -37,6 +47,7 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
 pub fn create_board(client: &mut Client, board: &Board) -> Result<(), Error> {
     let mut tx = client.transaction()?;
     tx.execute("INSERT INTO boards (id) VALUES ($1)", &[&board.id.0])?;
+    tx.execute("INSERT INTO board_groups (board_id,id,name,position,active) VALUES ($1,'main','Items',0,true)", &[&board.id.0])?;
     let ids: Vec<_> = board.items.iter().map(|item| item.id.0).collect();
     let titles: Vec<_> = board.items.iter().map(|item| item.title.as_str()).collect();
     tx.execute(
@@ -73,8 +84,10 @@ pub fn load_items(
 ) -> Result<Option<Vec<StoredItem>>, Error> {
     // One snapshot; the outer join distinguishes an empty board from an absent one.
     let rows = client.query(
-        "SELECT i.id, i.title, i.revision FROM boards b LEFT JOIN board_items i ON i.board_id = b.id
-         WHERE b.id = $1 ORDER BY i.position",
+        "SELECT i.id, i.title, i.revision FROM boards b
+         LEFT JOIN board_groups g ON g.board_id=b.id AND g.active
+         LEFT JOIN board_items i ON (i.board_id,i.group_id)=(g.board_id,g.id)
+         WHERE b.id=$1 ORDER BY g.position,g.id,i.position",
         &[&id.0],
     )?;
     if rows.is_empty() {
@@ -93,6 +106,63 @@ pub fn load_items(
     Ok(Some(items))
 }
 
+pub struct ItemGroup {
+    pub id: String,
+    pub name: String,
+    pub items: Vec<StoredItem>,
+}
+
+pub const GROUPED_ROW_LIMIT: i64 = 500;
+
+pub enum GroupReadError {
+    Missing,
+    TooLarge,
+    Database(Error),
+}
+
+/// One ordered snapshot. An empty group consumes one row of the projection budget.
+pub fn load_groups(
+    client: &mut impl postgres::GenericClient,
+    board: BoardId,
+) -> Result<Vec<ItemGroup>, GroupReadError> {
+    let rows = client
+        .query(
+            "SELECT g.id, g.name, i.id, i.title, i.revision FROM boards b
+         LEFT JOIN board_groups g ON g.board_id=b.id AND g.active
+         LEFT JOIN board_items i ON (i.board_id,i.group_id)=(g.board_id,g.id)
+         WHERE b.id=$1 ORDER BY g.position,g.id,i.position LIMIT $2",
+            &[&board.0, &(GROUPED_ROW_LIMIT + 1)],
+        )
+        .map_err(GroupReadError::Database)?;
+    if rows.is_empty() {
+        return Err(GroupReadError::Missing);
+    }
+    if rows.len() > GROUPED_ROW_LIMIT as usize {
+        return Err(GroupReadError::TooLarge);
+    }
+    let mut groups: Vec<ItemGroup> = Vec::new();
+    for row in rows {
+        let Some(id) = row.get::<_, Option<String>>(0) else {
+            continue;
+        };
+        if groups.last().is_none_or(|g| g.id != id) {
+            groups.push(ItemGroup {
+                id,
+                name: row.get(1),
+                items: Vec::new(),
+            });
+        }
+        if let Some(id) = row.get(2) {
+            groups.last_mut().unwrap().items.push(StoredItem {
+                id: ItemId(id),
+                title: row.get(3),
+                revision: row.get(4),
+            });
+        }
+    }
+    Ok(groups)
+}
+
 #[derive(Debug)]
 pub enum SaveError {
     Rejected(RenameError),
@@ -108,7 +178,8 @@ pub fn current_item(
 ) -> Result<StoredItem, SaveError> {
     client
         .query_opt(
-            "SELECT title, revision FROM board_items WHERE board_id=$1 AND id=$2",
+            "SELECT i.title,i.revision FROM board_items i JOIN board_groups g
+             ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.board_id=$1 AND i.id=$2 AND g.active",
             &[&board.0, &item.0],
         )
         .and_then(|row| {
@@ -216,7 +287,9 @@ fn save_title(
     let mut tx = client.transaction().map_err(fault)?;
     let row = tx
         .query_opt(
-            "SELECT title, revision FROM board_items WHERE board_id = $1 AND id = $2 FOR UPDATE",
+            "SELECT i.title,i.revision FROM board_items i JOIN board_groups g
+             ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.board_id=$1 AND i.id=$2 AND g.active
+             FOR UPDATE OF i FOR SHARE OF g",
             &[&board.0, &item.0],
         )
         .map_err(fault)?

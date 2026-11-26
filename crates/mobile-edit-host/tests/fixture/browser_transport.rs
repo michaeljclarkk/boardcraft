@@ -17,6 +17,7 @@ use std::{
 // login result in process. No response/request is formatted on failure.
 struct Reply {
     status: u16,
+    access: Option<String>,
     cookie: Option<String>,
     body: String,
 }
@@ -40,6 +41,7 @@ fn send(
     let (head, body) = response.split_once("\r\n\r\n").unwrap();
     let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
     let mut cookie = None;
+    let mut access = None;
     for (k, v) in head.lines().filter_map(|h| h.split_once(':')) {
         assert!(
             !k.eq_ignore_ascii_case("Location")
@@ -48,12 +50,116 @@ fn send(
         if k.eq_ignore_ascii_case("Set-Cookie") {
             assert!(cookie.replace(v.trim().to_owned()).is_none());
         }
+        if k.eq_ignore_ascii_case("boardcraft-board-access") {
+            access = Some(v.trim().to_owned());
+        }
     }
     Reply {
         status,
+        access,
         cookie,
         body: body.to_owned(),
     }
+}
+
+pub(super) fn groups() {
+    use selection::SELECTED;
+    use serde_json::{Value, json};
+    use uuid::Uuid;
+    let f = Fixture::start();
+    let password = Uuid::new_v4().to_string();
+    let member = f.seed_account("reader", &password, Role::Member);
+    let catalog = selection::Catalog::new(&f, member);
+    selection::seed_groups(&f);
+    let host = Host::start_preview(&f.schema.config, BoardId::new(f.board).unwrap()).unwrap();
+    let authority = format!("127.0.0.1:{}", host.port);
+    let origin = format!("http://{authority}");
+    let call = |method: &str, path: &str, fields: &[(&str, &str)], body: &str| {
+        send(host.port, method, path, &authority, fields, body)
+    };
+    let login = call(
+        "POST",
+        "/preview/api/session",
+        &[("Origin", &origin), ("Boardcraft-Preview", "login")],
+        &json!({"identifier":"reader","password":password}).to_string(),
+    );
+    assert_eq!(login.status, 200);
+    let binding: String = serde_json::from_str(&login.body).unwrap();
+    let cookie = login.cookie.as_deref().unwrap().split(';').next().unwrap();
+    let pair = [("Cookie", cookie), ("Boardcraft-Preview", binding.as_str())];
+    let session = StoredSession::only(&f, member);
+    let path = format!("/preview/api/navigation/boards/{SELECTED}");
+    for half in [&pair[0..1], &pair[1..2]] {
+        let reply = call("GET", &path, half, "");
+        assert!(matches!(reply.status, 401 | 403) && reply.body.is_empty());
+    }
+    let row = |n, title| json!({"id":Uuid::from_u128(n),"title":title,"revision":1});
+    let expected = json!([
+        {"id":"g-90","name":"Work","items":[row(73,"Sketch"),row(61,"Ink")]},
+        {"id":"g-10","name":"Reserve","items":[]},
+        {"id":"g-20","name":"Work","items":[row(59,"Ink")]}
+    ]);
+    for (role, hint) in [("viewer", "read"), ("member", "edit")] {
+        f.connect()
+            .execute("UPDATE accounts SET role=$2 WHERE id=$1", &[&member, &role])
+            .unwrap();
+        let reply = call("GET", &path, &pair, "");
+        assert_eq!((reply.status, reply.access.as_deref()), (200, Some(hint)));
+        assert_eq!(
+            serde_json::from_str::<Value>(&reply.body).unwrap(),
+            expected
+        );
+    }
+    let deny_put = |id| {
+        let reply = call(
+            "PUT",
+            &format!("{path}/items/{}/name", Uuid::from_u128(id)),
+            &[pair[0], pair[1], ("Origin", &origin)],
+            r#"{"revision":1,"title":"Coral"}"#,
+        );
+        assert!(reply.status == 404 && reply.body.is_empty());
+    };
+    deny_put(57);
+    let active = |board: Uuid, group: &str, value: bool| {
+        assert_eq!(
+            f.connect()
+                .execute(
+                    "UPDATE board_groups SET active=$3 WHERE board_id=$1 AND id=$2",
+                    &[&board, &group, &value]
+                )
+                .unwrap(),
+            1
+        )
+    };
+    active(SELECTED, "g-20", false);
+    deny_put(59);
+    active(SELECTED, "g-20", true);
+    catalog.membership(&f, false);
+    assert_eq!(call("GET", &path, &pair, "").status, 403);
+    catalog.membership(&f, true);
+    assert!(StoredSession::only(&f, member) == session);
+    let native = boardcraft_account::sign_in(&f.schema.config, "reader", &password).unwrap();
+    let client = EditClient::with_bearer(host.port, native.encoded()).unwrap();
+    assert_eq!(
+        serde_json::to_value(client.read_selected_board(SELECTED).unwrap()).unwrap(),
+        json!([row(73, "Sketch"), row(61, "Ink"), row(59, "Ink")])
+    );
+    active(f.board, "main", false);
+    assert!(client.read(f.board).unwrap().is_empty());
+    assert_eq!(
+        client.rename(
+            f.board,
+            super::fixture::SECOND,
+            &boardcraft_mobile_edit_client::NameEdit {
+                revision: 1,
+                title: "Coral".into()
+            }
+        ),
+        Err(boardcraft_mobile_edit_client::EditError::Missing)
+    );
+    active(f.board, "main", true);
+    catalog.check_grants(&f, true);
+    selection::check_groups(&f, false);
 }
 
 pub(super) fn check() {

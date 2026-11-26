@@ -411,3 +411,18 @@ test('30 requires same-origin tab resume, distinct failures and an isolated brow
   run();
   for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
 });
+
+test('31 requires the physical group grid, identity-preserving edit, revoked access and migrated rows', () => {
+  const previous = packets.find(p => p.id === '30-browser-session-resume');
+  const packet = packets.find(p => p.id === '31-browser-board-groups');
+  const browser = [...previous.browserCases, 'browser_opens_and_edits_grouped_board', 'browser_grouped_board_rechecks_membership'];
+  const host = [...previous.cases, 'preview_groups_require_active_membership', 'group_migration_preserves_flat_boards'];
+  assert.deepEqual(packet, { ...previous, id: '31-browser-board-groups', cases: host, browserCases: browser });
+  const run = missing => verify(packet, (_bin, args) => {
+    const names = args.includes('browser_preview') ? browser : args.includes('loopback_board_access') ? host : [];
+    const present = names.filter(n => n !== missing);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  run();
+  for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
+});
