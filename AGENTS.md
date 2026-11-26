@@ -1,0 +1,7 @@
+# Rustday
+
+Read the current packet in `ROADMAP.md`, then the previous milestone's handoff under `handoffs/` (if any). For feature work, load `rustday-feature` or read `.opencode/skills/rustday-feature/SKILL.md`. Work only on the assigned packet. Use newly written, public-safe code, requirements and synthetic fixtures. Verify behavior against the approved reference where provided; record uncertainties rather than inferring behavior from appearances. Use Rustday naming throughout code, docs, tests, skills and handoffs. Keep private project names and paths out of published material. Do not source customer data, screenshots, credentials, internal research, or production databases. Do not publish, commit, push, select a license, or change the runner or its gates in a worker session.
+
+Rust owns business rules. PostgreSQL owns durable state. GPUI with [Longbridge GPUI Kit](https://github.com/longbridge/gpui-kit) owns desktop presentation. Start with Kit controls; for a custom control, name the interaction the closest Kit control cannot support and test it. Never block the UI thread on database work.
+
+Leave a handoff at `handoffs/<packet-id>.json`: `status` (`ready` or `blocked`), `summary` (what works or why blocked), `evidence` (an array of actual checks and outcomes), and `next` (the next concrete action). All except the array are strings. Write a blocked handoff even if the only obstacle is a missing tool. Only the runner advances the queue. Preserve unfinished edits across retries.

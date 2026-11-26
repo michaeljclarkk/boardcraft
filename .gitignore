@@ -1,0 +1,9 @@
+/target/
+/.rustday/
+/.private/
+.env
+.env.*
+!.env.example
+*.dump
+*.pem
+*.key
