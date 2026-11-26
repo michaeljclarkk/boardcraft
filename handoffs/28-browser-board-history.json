@@ -1,0 +1,13 @@
+{
+  "status": "ready",
+  "summary": "The preview now uses real board links and keeps the requested board address through sign-in. Browser Back and Forward fetch the current list or board under the in-memory session. The existing Rust navigation handlers still own authorization and ordered reads.",
+  "evidence": [
+    "browser_history_rechecks_board_access passed in isolated Chromium. The two Review links had distinct board addresses. Opening 201 showed only 73 Sketch and 61 Ink. Native Back fetched the list and Forward fetched 201 again. After membership removal, Forward issued one selected GET (403) and showed Destination unavailable without items or sign-in. Restoring membership and clicking Retry issued one GET (200) at the same history entry.",
+    "The same journey held an item read pending, traversed Back, and observed the empty loading list before releasing the fixture lock. The superseded 200 response did not put item rows back in the document or change the list address.",
+    "browser_direct_board_survives_sign_in passed. A direct document visit to 202 displayed sign-in with no items, Fetch request or session. The identifier step and rejected password preserved the entry. Correction issued exactly POST /session, GET /session and a selected GET for 202 (200), showing only 62 Outline. Back to boards then pushed the list and fetched it once.",
+    "Fresh database connections checked closed-workspace membership, exact subscriptions to 201, 202 and 203, and both Review boards' ordered IDs, titles and revision 1. The new journeys compared the sole Viewer session verifier privately after successful sign-in. These plain-board outcomes match the recorded synthetic reference; saved views, session restoration, independent tabs and native history remain open.",
+    "preview_document_preserves_scoped_api passed: only preview mode served the static shell for a canonical board GET with document navigation metadata. Ordinary scoped reads returned 401 without a bearer, the authorized target's rows with a bearer, and 404 for the other target. Noncanonical and non-GET requests did not gain a shell fallback.",
+    "All six headless browser_preview cases passed serially in separate profiles and schemas. All nine loopback_board_access regressions passed. cargo test --locked --workspace passed all 24 portable tests using the separate browser-packet target. cargo fmt --all --check and git diff --check passed. The worker shell denied node --test scripts/run.test.mjs; runner regressions remain unverified here."
+  ],
+  "next": "Run the registered packet 28 coordinator verification, including the Node runner regressions."
+}

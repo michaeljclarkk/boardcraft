@@ -87,7 +87,7 @@ It opens `/preview/` in a new, temporary Chromium profile, enters a generated Vi
 
 The unattended check runs separately: `cargo test --locked -p boardcraft-mobile-edit-host --features browser-smoke --test browser_preview -- --test-threads=1`. If a foreground preview is already running on Windows, use a separate process-local `CARGO_TARGET_DIR` for builds and tests. Both paths use a private automation pipe. `Host::start_preview` serves the page from the API's ephemeral loopback origin. The page keeps its bearer in memory; a reload starts at sign-in.
 
-Click a board or focus its button and press Enter to read its items. **Back to boards** requests the current list. If access has changed, **Destination unavailable** offers **Retry destination** for that same board. Returning to an empty list shows **No boards**; use **Refresh** after access is restored.
+Click a board link or focus it and press Enter to open `/boards/{uuid}`. A direct visit to that address keeps you there through sign-in and opens the board after session resolution. **Back to boards** opens `/preview/`, even after direct entry. Browser Back and Forward fetch the current list or board again. If access has changed, **Destination unavailable** offers **Retry destination** at the same address. Returning to an empty list shows **No boards**; use **Refresh** after access is restored.
 
 ### Android native host
 

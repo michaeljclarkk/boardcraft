@@ -19,6 +19,8 @@ const boardNavigation = { ...visibleBoardList,
     windowsCases: [...visibleBoardList.windowsCases, 'opens_selected_board_by_id', 'revoked_membership_blocks_board_selection'] };
 
 const previewCases = ['browser_reject_correct_list_logout', 'browser_empty_unavailable_then_retry'];
+const previewNavigation = { database: true, model: boardNavigation.model, target: boardNavigation.target,
+  cases: boardNavigation.cases, browserCases: [...previewCases, 'browser_opens_selected_board_by_id', 'browser_revoked_membership_blocks_selection'] };
 
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
@@ -61,9 +63,10 @@ export const packets = [
   { id: '25-windows-board-link', ...boardNavigation, boardLink: true },
   { id: '26-browser-board-preview', ...boardNavigation, boardLink: true,
     browserCases: previewCases },
-  { id: '27-browser-board-navigation', database: true, model: boardNavigation.model,
-    target: boardNavigation.target, cases: boardNavigation.cases,
-    browserCases: [...previewCases, 'browser_opens_selected_board_by_id', 'browser_revoked_membership_blocks_selection'] },
+  { id: '27-browser-board-navigation', ...previewNavigation },
+  { id: '28-browser-board-history', ...previewNavigation,
+    cases: [...previewNavigation.cases, 'preview_document_preserves_scoped_api'],
+    browserCases: [...previewNavigation.browserCases, 'browser_history_rechecks_board_access', 'browser_direct_board_survives_sign_in'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

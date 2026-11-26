@@ -8,7 +8,7 @@ const browser = launch(profile, mode === 'foreground');
 const send = browser.send;
 const input = createInterface({input: process.stdin, terminal: false});
 const check = (ok, checkpoint) => { if (!ok) throw Error(checkpoint); };
-// Evaluate observations only. All interactions go through Chromium input dispatch.
+// Evaluate observations only. Use Chromium input and native history commands for actions.
 async function observe(expression) {
   const value = await send('Runtime.evaluate', {expression, returnByValue: true});
   if (value.exceptionDetails) return undefined;
@@ -26,14 +26,14 @@ async function named(role, name) {
   const {nodes} = await send('Accessibility.getFullAXTree');
   check(nodes.some(n => !n.ignored && n.role?.value === role && n.name?.value === name), 'accessible control');
 }
-async function click(selector, name) {
-  await named('button', name);
+async function click(selector, name, role = 'button') {
+  await named(role, name);
   const point = await observe(`(() => {
     const b = document.querySelector(${JSON.stringify(selector)}), r = b.getBoundingClientRect();
     const x = r.x + r.width/2, y = r.y + r.height/2;
     return !b.disabled && document.elementFromPoint(x,y) === b && {x,y};
   })()`);
-  check(point, 'button hit target');
+  check(point, 'control hit target');
   for (const type of ['mousePressed', 'mouseReleased']) {
     await send('Input.dispatchMouseEvent', {type, ...point, button:'left', clickCount:1});
   }
@@ -49,6 +49,25 @@ function requests(expected) {
 }
 const login = ['POST','/session'], resolve = ['GET','/session'], list = ['GET','/navigation/boards'];
 const focus = id => `document.activeElement.id === '${id}' && !document.activeElement.disabled`;
+const root = '/preview/';
+const boardPath = n => '/boards/' + uuid(n);
+let entries, index;
+async function historyAt(path, movement = 'stay') {
+  const actual = await send('Page.getNavigationHistory');
+  const urls = actual.entries.map(({id,url}) => ({id,url}));
+  if (!entries) {
+    check(urls.slice(0,-1).every(e => e.url === 'about:blank'), 'direct document entry');
+    entries = urls; index = urls.length - 1;
+  } else if (movement === 'push') {
+    entries = [...entries.slice(0,index+1), urls[index+1]]; index++;
+  } else if (movement === 'back') index--;
+  else if (movement === 'forward') index++;
+  check(index === actual.currentIndex && JSON.stringify(entries) === JSON.stringify(urls)
+    && urls[index]?.url === origin+path && await observe('location.href') === origin+path, 'history entries and address');
+}
+async function traverse(delta) {
+  await send('Page.navigateToHistoryEntry', {entryId: entries[index+delta].id});
+}
 async function identifierScreen() {
   await wait(`${focus('identifier')} && document.activeElement.value === '' && !document.querySelector('li')
     && !document.querySelector('#boards').getBoundingClientRect().height
@@ -65,6 +84,7 @@ async function passwordStep(identifier) {
 async function reject() {
   await type('incorrect'); await enter();
   await wait(`${focus('password')} && document.querySelector('[role=alert]').innerText === 'Incorrect username or password'
+    && !document.querySelector('li') && document.querySelector('#destination').hidden
     && !document.querySelector('#boards').getBoundingClientRect().height`, 'retryable rejection');
   requests([login]);
 }
@@ -72,20 +92,20 @@ async function visibleRows(expected, alert = '') {
   await wait(`document.querySelector('li') && !document.querySelector('#refresh').disabled`, 'board list');
   await named('list','Boards'); await named('button','Refresh'); await named('button','Log out');
   const rows = await observe(`Array.from(document.querySelectorAll('ul > li'), li => {
-    const b = li.querySelector(':scope > button:only-child');
+    const b = li.querySelector(':scope > a[href]:only-child');
     const r = b.getBoundingClientRect();
     const hit = document.elementFromPoint(r.x + r.width/2, r.y + r.height/2);
-    return [b.dataset.boardId, b.innerText, r.top, r.bottom, r.width, !b.disabled && hit === b && r.bottom <= innerHeight && r.top >= 0];
+    return [b.dataset.boardId, b.innerText, r.top, r.bottom, r.width, hit === b && r.bottom <= innerHeight && r.top >= 0, b.href];
   })`);
-  check(rows.length === expected.length && rows.every(([id,name,top,bottom,width,visible],i) =>
-    id === expected[i][0] && name === expected[i][1] && width > 0 && visible && bottom > top
+  check(rows.length === expected.length && rows.every(([id,name,top,bottom,width,visible,href],i) =>
+    id === expected[i][0] && href === `${origin}/boards/${id}` && name === expected[i][1] && width > 0 && visible && bottom > top
     && (!i || top >= rows[i-1][3])), 'ordered visible IDs and names');
   const {nodes} = await send('Accessibility.getFullAXTree');
-  const names = nodes.filter(n => !n.ignored && n.role?.value === 'button').map(n => n.name.value);
+  const names = nodes.filter(n => !n.ignored && n.role?.value === 'link').map(n => n.name.value);
   for (const [,name] of expected) {
-    check(names.filter(label => label === name).length === expected.filter(r => r[1] === name).length, 'accessible board buttons');
+    check(names.filter(label => label === name).length === expected.filter(r => r[1] === name).length, 'accessible board links');
   }
-  check(await observe(`!document.querySelector('li a, #boards input, #boards textarea, [contenteditable=true]') && document.querySelector('#destination').hidden
+  check(await observe(`!document.querySelector('li button, #boards input, #boards textarea, [contenteditable=true]') && document.querySelector('#destination').hidden
     && document.querySelector('#empty').hidden && document.querySelector('[role=alert]').innerText === ${JSON.stringify(alert)}`), 'list presentation');
 }
 async function noRows(empty) {
@@ -124,8 +144,17 @@ async function destination(expected) {
 
 async function perform({action, password, rows}) {
   switch (action) {
-    case 'open':
-      await browser.open(origin+'/preview/'); await identifierScreen(); requests([]); break;
+    case 'open': case 'open direct': {
+      const path = action === 'open' ? root : boardPath(202);
+      await browser.open(origin+path); await identifierScreen(); requests([]); await historyAt(path); break;
+    }
+    case 'direct identifier':
+      await passwordStep('reader'); await historyAt(boardPath(202)); break;
+    case 'direct rejection':
+      await reject(); await historyAt(boardPath(202)); break;
+    case 'direct login':
+      await type(password); await enter(); await destination([[62,'Outline']]);
+      requests([login,resolve,selectedGet(202)]); await historyAt(boardPath(202)); break;
     case 'reject':
       await enter(); await identifierScreen();
       await passwordStep('unknown'); await reject();
@@ -134,12 +163,12 @@ async function perform({action, password, rows}) {
       await key('a','KeyA',65,2); await passwordStep('reader'); await reject(); break;
     case 'login':
       if (await observe(focus('identifier'))) await passwordStep('reader');
-      await type(password); await enter(); await visibleRows(rows); requests([login,resolve,list]); break;
+      await type(password); await enter(); await visibleRows(rows); requests([login,resolve,list]); await historyAt(root); break;
     case 'empty': case 'unavailable':
-      await click('#refresh','Refresh'); await noRows(action === 'empty'); requests([list]); break;
+      await click('#refresh','Refresh'); await noRows(action === 'empty'); requests([list]); await historyAt(root); break;
     case 'retry':
       await noRows(false); requests([]);
-      await click('#refresh','Retry board list'); await visibleRows(rows); requests([list]); break;
+      await click('#refresh','Retry board list'); await visibleRows(rows); requests([list]); await historyAt(root); break;
     case 'logout':
       await click('#logout','Log out'); await identifierScreen(); requests([['POST','/session/logout']]); break;
     case 'failed logout': {
@@ -150,22 +179,38 @@ async function perform({action, password, rows}) {
     }
     case 'expired':
       await click('#refresh','Refresh'); await identifierScreen(); requests([list]); break;
-    case 'open last': case 'denied': case 'retry denied':
-      if (action === 'retry denied') await click('#retry-destination','Retry destination');
-      else await click('#boards li:last-child button','Review');
-      await destination(action === 'open last' ? [[73,'Sketch'],[61,'Ink']] : null);
-      requests([selectedGet(201)]); break;
+    case 'open last': case 'denied': case 'retry denied': case 'retry restored':
+    case 'forward': case 'forward denied': {
+      let movement = 'push';
+      if (action.startsWith('retry')) { await click('#retry-destination','Retry destination'); movement = 'stay'; }
+      else if (action.startsWith('forward')) { await traverse(1); movement = 'forward'; }
+      else await click('#boards li:last-child a','Review','link');
+      await destination(action.endsWith('denied') ? null : [[73,'Sketch'],[61,'Ink']]);
+      requests([selectedGet(201)]); await historyAt(boardPath(201), movement); break;
+    }
     case 'open first review':
       await key('Tab','Tab',9);
       check(await observe(`document.activeElement.dataset.boardId === '${uuid(202)}'`), 'focused first Review');
-      await enter(); await destination([[62,'Outline']]); requests([selectedGet(202)]); break;
-    case 'back': case 'back empty':
-      await click('#back','Back to boards');
-      if (action === 'back') await visibleRows(rows); else await noRows(true);
-      requests([list]); break;
+      await enter(); await destination([[62,'Outline']]); requests([selectedGet(202)]); await historyAt(boardPath(202),'push'); break;
+    case 'back': case 'back empty': case 'history back':
+      if (action === 'history back') await traverse(-1); else await click('#back','Back to boards');
+      if (action === 'back empty') await noRows(true); else await visibleRows(rows);
+      requests([list]); await historyAt(root, action === 'history back' ? 'back' : 'push'); break;
+    case 'forward then back pending':
+      await traverse(1);
+      await wait(`!document.querySelector('#destination').hidden && document.querySelector('#back').disabled
+        && !document.querySelector('li')`, 'pending selected read');
+      await historyAt(boardPath(201),'forward'); await named('heading','Board items'); requests([selectedGet(201)]);
+      await traverse(-1);
+      await wait(`!document.querySelector('#boards').hidden && document.querySelector('#refresh').disabled
+        && !document.querySelector('li')`, 'pending list read');
+      await historyAt(root,'back'); await named('heading','Available boards'); requests([list]); break;
+    case 'settled list':
+      await visibleRows(rows); await historyAt(root); requests([]);
+      check(JSON.stringify(browser.selectionStatuses.splice(0)) === '[200]', 'superseded selected response'); break;
     case 'refresh restored':
       await noRows(true); requests([]);
-      await click('#refresh','Refresh'); await visibleRows(rows); requests([list]); break;
+      await click('#refresh','Refresh'); await visibleRows(rows); requests([list]); await historyAt(root); break;
     case 'park': await browser.windowClosed; break;
     default: throw Error('unknown action');
   }

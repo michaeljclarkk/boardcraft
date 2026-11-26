@@ -64,6 +64,82 @@ fn list_visible_boards_in_navigation_order() {
 }
 
 #[test]
+fn preview_document_preserves_scoped_api() {
+    use boardcraft_board::BoardId;
+    use boardcraft_mobile_edit_host::Host;
+    use std::io::{Read, Write};
+
+    fn request(port: u16, method: &str, path: &str, metadata: &str) -> (u16, String, String) {
+        let mut stream =
+            std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        write!(
+            stream,
+            "{method} {path} HTTP/1.0\r\nHost: localhost\r\n{metadata}\r\n"
+        )
+        .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        let status = headers.split_whitespace().nth(1).unwrap().parse().unwrap();
+        (status, headers.to_ascii_lowercase(), body.to_owned())
+    }
+
+    let f = Fixture::start();
+    let s = selection::Selection::new(&f);
+    let preview = Host::start_preview(&f.schema.config, BoardId::new(f.board).unwrap()).unwrap();
+    let target = format!("/boards/{}", f.board);
+    let other = format!("/boards/{}", selection::SELECTED);
+    let mode = "Sec-Fetch-Mode: navigate\r\n";
+    let dest = "Sec-Fetch-Dest: document\r\n";
+    let doc = format!("{mode}{dest}");
+    for path in [&target, &other] {
+        let (status, headers, body) = request(preview.port, "GET", path, &doc);
+        assert_eq!(status, 200);
+        for header in [
+            "content-type: text/html",
+            "cache-control: no-store",
+            "content-security-policy: default-src 'none'",
+        ] {
+            assert!(headers.contains(header));
+        }
+        assert_eq!(body, include_str!("../src/preview/index.html"));
+    }
+    for metadata in [
+        "",
+        mode,
+        dest,
+        "Sec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: iframe\r\n",
+    ] {
+        assert_eq!(request(preview.port, "GET", &target, metadata).0, 401);
+    }
+    for port in [s.host.port, f.host.port] {
+        assert_eq!(request(port, "GET", &target, &doc).0, 401);
+    }
+    for path in [
+        format!("{other}/"),
+        format!("{other}?view=main"),
+        other.replace('-', ""),
+        format!("/boards/{}", uuid::Uuid::nil()),
+        format!("/boards/{:X}", selection::SELECTED.hyphenated()),
+    ] {
+        let (status, _, body) = request(preview.port, "GET", &path, &doc);
+        assert!(status >= 400 && body.is_empty());
+    }
+    assert_eq!(request(preview.port, "POST", &target, &doc).0, 404);
+    let client = EditClient::with_bearer(preview.port, s.token.encoded()).unwrap();
+    assert_eq!(client.read(f.board).unwrap(), rows("Review", 1));
+    assert_eq!(client.read(selection::SELECTED), Err(EditError::Missing));
+    assert_eq!(
+        client.read_selected_board(selection::SELECTED).unwrap(),
+        selection::selected_rows()
+    );
+    s.check(&f, true);
+}
+
+#[test]
 fn selected_board_read_checks_current_membership() {
     use selection::*;
     let f = Fixture::start();

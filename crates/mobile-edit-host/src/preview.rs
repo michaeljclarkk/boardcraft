@@ -1,12 +1,28 @@
 use std::io::Cursor;
 use tiny_http::{Header, Method, Request, Response};
+use uuid::Uuid;
+
+fn board_document(request: &Request) -> bool {
+    let Some(text) = request.url().strip_prefix("/boards/") else {
+        return false;
+    };
+    let has = |name, value: &str| {
+        request
+            .headers()
+            .iter()
+            .any(|h| h.field.equiv(name) && h.value.as_str() == value)
+    };
+    Uuid::parse_str(text).is_ok_and(|id| !id.is_nil() && id.to_string() == text)
+        && has("Sec-Fetch-Mode", "navigate")
+        && has("Sec-Fetch-Dest", "document")
+}
 
 pub(super) fn asset(request: &Request) -> Option<Response<Cursor<&'static [u8]>>> {
     if request.method() != &Method::Get {
         return None;
     }
     let (mime, bytes): (&str, &[u8]) = match request.url() {
-        "/preview/" => (
+        path if path == "/preview/" || board_document(request) => (
             "text/html; charset=utf-8",
             include_bytes!("preview/index.html"),
         ),

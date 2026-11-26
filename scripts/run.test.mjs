@@ -365,3 +365,19 @@ test('27 requires both browser selection outcomes, previous browser cases and sc
     'cargo test --locked -p boardcraft-mobile-edit-host --features browser-smoke --test browser_preview -- --test-threads=1',
     'node --test scripts/run.test.mjs', 'cargo test --locked --workspace --test loopback_board_access', 'cargo test --locked --workspace']);
 });
+
+test('28 adds real browser traversal, signed-out direct entry and a scoped document/API boundary', () => {
+  const previous = packets.find(p => p.id === '27-browser-board-navigation');
+  const packet = packets.find(p => p.id === '28-browser-board-history');
+  const browser = [...previous.browserCases, 'browser_history_rechecks_board_access', 'browser_direct_board_survives_sign_in'];
+  const host = [...previous.cases, 'preview_document_preserves_scoped_api'];
+  assert.deepEqual(packet, { ...previous, id: '28-browser-board-history', cases: host, browserCases: browser });
+  const output = names => [...names.map(n => `test ${n} ... ok`),
+    `test result: ok. ${names.length} passed; 0 failed; 0 ignored`].join('\n');
+  const run = missing => verify(packet, (_bin, args) => {
+    if (args.includes('browser_preview')) return output(browser.filter(n => n !== missing));
+    if (args.includes('loopback_board_access')) return output(host.filter(n => n !== missing));
+  });
+  run();
+  for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
+});

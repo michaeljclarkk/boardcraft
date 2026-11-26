@@ -27,6 +27,10 @@ pub struct Preview {
 
 impl Preview {
     pub fn open(foreground: bool) -> Self {
+        Self::start(foreground, "open")
+    }
+
+    pub fn start(foreground: bool, entry: &str) -> Self {
         let f = Fixture::with_titles(["Review", "Review"]);
         let password = Uuid::new_v4().simple().to_string();
         let viewer = f.seed_account("reader", &password, Role::Viewer);
@@ -41,7 +45,7 @@ impl Preview {
             viewer,
             password,
         };
-        app.act("open");
+        app.act(entry);
         app
     }
 
@@ -49,7 +53,13 @@ impl Preview {
         let mut command = json!({"action": action});
         if matches!(
             action,
-            "login" | "retry" | "failed logout" | "back" | "refresh restored"
+            "login"
+                | "retry"
+                | "failed logout"
+                | "back"
+                | "refresh restored"
+                | "history back"
+                | "settled list"
         ) {
             // Read the catalog records and grant links directly, not the operation under test.
             self.catalog.check(&self.f, true);
@@ -79,7 +89,7 @@ impl Preview {
                     .collect::<Vec<_>>()
             );
         }
-        if action == "login" {
+        if matches!(action, "login" | "direct login") {
             command["password"] = json!(self.password);
         }
         self.driver.command(action, command);
