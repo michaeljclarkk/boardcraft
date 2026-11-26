@@ -1,6 +1,6 @@
 # Rustday
 
-Rustday is a native workspace for organizing work on boards. It translates our own C# and React/TypeScript (TSX) application into Rust: C# business rules become Rust operations, and React interactions become native Longbridge GPUI Kit views. The goal is 1:1 parity with the monday.com workflows we use and our own extensions. Rustday is independent and uses no monday.com code, branding or assets.
+Rustday is a native workspace for organizing work on boards. Rustday is inspired by monday dot com, but does not, and will not ever use any of it's code, branding or assets.
 
 **First workflow:** Two items on a board are both called “Review”. Rename the second one to “Review artwork”, close the app, then reopen the board. The first row should still say “Review”; the second should keep its new name. The edit targets the item's ID, so matching titles never decide which row changes.
 
