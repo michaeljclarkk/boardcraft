@@ -31,6 +31,8 @@ $null = [System.Diagnostics.Process]::Start($child)
 
 An incomplete, malformed or wrong-origin configuration opens interactive sign-in without contacting the host. A matching token must resolve and have access to the selected board. Revocation returns to sign-in; **Retry loading** after a connection failure uses the same session in memory. The desktop does not save credentials or update its environment.
 
+On a connected board with edit access, double-click a name or focus it and press F2. Escape cancels; Enter or moving focus away submits a changed name. `Saving…` shows the submitted spelling until the host returns the committed name. Viewer names are disabled. If a Member loses write access during editing, the window reports the denial and checks read access again. Connected edits do not use the developer recovery directory.
+
 For failed-name recovery, reuse the same actor UUID, board UUID and local directory across launches. `BOARDCRAFT_LOCAL_ACTOR` is an explicit development context, not sign-in or board authorization. Without it, failure actions work only in the live window. Local files default to `%LOCALAPPDATA%\boardcraft\name-recovery`; override with `BOARDCRAFT_RECOVERY_DIR` (an absolute directory private to the local user). The graphical tests supply their own temporary directories and actors. No database configuration goes into the recovery file.
 
 To check recovery manually, reject a blank name, close without dismissing and relaunch. The board should show the accepted label, failure reason, `Retry change` and `Dismiss`. Dismiss and reopen: the failure should be gone. If local recovery cannot be read, the board still shows its accepted names and a warning. New failures last only in that window. The unreadable file stays untouched; there is no in-app repair or discard action.
@@ -62,6 +64,8 @@ With the disposable database active, run `cargo test --locked --workspace --test
 Run `cargo test --locked --workspace --test loopback_board_access` for the protected-host fixture. It signs in generated accounts in memory and supplies `EditClient::with_bearer` with the issued session. Starting the host with a board UUID or seeding a desktop board grants no access. Do not put a bearer on a command line or in a URL.
 
 `GET /boards/{board}` returns ordered `{id,title,revision}` rows. `PUT /boards/{board}/items/{item}/name` takes JSON `{title,revision}` and returns the committed row. Both resolve the session and check the board grant on every call. Missing/rejected session: 401 (sign in); denied access: 403 (do not retry unchanged permissions); unavailable access check: 503 (retry later). Title rejection, revision conflict, missing records and unexpected board faults retain 422, 409, 404 and 500 respectively. This is a local fixture, not a deployed API.
+
+The GET response header `boardcraft-board-access` describes access at read time: only a single `edit` value enables Windows name editing. `read`, a missing header or an unknown value leaves the board read-only. The PUT does not take a permission hint.
 
 ### Android native host
 

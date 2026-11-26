@@ -36,6 +36,9 @@ export const packets = [
     windowsCases: ['windows_login_reject_retry', 'rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] },
   { id: '19-windows-env-session', database: true, model: 'openai/gpt-6.2-astra#high',
     windowsCases: ['windows_env_session_is_origin_scoped', 'windows_login_reject_retry', 'rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] },
+  { id: '20-windows-connected-name', database: true, model: 'openai/gpt-6.2-astra#high',
+    target: 'loopback_board_access', cases: ['member_edits_within_scope', 'viewer_reads_but_cannot_rename'],
+    windowsCases: ['connected_member_renames_then_reopens', 'connected_viewer_cannot_rename', 'windows_env_session_is_origin_scoped', 'windows_login_reject_retry', 'rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -76,7 +79,10 @@ export function verify({ target, buildBins, cases = [], android, kitFrame, kitEd
   };
   if (windowsCases && !kitFrame) {
     exec('node', ['--test', 'scripts/run.test.mjs']);
-    exec('cargo', ['test', '--locked', '-p', 'boardcraft-desktop']);
+    if (target) {
+      requireCases(target, cases, exec('cargo', ['test', '--locked', '--workspace', '--test', target], true));
+      exec('cargo', ['test', '--locked', '--workspace']);
+    } else exec('cargo', ['test', '--locked', '-p', 'boardcraft-desktop']);
     windows();
     return;
   }

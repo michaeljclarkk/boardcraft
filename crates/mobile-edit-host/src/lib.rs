@@ -6,7 +6,7 @@ use boardcraft_board::{
     BoardId, ItemId, RenameError,
     store::{self, SaveError, StoredItem},
 };
-use boardcraft_mobile_edit_client::{Credentials, NameEdit, SavedItem};
+use boardcraft_mobile_edit_client::{BOARD_ACCESS_HEADER, Credentials, NameEdit, SavedItem};
 use postgres::{Client, Config, NoTls};
 use tiny_http::{Header, Method, Request, Response, Server};
 use uuid::Uuid;
@@ -38,14 +38,26 @@ impl Host {
         let worker = thread::spawn(move || {
             while let Ok(mut req) = listener.recv() {
                 let result = match req.url() {
-                    "/session" => session(&config, &mut db, &mut req),
-                    "/session/logout" => logout(&config, &req),
+                    "/session" => session(&config, &mut db, &mut req).map(|body| (body, None)),
+                    "/session/logout" => logout(&config, &req).map(|body| (body, None)),
                     _ => handle(&mut db, board, &mut req),
                 };
                 let response = match result {
-                    Ok(body) => Response::from_data(body).with_header(
-                        Header::from_bytes("Content-Type", "application/json").unwrap(),
-                    ),
+                    Ok((body, hint)) => {
+                        let mut response = Response::from_data(body).with_header(
+                            Header::from_bytes("Content-Type", "application/json").unwrap(),
+                        );
+                        if let Some(can_edit) = hint {
+                            response.add_header(
+                                Header::from_bytes(
+                                    BOARD_ACCESS_HEADER,
+                                    if can_edit { "edit" } else { "read" },
+                                )
+                                .unwrap(),
+                            );
+                        }
+                        response
+                    }
                     Err(401) => Response::from_data(Vec::new())
                         .with_status_code(401)
                         .with_header(Header::from_bytes("WWW-Authenticate", "Bearer").unwrap()),
@@ -114,7 +126,11 @@ fn logout(config: &Config, req: &Request) -> Result<Vec<u8>, u16> {
     Ok(b"null".to_vec())
 }
 
-fn handle(db: &mut Client, board: BoardId, req: &mut Request) -> Result<Vec<u8>, u16> {
+fn handle(
+    db: &mut Client,
+    board: BoardId,
+    req: &mut Request,
+) -> Result<(Vec<u8>, Option<bool>), u16> {
     let path: Vec<_> = req.url().split('/').collect();
     let ["", "boards", requested, route @ ..] = path.as_slice() else {
         return Err(404);
@@ -142,7 +158,7 @@ fn handle(db: &mut Client, board: BoardId, req: &mut Request) -> Result<Vec<u8>,
     if requested != board.as_uuid() {
         return Err(404);
     }
-    access::authorize(&mut tx, account, board, rename.is_some())?;
+    let can_edit = access::authorize(&mut tx, account, board, rename.is_some())?;
     let body = match rename {
         None => {
             let rows = store::load_items(&mut tx, board)
@@ -175,7 +191,7 @@ fn handle(db: &mut Client, board: BoardId, req: &mut Request) -> Result<Vec<u8>,
         log::error!("board request commit failed board={requested}");
         500u16
     })?;
-    Ok(body)
+    Ok((body, target.is_none().then_some(can_edit)))
 }
 
 fn read_edit(req: &mut Request) -> Result<NameEdit, u16> {

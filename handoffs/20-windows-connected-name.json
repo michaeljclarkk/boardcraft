@@ -1,0 +1,12 @@
+{
+  "status": "ready",
+  "summary": "Members can edit names in the connected Windows Kit window. The host returns an edit hint alongside the ordered row array and independently checks current access on every write. The shared name cell submits through EditClient::rename and displays Saved only after the committed row returns. A denied write triggers a fresh authorized read, without replay or a second login.",
+  "evidence": [
+    "All nine windows_smoke cases passed serially in graphical Windows processes, including interactive login, origin-scoped session entry and the five developer-mode regressions. Both new journeys ran the connected child without database or local actor configuration and checked both ordered rows and the original session on fresh PostgreSQL connections at every checkpoint.",
+    "connected_member_renames_then_reopens: single click and F2 opened row 17. Escape after changing the text and unchanged Enter on re-entry each left zero submissions and both Review rows at revision 1. Double-click and blur to row 42 submitted ' Coral ' once. While locked, the second label showed the padded spelling and Saving… while the database still held Review/1. After release, focus remained on row 42 and row 17 displayed Coral. A fresh process showed Review/1 above Coral/2 under the same Member session, with no editor or submission.",
+    "connected_viewer_cannot_rename: the parent demoted the subscribed Member after ' Coral ' appeared in the focused input, before Enter. The window submitted once, displayed Not saved: permission denied, and showed read-only Review labels without Saved. The original session remained and both rows stayed at revision 1. In a cold Viewer window double-click and F2 did not open an input or submit.",
+    "All five loopback_board_access cases passed over production HTTP, including the read hints and direct write enforcement for Member, Viewer and independent demotion. cargo test --locked --workspace passed all 19 portable tests, including rejection of missing, unknown and conflicting edit hints. cargo fmt --all -- --check and git diff --check passed.",
+    "The shell denied node --test scripts/run.test.mjs; runner regressions await coordinator verification. No new Android runtime or reference comparison was performed. Connected durable recovery, logout, live updates and extended conflict/transport journeys remain open."
+  ],
+  "next": "Run the coordinator verification gate for 20-windows-connected-name, including the Node runner regressions."
+}

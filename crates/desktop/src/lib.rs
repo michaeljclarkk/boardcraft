@@ -2,6 +2,7 @@ use boardcraft_board::{
     BoardId, ItemId, RenameError,
     store::{self, StoredItem},
 };
+use boardcraft_mobile_edit_client::{EditClient, EditError, NameEdit};
 use postgres::{Client, Config, NoTls};
 
 /// This development window only opens the explicitly supplied disposable database.
@@ -50,6 +51,25 @@ pub struct Save {
 }
 
 impl Save {
+    pub fn send(self, session: &EditClient) -> Result<StoredItem, EditError> {
+        let saved = session.rename(
+            self.board.as_uuid(),
+            self.item.as_uuid(),
+            &NameEdit {
+                title: self.draft,
+                revision: self.entry_revision,
+            },
+        )?;
+        if saved.id != self.item.as_uuid() || saved.revision < self.entry_revision {
+            return Err(EditError::Transport);
+        }
+        Ok(StoredItem {
+            id: self.item,
+            title: saved.title,
+            revision: saved.revision,
+        })
+    }
+
     pub fn connect_and_run(self, cfg: &Config) -> Result<StoredItem, store::SaveError> {
         let mut db = cfg.connect(NoTls).map_err(|error| {
             eprintln!(

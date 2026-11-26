@@ -35,8 +35,9 @@ pub(super) fn authorize(
     account: Account,
     board: BoardId,
     write: bool,
-) -> Result<(), u16> {
-    if write && account.role.is_read_only() {
+) -> Result<bool, u16> {
+    let can_edit = !account.role.is_read_only();
+    if write && !can_edit {
         return Err(403);
     }
     let board = board.as_uuid();
@@ -52,7 +53,7 @@ pub(super) fn authorize(
         .map_err(unavailable)?
         .ok_or(403u16)?;
     if policy.get::<_, Uuid>(0) == account.id {
-        return Ok(());
+        return Ok(can_edit);
     }
     tx.query_opt(
         "SELECT 1 FROM private_board_subscribers WHERE board_id=$1 AND account_id=$2 FOR SHARE",
@@ -60,5 +61,5 @@ pub(super) fn authorize(
     )
     .map_err(unavailable)?
     .ok_or(403u16)?;
-    Ok(())
+    Ok(can_edit)
 }

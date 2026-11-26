@@ -1,6 +1,8 @@
-//! Read-only HTTP entry. Only the host has a database connection or makes access decisions.
-use boardcraft_mobile_edit_client::{Credentials, EditClient, EditError, SavedItem};
-use gpui_kit::base::Disableable;
+//! HTTP entry. Only the host has a database connection or makes access decisions.
+use super::{Row, RowRecovery};
+use boardcraft_board::{BoardId, ItemId, store::StoredItem};
+use boardcraft_desktop::Save;
+use boardcraft_mobile_edit_client::{Credentials, EditClient, EditError};
 use gpui_kit::component::{
     button::Button,
     input::{Input, InputState},
@@ -15,16 +17,19 @@ enum Screen {
     Loading,
     Retry(EditClient),
     Board {
-        _session: EditClient,
-        rows: Vec<SavedItem>,
+        session: EditClient,
+        can_edit: bool,
+        rows: Vec<Entity<Row>>,
     },
 }
 
-struct Connected {
+pub(super) struct Connected {
     port: u16,
     board: Uuid,
     screen: Screen,
     message: &'static str,
+    #[cfg(all(windows, feature = "native-smoke"))]
+    pub(super) submissions: usize,
 }
 
 /// Decide locally, before constructing any request. Never interpret the supplied origin as a URL.
@@ -46,18 +51,20 @@ fn configured_session(port: u16) -> Result<Option<EditClient>, ()> {
 }
 
 pub(super) fn open(port: u16, board: Uuid, cx: &mut App) {
-    let (_window, _) = open_window(WindowOptions::default(), cx, |window, cx| {
+    let (_window, _view) = open_window(WindowOptions::default(), cx, |window, cx| {
         cx.new(|cx| {
             let mut view = Connected {
                 port,
                 board,
                 screen: Screen::Loading,
                 message: "",
+                #[cfg(all(windows, feature = "native-smoke"))]
+                submissions: 0,
             };
             #[cfg(windows)]
             match configured_session(port) {
                 Ok(Some(client)) => {
-                    view.load(client, window, cx);
+                    view.load(client, "", window, cx);
                     return view;
                 }
                 Ok(None) => (),
@@ -72,7 +79,11 @@ pub(super) fn open(port: u16, board: Uuid, cx: &mut App) {
     #[cfg(all(windows, feature = "native-smoke"))]
     if let Some(mode) = std::env::args().nth(4) {
         cx.update_window(_window, |_, w, _| {
-            super::native_smoke::login::install(board, mode == "--smoke-session", w)
+            if mode.starts_with("--name-") {
+                super::native_smoke::name::install(_view, &mode, w);
+            } else {
+                super::native_smoke::login::install(board, mode == "--smoke-session", w);
+            }
         })
         .unwrap();
     }
@@ -115,7 +126,7 @@ impl Connected {
                 cx.spawn_in(w, async move |view, cx| {
                     let result = work.await;
                     _ = view.update_in(cx, |view, w, cx| match result {
-                        Ok(client) => view.load(client, w, cx),
+                        Ok(client) => view.load(client, "", w, cx),
                         Err(error) => {
                             view.screen = Self::password(identifier, w, cx);
                             view.message = if error == EditError::SessionRejected {
@@ -129,27 +140,72 @@ impl Connected {
                 })
                 .detach();
             }
-            Screen::Retry(client) => self.load(client.clone(), w, cx),
+            Screen::Retry(client) => self.load(client.clone(), "", w, cx),
             _ => return,
         }
         cx.notify();
     }
 
-    fn load(&mut self, client: EditClient, w: &mut Window, cx: &mut Context<Self>) {
+    fn load(
+        &mut self,
+        client: EditClient,
+        notice: &'static str,
+        w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.screen = Screen::Loading;
         let board = self.board;
         let work = cx.background_executor().spawn(async move {
-            let rows = client.resolve().and_then(|()| client.read(board));
+            let rows = client
+                .resolve()
+                .and_then(|()| client.read_with_access(board))
+                .and_then(|read| {
+                    let rows = read
+                        .rows
+                        .into_iter()
+                        .map(|r| {
+                            if r.revision <= 0 {
+                                return Err(EditError::Transport);
+                            }
+                            Ok(StoredItem {
+                                id: ItemId::new(r.id).ok_or(EditError::Transport)?,
+                                title: r.title,
+                                revision: r.revision,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok((rows, read.can_edit))
+                });
             (client, rows)
         });
         cx.spawn_in(w, async move |view, cx| {
             let (client, rows) = work.await;
             _ = view.update_in(cx, |view, w, cx| {
                 view.screen = match rows {
-                    Ok(rows) => Screen::Board {
-                        _session: client,
-                        rows,
-                    },
+                    Ok((items, can_edit)) => {
+                        view.message = notice;
+                        let board = BoardId::new(board).expect("validated at launch");
+                        let rows = items
+                            .into_iter()
+                            .map(|item| {
+                                let row = cx.new(|cx| {
+                                    Row::new(can_edit, board, item, RowRecovery::default(), w, cx)
+                                });
+                                if can_edit {
+                                    cx.subscribe_in(&row, w, |view, row, save: &Save, w, cx| {
+                                        view.save(row.clone(), save.clone(), w, cx)
+                                    })
+                                    .detach();
+                                }
+                                row
+                            })
+                            .collect();
+                        Screen::Board {
+                            session: client,
+                            can_edit,
+                            rows,
+                        }
+                    }
                     Err(EditError::SessionRejected) => {
                         view.message = "Session expired. Sign in again.";
                         Self::identifier(w, cx)
@@ -163,6 +219,68 @@ impl Connected {
                         Screen::Retry(client)
                     }
                 };
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn save(&mut self, row: Entity<Row>, save: Save, w: &mut Window, cx: &mut Context<Self>) {
+        let Screen::Board {
+            session,
+            can_edit: true,
+            rows,
+        } = &self.screen
+        else {
+            return;
+        };
+        if !rows.contains(&row) {
+            return;
+        }
+        let client = session.clone();
+        self.message = "";
+        #[cfg(all(windows, feature = "native-smoke"))]
+        {
+            self.submissions += 1;
+        }
+        let work = cx
+            .background_executor()
+            .spawn(async move { save.send(&client) });
+        cx.spawn_in(w, async move |view, cx| {
+            let result = work.await;
+            _ = view.update_in(cx, |view, w, cx| {
+                let Screen::Board { session, rows, .. } = &view.screen else {
+                    return;
+                };
+                if !rows.contains(&row) {
+                    return;
+                }
+                match result {
+                    Ok(item) => row.update(cx, |row, cx| {
+                        row.edit.finish(Ok(item));
+                        cx.notify();
+                    }),
+                    Err(EditError::SessionRejected) => {
+                        view.screen = Self::identifier(w, cx);
+                        view.message = "Session expired. Sign in again.";
+                    }
+                    Err(error) => {
+                        let notice = match error {
+                            EditError::PermissionDenied => "Not saved: permission denied.",
+                            EditError::InvalidDraft => {
+                                "Not saved: enter a nonblank name of at most 255 UTF-16 units."
+                            }
+                            EditError::Conflict => "Not saved: name revision conflict.",
+                            EditError::Missing => "Not saved: item or board no longer exists.",
+                            EditError::AccessUnavailable => "Not saved: access check unavailable.",
+                            _ => "Save not confirmed. Check the reloaded name.",
+                        };
+                        // Discard this board and its pending projection. Only a fresh
+                        // authorized GET may show rows again; never replay the PUT.
+                        view.load(session.clone(), notice, w, cx);
+                    }
+                }
                 cx.notify();
             });
         })
@@ -192,16 +310,18 @@ impl Render for Connected {
             }
             Screen::Loading => return column.child(Label::new("Loading…")),
             Screen::Retry(_) => "Retry loading",
-            Screen::Board { rows, .. } => {
-                column = column.child(Label::new("Board items · Read only"));
+            Screen::Board { rows, can_edit, .. } => {
+                column = column
+                    .child(Label::new(if *can_edit {
+                        "Board items"
+                    } else {
+                        "Board items · Read only"
+                    }))
+                    .child(Label::new(self.message));
                 if rows.is_empty() {
                     return column.child(Label::new("Empty board"));
                 }
-                return column.children(rows.iter().map(|row| {
-                    Button::new(SharedString::from(format!("title-{}", row.id)))
-                        .disabled(true)
-                        .label(row.title.clone())
-                }));
+                return column.children(rows.iter().cloned());
             }
         };
         column = column.child(

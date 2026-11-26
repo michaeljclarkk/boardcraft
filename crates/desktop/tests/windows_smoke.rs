@@ -14,10 +14,6 @@ use std::{
 use uuid::Uuid;
 
 #[path = "../../mobile-edit-host/tests/fixture/mod.rs"]
-#[expect(
-    dead_code,
-    reason = "this journey uses with_titles rather than the duplicate-title shorthand"
-)]
 mod fixture;
 #[path = "../../mobile-edit-host/tests/fixture/stored_session.rs"]
 mod stored_session;
@@ -174,6 +170,128 @@ fn lines(child: &mut SmokeProcess) -> mpsc::Receiver<String> {
         }
     });
     rx
+}
+
+struct NameFixture {
+    f: fixture::Fixture,
+    member: Uuid,
+    token: boardcraft_account::Token,
+    original: stored_session::StoredSession,
+}
+
+impl NameFixture {
+    fn new() -> Self {
+        let f = fixture::Fixture::start();
+        let password = Uuid::new_v4().simple().to_string();
+        let account = |name| f.seed_account(name, &password, boardcraft_account::Role::Member);
+        f.set_creator(account("owner"));
+        let member = account("boardmember");
+        f.connect()
+            .execute(
+                "INSERT INTO private_board_subscribers(board_id,account_id) VALUES ($1,$2)",
+                &[&f.board, &member],
+            )
+            .unwrap();
+        let token =
+            boardcraft_account::sign_in(&f.schema.config, "boardmember", &password).unwrap();
+        let original = stored_session::StoredSession::only(&f, member);
+        Self {
+            f,
+            member,
+            token,
+            original,
+        }
+    }
+
+    fn exercise(&self, mode: &str, checks: &[&str]) {
+        let f = &self.f;
+        let mut child = SmokeProcess(
+            connected_command(f.host.port, f.board, mode)
+                .env(
+                    "BOARDCRAFT_SESSION_ORIGIN",
+                    format!("http://127.0.0.1:{}", f.host.port),
+                )
+                .env("BOARDCRAFT_SESSION_TOKEN", self.token.encoded())
+                .stdin(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let rx = lines(&mut child);
+        let mut db = f.connect();
+        for &check in checks {
+            let line = rx
+                .recv_timeout(Duration::from_secs(45))
+                .expect("expected name checkpoint");
+            assert!(line == format!("check {check}"), "expected {check}");
+            let (second, revision) = if matches!(check, "saved" | "reopened") {
+                ("Coral", 2)
+            } else {
+                ("Review", 1)
+            };
+            f.check_store(
+                &[
+                    (fixture::FIRST, "Review", 1),
+                    (fixture::SECOND, second, revision),
+                ]
+                .map(|(id, title, revision)| {
+                    boardcraft_mobile_edit_client::SavedItem {
+                        id,
+                        title: title.into(),
+                        revision,
+                    }
+                }),
+            );
+            assert!(stored_session::StoredSession::only(f, self.member) == self.original);
+            match check {
+                "draft" if mode == "--name-demote" => {
+                    assert_eq!(
+                        db.execute(
+                            "UPDATE accounts SET role='viewer' WHERE id=$1",
+                            &[&self.member]
+                        )
+                        .unwrap(),
+                        1
+                    );
+                }
+                "draft" => {
+                    db.batch_execute("BEGIN").unwrap();
+                    db.query_one(
+                        "SELECT id FROM board_items WHERE board_id=$1 AND id=$2 FOR UPDATE",
+                        &[&f.board, &fixture::SECOND],
+                    )
+                    .unwrap();
+                }
+                "pending" => db.batch_execute("COMMIT").unwrap(),
+                _ => (),
+            }
+            writeln!(child.0.stdin.as_mut().unwrap(), "ok").unwrap();
+        }
+        wait_for_close(&mut child);
+    }
+}
+
+#[test]
+fn connected_member_renames_then_reopens() {
+    let journey = NameFixture::new();
+    journey.exercise(
+        "--name-member",
+        &[
+            "opened",
+            "cancelled",
+            "unchanged",
+            "draft",
+            "pending",
+            "saved",
+        ],
+    );
+    journey.exercise("--name-reopen", &["reopened"]);
+}
+
+#[test]
+fn connected_viewer_cannot_rename() {
+    let journey = NameFixture::new();
+    journey.exercise("--name-demote", &["opened", "draft", "denied"]);
+    journey.exercise("--name-viewer", &["read_only"]);
 }
 
 fn exercise(fixture: &Fixture, mode: &str, checks: &[&str], check: impl FnMut(&str)) {

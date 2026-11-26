@@ -3,6 +3,7 @@ use boardcraft_board::{
     store::{self, StoredItem},
 };
 use boardcraft_desktop::{Failure, InlineEdit, Phase, Save, database};
+use gpui_kit::base::Disableable;
 use gpui_kit::component::{
     button::Button,
     input::{Input, InputEvent, InputState},
@@ -19,7 +20,7 @@ use recovery::{Draft, Record, Recovery};
 mod native_smoke;
 
 struct Row {
-    cfg: Config,
+    editable: bool,
     edit: InlineEdit,
     input: Entity<InputState>,
     display_focus: FocusHandle,
@@ -47,7 +48,7 @@ struct RowRecovery {
 
 impl Row {
     fn new(
-        cfg: Config,
+        editable: bool,
         board: BoardId,
         item: StoredItem,
         local: RowRecovery,
@@ -70,7 +71,7 @@ impl Row {
             _ => {}
         });
         Self {
-            cfg,
+            editable,
             edit,
             input,
             display_focus: cx.focus_handle(),
@@ -87,7 +88,11 @@ impl Row {
     }
 
     fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dismissing || self.baseline.is_some() || self.edit.phase() == &Phase::Pending {
+        if !self.editable
+            || self.dismissing
+            || self.baseline.is_some()
+            || self.edit.phase() == &Phase::Pending
+        {
             return;
         }
         let (entry, revision, raw) = match &self.draft {
@@ -223,6 +228,7 @@ impl Row {
                     }))
                     .child(
                         Button::new(self.title_id())
+                            .disabled(!self.editable)
                             .label(self.edit.display().to_owned())
                             .track_focus(&self.display_focus)
                             .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
@@ -252,10 +258,10 @@ impl Workbench {
         &mut self,
         row: Entity<Row>,
         save: Save,
+        cfg: Config,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let cfg = row.read(cx).cfg.clone();
         let r = row.read(cx);
         let (_, item) = r.edit.identity();
         let raw = r.edit.request().expect("submitted name").to_owned();
@@ -388,13 +394,14 @@ impl Workbench {
                                  let draft = drafts.remove(&uuid);
                                  let restore = draft.is_some() && !restored_focus;
                                  let local = RowRecovery { failure: records.remove(&uuid), draft, draft_store: draft_store.clone() };
-                                 let row = cx.new(|cx| Row::new(cfg.clone(), id, item, local, window, cx));
+                                 let row = cx.new(|cx| Row::new(true, id, item, local, window, cx));
                                  if restore {
                                      row.update(cx, |r, cx| r.open(window, cx));
                                      restored_focus = true;
                                  }
-                                 cx.subscribe_in(&row, window, |board, row, save: &Save, w, cx| {
-                                     board.run_save(row.clone(), save.clone(), w, cx);
+                                 let cfg = cfg.clone();
+                                 cx.subscribe_in(&row, window, move |board, row, save: &Save, w, cx| {
+                                     board.run_save(row.clone(), save.clone(), cfg.clone(), w, cx);
                                  }).detach();
                                  row
                             })
@@ -513,7 +520,15 @@ fn main() {
         let board = args.next().unwrap_or_else(|| usage());
         if let Some(extra) = args.next()
             && !(cfg!(all(windows, feature = "native-smoke"))
-                && matches!(extra.as_str(), "--smoke-login" | "--smoke-session")
+                && matches!(
+                    extra.as_str(),
+                    "--smoke-login"
+                        | "--smoke-session"
+                        | "--name-member"
+                        | "--name-reopen"
+                        | "--name-demote"
+                        | "--name-viewer"
+                )
                 && args.next().is_none())
         {
             usage();

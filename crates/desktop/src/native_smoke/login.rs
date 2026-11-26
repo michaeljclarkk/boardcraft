@@ -90,7 +90,7 @@ fn schedule_login(stage: Stage, board: Uuid, w: &Window) {
                         && w.find_all("identifier").is_empty()
                         && w.find_all("password").is_empty()
                 );
-                assert!(message(w, "Board items · Read only"));
+                assert!(message(w, "Board items"));
                 assert!(rows.iter().all(|hits| hits.len() == 1 && hits[0].visible()));
                 assert!(rows[0][0].bounds().bottom() <= rows[1][0].bounds().top());
                 for (hits, title) in rows.iter().zip(["Review sketch", "Ink"]) {

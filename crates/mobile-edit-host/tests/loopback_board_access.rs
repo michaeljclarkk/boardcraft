@@ -186,7 +186,9 @@ fn viewer_reads_but_cannot_rename() {
         .unwrap();
     let client = viewer.client(f.host.port);
     let original = rows("Review", 1);
-    assert_eq!(client.read(f.board).unwrap(), original);
+    let read = client.read_with_access(f.board).unwrap();
+    assert!(!read.can_edit);
+    assert_eq!(read.rows, original);
     assert_eq!(rename(&client, &f, 1), Err(EditError::PermissionDenied));
     f.check_store(&original);
     revoke(&f.schema.config, &viewer.token).unwrap();
@@ -206,7 +208,9 @@ fn member_edits_within_scope() {
     let original = rows("Review", 1);
     let committed = rows("Coral", 2);
     let client = member.client(f.host.port);
-    assert_eq!(client.read(f.board).unwrap(), original);
+    let read = client.read_with_access(f.board).unwrap();
+    assert!(read.can_edit);
+    assert_eq!(read.rows, original);
     assert_eq!(
         rename(&client, &f, original[1].revision).unwrap(),
         committed[1]
@@ -248,7 +252,9 @@ fn member_edits_within_scope() {
             &[&member.id],
         )
         .unwrap();
-    assert_eq!(client.read(f.board).unwrap(), committed);
+    let read = client.read_with_access(f.board).unwrap();
+    assert!(!read.can_edit);
+    assert_eq!(read.rows, committed);
     assert_eq!(
         client.rename(
             f.board,

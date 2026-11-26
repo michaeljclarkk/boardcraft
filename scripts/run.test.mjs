@@ -278,3 +278,27 @@ for (const [id, previous, added] of [
   for (const name of required) assert.throws(() => run(required.filter(n => n !== name)), /Missing passing windows_smoke case/);
   run(required);
 });
+
+test('20 requires Member and Viewer checks at both the host and the window, plus the seven earlier windows', () => {
+  const p = packets.find(p => p.id === '20-windows-connected-name');
+  assert.equal(p.database, true);
+  const host = ['member_edits_within_scope', 'viewer_reads_but_cannot_rename'];
+  const windows = [...packets.find(p => p.id === '19-windows-env-session').windowsCases,
+    'connected_member_renames_then_reopens', 'connected_viewer_cannot_rename'];
+  const calls = [];
+  const run = (absent, ignored = 0) => verify(p, (bin, args, capture) => {
+    calls.push([bin, ...args].join(' '));
+    const names = args.includes('windows_smoke') ? windows : args.includes('loopback_board_access') ? host : undefined;
+    if (!names) return;
+    assert.ok(capture);
+    const present = names.filter(n => n !== absent);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; ${ignored} ignored`].join('\n');
+  });
+  for (const name of [...host, ...windows]) assert.throws(() => run(name), /Missing passing/);
+  assert.throws(() => run(undefined, 1), /No passing/);
+  calls.length = 0;
+  run();
+  assert.deepEqual(calls, ['cargo fmt --all -- --check', 'node --test scripts/run.test.mjs',
+    'cargo test --locked --workspace --test loopback_board_access', 'cargo test --locked --workspace',
+    'cargo test --locked -p boardcraft-desktop --features native-smoke --test windows_smoke -- --test-threads=1']);
+});

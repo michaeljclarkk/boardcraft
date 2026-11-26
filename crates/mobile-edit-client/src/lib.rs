@@ -12,6 +12,13 @@ pub struct SavedItem {
     pub revision: i64,
 }
 
+pub const BOARD_ACCESS_HEADER: &str = "boardcraft-board-access";
+
+pub struct BoardRead {
+    pub rows: Vec<SavedItem>,
+    pub can_edit: bool,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NameEdit {
@@ -124,7 +131,21 @@ impl EditClient {
     }
 
     pub fn read(&self, board: Uuid) -> Result<Vec<SavedItem>, EditError> {
-        decode(self.authorize(self.http.get(self.board_url(board))).call())
+        self.read_with_access(board).map(|read| read.rows)
+    }
+
+    pub fn read_with_access(&self, board: Uuid) -> Result<BoardRead, EditError> {
+        let mut response = self
+            .authorize(self.http.get(self.board_url(board)))
+            .call()
+            .map_err(request_error)?;
+        Ok(BoardRead {
+            can_edit: edit_hint(response.headers()),
+            rows: response
+                .body_mut()
+                .read_json()
+                .map_err(|_| EditError::Transport)?,
+        })
     }
 
     pub fn rename(&self, board: Uuid, item: Uuid, edit: &NameEdit) -> Result<SavedItem, EditError> {
@@ -133,10 +154,23 @@ impl EditClient {
     }
 }
 
+fn edit_hint(headers: &ureq::http::HeaderMap) -> bool {
+    let mut hints = headers.get_all(BOARD_ACCESS_HEADER).iter();
+    hints.next().is_some_and(|v| v == "edit") && hints.next().is_none()
+}
+
 fn decode<T: DeserializeOwned>(
     response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
 ) -> Result<T, EditError> {
-    let mut response = response.map_err(|error| match error {
+    response
+        .map_err(request_error)?
+        .body_mut()
+        .read_json()
+        .map_err(|_| EditError::Transport)
+}
+
+fn request_error(error: ureq::Error) -> EditError {
+    match error {
         ureq::Error::StatusCode(401) => EditError::SessionRejected,
         ureq::Error::StatusCode(403) => EditError::PermissionDenied,
         ureq::Error::StatusCode(503) => EditError::AccessUnavailable,
@@ -145,9 +179,23 @@ fn decode<T: DeserializeOwned>(
         ureq::Error::StatusCode(422) => EditError::InvalidDraft,
         ureq::Error::StatusCode(_) => EditError::HostFault,
         _ => EditError::Transport,
-    })?;
-    response
-        .body_mut()
-        .read_json()
-        .map_err(|_| EditError::Transport)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn editing_requires_one_recognized_hint() {
+        use ureq::http::{HeaderMap, HeaderValue};
+        let mut headers = HeaderMap::new();
+        assert!(!edit_hint(&headers));
+        headers.insert(BOARD_ACCESS_HEADER, HeaderValue::from_static("unknown"));
+        assert!(!edit_hint(&headers));
+        headers.insert(BOARD_ACCESS_HEADER, HeaderValue::from_static("edit"));
+        assert!(edit_hint(&headers));
+        headers.append(BOARD_ACCESS_HEADER, HeaderValue::from_static("read"));
+        assert!(!edit_hint(&headers));
+    }
 }
