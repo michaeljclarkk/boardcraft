@@ -30,6 +30,20 @@ For a manual check, the `seed_board` example above creates a **new** synthetic b
 
 With normal tools on PATH the activation script needs no configuration. To place large builds on another drive, create ignored `.private/dev.json` with `toolHome` pointing to a directory containing the rustup `rustup/` and `cargo/` homes. It also places `target/` there. An optional `postgresBin` points to the folder containing `pg_ctl.exe`, `initdb.exe` and `psql.exe`.
 
+### Loopback mobile edit service
+
+With the disposable database active, run `cargo test --locked --workspace --test mobile_edit_service`. Each case seeds two `Review` rows in its own schema and starts the single-board host on `127.0.0.1:0` (OS-assigned port).
+
+To serve the synthetic `$board` from the seed command above, run `cargo run --locked -p rustday-mobile-edit-host -- $board`. Use the printed port with `EditClient::new(port)`; press Enter to stop. `GET /boards/{board}` returns ordered `{id,title,revision}` rows. `PUT /boards/{board}/items/{item}/name` takes JSON `{title,revision}` and returns the committed row. Title rejection, revision conflict and missing records return 422, 409 and 404 respectively. A database fault returns 500 without details. This is a local fixture, not a deployed API.
+
+### Android native host
+
+Kit's [v0.11.0 mobile guide](https://github.com/longbridge/gpui-kit/blob/v0.11.0/website/docs/mobile.md) describes limited Android testing of chat controls including Input. Android uses the mobile activity/surface host, not the desktop window entry point. The guide's [example build](https://github.com/longbridge/gpui-mobile/blob/0b882efdac7f524e0bb0b1d4c886b2aa752f9f20/example/build.sh) packages an arm64 Rust library via cargo-ndk and Gradle. Its documented GPUI baseline is 0.3.4; even the [mobile fork revision inspected](https://github.com/longbridge/gpui-mobile/blob/7548ebc4b24f00494af9976af8852c7163ded9ce/Cargo.toml) pins core and Android renderer to 0.3.10. Rustday's Kit 0.11.0 locks core at **0.3.14**. There is an experimental host, but no demonstrated matching set here.
+
+Local inventory (2026-11-26): JDK 21, SDK platforms/build tools, adb 1.0.41, emulator 36.5.10, x86_64 AVD configurations and an API 36 x86_64 system image are present. No NDK found in the inspected SDK roots; no cargo-ndk in the activated toolchain; only the Windows Rust target is installed. No AVD was booted. To reopen the runtime gate, identify a compatible Kit/core/renderer/mobile revision set, match the NDK build ABI to a dedicated disposable emulator, and observe a rendered Kit input before relying on it. Use build-only packaging and explicit emulator serial selection for any later install/launch: the example's install step uses unqualified adb even in emulator mode. Do not point it at a phone or replace Kit with a WebView.
+
+### Disposable PostgreSQL
+
 The helper uses `127.0.0.1:55437`, `%LOCALAPPDATA%\Rustday\postgres-dev`, SCRAM authentication and a non-superuser test login. It prints the connected database and role, never the URL. Rerun `start` in each fresh shell to export `RUSTDAY_TEST_DATABASE_URL`. Use `& .\scripts\postgres.ps1 stop` when done; stopping preserves data. On startup failure inspect `server.log` in the cluster directory rather than deleting data or stopping another server. On other platforms supply the URL of a dedicated disposable PostgreSQL database directly.
 
 The persistence test requires `RUSTDAY_TEST_DATABASE_URL` to explicitly name the dedicated `rustday_test` database. Its login must be able to create a schema. Each run uses a fresh schema and drops it on success; no fallback URL is used.

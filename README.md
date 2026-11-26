@@ -10,7 +10,7 @@ Windows and Android are the active targets; iOS follows Android. Rust owns the r
 
 ## Run the migration
 
-Use Node 22+, OpenCode v2 with a configured provider, and a Rust toolchain with Cargo and rustfmt. For the second and third packets, supply `RUSTDAY_TEST_DATABASE_URL` for a disposable Rustday PostgreSQL database. The desktop packet also needs a graphical session and the platform's native GPUI build prerequisites. Use a dedicated checkout and development account with no production credentials. Cargo build scripts and tests run with the account's permissions.
+Use Node 22+, OpenCode v2 with a configured provider, and a Rust toolchain with Cargo and rustfmt. For PostgreSQL, desktop and mobile service packets, supply `RUSTDAY_TEST_DATABASE_URL` for a disposable Rustday PostgreSQL database. The desktop packet also needs a graphical session and the platform's native GPUI build prerequisites. Use a dedicated checkout and development account with no production credentials. Cargo build scripts and tests run with the account's permissions.
 
 ```sh
 node --test scripts/run.test.mjs
@@ -24,4 +24,4 @@ If the CLI is not on PATH, set `OPENCODE_BIN` to its executable. On Windows with
 
 **Resume:** inspect the last handoff and terminal error, fix the blocker, and run the same command in the same checkout. Partial edits remain on disk. After an abrupt shutdown, check that the runner and worker have exited before removing `.rustday/lock`. Verification markers are local to this checkout; invalidate the affected marker and later markers if you revert completed work. Review and commit source and public-safe handoffs at milestones; the runner does not publish changes.
 
-See [ROADMAP.md](ROADMAP.md) for acceptance tests and [AGENTS.md](AGENTS.md) for the worker contract. To extend the run, add a small acceptance packet and its test target to the queue in `scripts/run.mjs`.
+See [ROADMAP.md](ROADMAP.md) for acceptance tests and [AGENTS.md](AGENTS.md) for the worker contract. To extend the queue, append a packet in `scripts/run.mjs` with its ID, named test target, database requirement and any additional required cases/build. The maximum `run` count follows the queue length. Run the Node tests and check `status` before dispatching a worker.

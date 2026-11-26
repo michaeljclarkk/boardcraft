@@ -20,6 +20,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
         tx.batch_execute(include_str!("../migrations/0001_boards.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (1)", &[])?;
     }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version = 2",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0002_item_revision.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (2)", &[])?;
+    }
     tx.commit()
 }
 
@@ -39,25 +49,45 @@ pub fn create_board(client: &mut Client, board: &Board) -> Result<(), Error> {
 }
 
 pub fn load_board(client: &mut Client, id: BoardId) -> Result<Option<Board>, Error> {
+    Ok(load_items(client, id)?.map(|rows| Board {
+        id,
+        items: rows
+            .into_iter()
+            .map(|row| Item {
+                id: row.id,
+                title: row.title,
+            })
+            .collect(),
+    }))
+}
+
+pub struct StoredItem {
+    pub id: ItemId,
+    pub title: String,
+    pub revision: i64,
+}
+
+pub fn load_items(client: &mut Client, id: BoardId) -> Result<Option<Vec<StoredItem>>, Error> {
     // One snapshot; the outer join distinguishes an empty board from an absent one.
     let rows = client.query(
-        "SELECT i.id, i.title FROM boards b LEFT JOIN board_items i ON i.board_id = b.id
+        "SELECT i.id, i.title, i.revision FROM boards b LEFT JOIN board_items i ON i.board_id = b.id
          WHERE b.id = $1 ORDER BY i.position",
         &[&id.0],
     )?;
     if rows.is_empty() {
         return Ok(None);
     }
-    let mut board = Board::new(id);
+    let mut items = Vec::with_capacity(rows.len());
     for row in rows {
         if let Some(uuid) = row.try_get(0)? {
-            board.items.push(Item {
+            items.push(StoredItem {
                 id: ItemId(uuid),
                 title: row.try_get(1)?,
+                revision: row.try_get(2)?,
             });
         }
     }
-    Ok(Some(board))
+    Ok(Some(items))
 }
 
 #[derive(Debug)]
@@ -73,7 +103,7 @@ pub fn rename_item(
     item: ItemId,
     draft: &str,
 ) -> Result<String, SaveError> {
-    save_title(client, board, item, None, draft)
+    save_title(client, board, item, Condition::Any, draft).map(|row| row.title)
 }
 
 /// An inline editor must not silently overwrite a title changed since it loaded.
@@ -84,16 +114,39 @@ pub fn rename_item_if_current(
     expected: &str,
     draft: &str,
 ) -> Result<String, SaveError> {
-    save_title(client, board, item, Some(expected), draft)
+    save_title(client, board, item, Condition::Title(expected), draft).map(|row| row.title)
+}
+
+/// An older positive revision is valid for a name-only edit; a future one is not.
+pub fn rename_item_at_revision(
+    client: &mut Client,
+    board: BoardId,
+    item: ItemId,
+    revision: i64,
+    draft: &str,
+) -> Result<StoredItem, SaveError> {
+    save_title(
+        client,
+        board,
+        item,
+        Condition::KnownRevision(revision),
+        draft,
+    )
+}
+
+enum Condition<'a> {
+    Any,
+    Title(&'a str),
+    KnownRevision(i64),
 }
 
 fn save_title(
     client: &mut Client,
     board: BoardId,
     item: ItemId,
-    expected: Option<&str>,
+    condition: Condition<'_>,
     draft: &str,
-) -> Result<String, SaveError> {
+) -> Result<StoredItem, SaveError> {
     let title = interactive_title(draft).map_err(SaveError::Rejected)?;
     let fault = |error: Error| {
         log::error!(
@@ -105,27 +158,36 @@ fn save_title(
         SaveError::Database(error)
     };
     let mut tx = client.transaction().map_err(fault)?;
-    if let Some(expected) = expected {
-        let row = tx
-            .query_opt(
-                "SELECT title FROM board_items WHERE board_id = $1 AND id = $2 FOR UPDATE",
-                &[&board.0, &item.0],
-            )
-            .map_err(fault)?
-            .ok_or(SaveError::Rejected(RenameError::MissingItem(item)))?;
-        let current: String = row.try_get(0).map_err(fault)?;
-        if current != expected {
-            return Err(SaveError::Conflict { current });
-        }
-    }
-    let saved = tx
+    let row = tx
         .query_opt(
-            "UPDATE board_items SET title = $3 WHERE board_id = $1 AND id = $2 RETURNING title",
-            &[&board.0, &item.0, &title],
+            "SELECT title, revision FROM board_items WHERE board_id = $1 AND id = $2 FOR UPDATE",
+            &[&board.0, &item.0],
         )
-        .map_err(fault)?;
-    let row = saved.ok_or(SaveError::Rejected(RenameError::MissingItem(item)))?;
-    let accepted = row.try_get(0).map_err(fault)?;
+        .map_err(fault)?
+        .ok_or(SaveError::Rejected(RenameError::MissingItem(item)))?;
+    let current: String = row.try_get(0).map_err(fault)?;
+    let revision: i64 = row.try_get(1).map_err(fault)?;
+    let allowed = match condition {
+        Condition::Any => true,
+        Condition::Title(expected) => expected == current,
+        Condition::KnownRevision(r) => (1..=revision).contains(&r),
+    };
+    if !allowed {
+        return Err(SaveError::Conflict { current });
+    }
+    let mut saved = StoredItem {
+        id: item,
+        title: current,
+        revision,
+    };
+    if title != saved.title {
+        let updated = tx.query_one(
+            "UPDATE board_items SET title = $3, revision = revision + 1 WHERE board_id = $1 AND id = $2 RETURNING title, revision",
+            &[&board.0, &item.0, &title],
+        ).map_err(fault)?;
+        saved.title = updated.try_get(0).map_err(fault)?;
+        saved.revision = updated.try_get(1).map_err(fault)?;
+    }
     tx.commit().map_err(fault)?;
-    Ok(accepted)
+    Ok(saved)
 }

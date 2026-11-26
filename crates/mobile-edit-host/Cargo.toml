@@ -1,0 +1,17 @@
+[package]
+name = "rustday-mobile-edit-host"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+log = "0.4"
+postgres = "0.19"
+rustday-board = { path = "../board" }
+rustday-mobile-edit-client = { path = "../mobile-edit-client" }
+serde_json = "1"
+tiny_http = "0.12"
+uuid = "1"
+
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }

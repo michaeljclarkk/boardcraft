@@ -1,0 +1,12 @@
+{
+  "status": "ready",
+  "summary": "The Rust client can reopen one synthetic board and submit a name over loopback HTTP without database access. The host calls store::rename_item_at_revision. Mobile and desktop share interactive_title and the locked save_title transaction, which advances the revision only when the accepted title changes.",
+  "evidence": [
+    "cargo test --locked --workspace --test mobile_edit_service: 2 passed, 0 failed, 0 ignored. Each case in crates/mobile-edit-host/tests/mobile_edit_service.rs ran the production host on an ephemeral loopback port against a fresh schema in rustday_test.",
+    "rename_then_reconnect: only the second Review became Review artwork. A fresh HTTP client saw both original IDs in order with the expected titles and revisions; an independent connection reloaded the same board through the Windows store. Replaying the original request preserved the revision. A stale desktop conditional save was rejected, a current desktop change advanced the revision, and an older positive revision could still submit a changed name.",
+    "reject_then_retry: blank draft, future revision, wrong board and absent item returned distinct validation, conflict or missing outcomes as applicable. Independent reads after each rejection found both rows and revisions unchanged. Re-reading and correcting the draft succeeded. A forced commit failure returned a host fault and preserved the previous title and revision.",
+    "cargo test --locked --workspace: all 8 integration cases passed. cargo fmt --all -- --check and cargo clippy --locked --workspace --all-targets -- -D warnings passed.",
+    "cargo test --locked -p rustday-desktop --features native-smoke --test windows_smoke -- --nocapture: 1 passed. The existing Windows fixture retained the rejected draft and focus, showed pending and saved frames, then reopened in order. The Android Kit correction, keyboard/Back, suspend/resume and same-UUID Windows window check remain open; see docs/development.md#android-native-host."
+  ],
+  "next": "Let the runner verify 04-mobile-edit-service against its packet gates."
+}
