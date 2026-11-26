@@ -279,12 +279,15 @@ for (const [id, previous, added] of [
   run(required);
 });
 
-test('20 requires Member and Viewer checks at both the host and the window, plus the seven earlier windows', () => {
-  const p = packets.find(p => p.id === '20-windows-connected-name');
+for (const [id, addedHost, addedWindows] of [
+  ['20-windows-connected-name', [], []],
+  ['21-windows-connected-logout', ['explicit_logout_isolates_sessions'], ['configured_logout_failure_then_retry', 'interactive_viewer_logs_out']],
+]) test(`${id} requires every named host and Windows journey and the locked workspace checks`, () => {
+  const p = packets.find(p => p.id === id);
   assert.equal(p.database, true);
-  const host = ['member_edits_within_scope', 'viewer_reads_but_cannot_rename'];
+  const host = ['member_edits_within_scope', 'viewer_reads_but_cannot_rename', ...addedHost];
   const windows = [...packets.find(p => p.id === '19-windows-env-session').windowsCases,
-    'connected_member_renames_then_reopens', 'connected_viewer_cannot_rename'];
+    'connected_member_renames_then_reopens', 'connected_viewer_cannot_rename', ...addedWindows];
   const calls = [];
   const run = (absent, ignored = 0) => verify(p, (bin, args, capture) => {
     calls.push([bin, ...args].join(' '));

@@ -528,6 +528,9 @@ fn main() {
                         | "--name-reopen"
                         | "--name-demote"
                         | "--name-viewer"
+                        | "--logout-member"
+                        | "--logout-viewer"
+                        | "--logout-reopen"
                 )
                 && args.next().is_none())
         {

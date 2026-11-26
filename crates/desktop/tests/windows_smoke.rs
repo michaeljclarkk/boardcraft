@@ -15,8 +15,22 @@ use uuid::Uuid;
 
 #[path = "../../mobile-edit-host/tests/fixture/mod.rs"]
 mod fixture;
+#[path = "windows/logout.rs"]
+mod logout;
+#[path = "../../mobile-edit-host/tests/fixture/peer.rs"]
+mod peer;
 #[path = "../../mobile-edit-host/tests/fixture/stored_session.rs"]
 mod stored_session;
+
+#[test]
+fn configured_logout_failure_then_retry() {
+    logout::configured();
+}
+
+#[test]
+fn interactive_viewer_logs_out() {
+    logout::interactive();
+}
 
 // Bound startup, rendering, and shutdown even if the native event loop stalls.
 struct SmokeProcess(Child);

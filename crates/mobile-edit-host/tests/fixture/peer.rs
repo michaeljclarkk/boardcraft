@@ -45,8 +45,12 @@ impl Peer {
     }
 
     pub fn check(&self, f: &Fixture, primary_present: bool) {
+        self.check_sessions(f, 1 + usize::from(primary_present), primary_present);
+    }
+
+    pub fn check_sessions(&self, f: &Fixture, count: usize, primary_present: bool) {
         let current = verifiers(f, self.member);
-        assert_eq!(current.len(), if primary_present { 2 } else { 1 });
+        assert_eq!(current.len(), count);
         assert!(current.contains(&self.peer));
         assert_eq!(current.contains(&self.primary), primary_present);
     }

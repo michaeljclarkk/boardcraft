@@ -3,6 +3,10 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
+const connectedName = { database: true, model: 'openai/gpt-6.2-astra#high',
+  target: 'loopback_board_access', cases: ['member_edits_within_scope', 'viewer_reads_but_cannot_rename'],
+  windowsCases: ['connected_member_renames_then_reopens', 'connected_viewer_cannot_rename', 'windows_env_session_is_origin_scoped', 'windows_login_reject_retry', 'rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] };
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -36,9 +40,10 @@ export const packets = [
     windowsCases: ['windows_login_reject_retry', 'rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] },
   { id: '19-windows-env-session', database: true, model: 'openai/gpt-6.2-astra#high',
     windowsCases: ['windows_env_session_is_origin_scoped', 'windows_login_reject_retry', 'rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] },
-  { id: '20-windows-connected-name', database: true, model: 'openai/gpt-6.2-astra#high',
-    target: 'loopback_board_access', cases: ['member_edits_within_scope', 'viewer_reads_but_cannot_rename'],
-    windowsCases: ['connected_member_renames_then_reopens', 'connected_viewer_cannot_rename', 'windows_env_session_is_origin_scoped', 'windows_login_reject_retry', 'rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] },
+  { id: '20-windows-connected-name', ...connectedName },
+  { id: '21-windows-connected-logout', ...connectedName,
+    cases: [...connectedName.cases, 'explicit_logout_isolates_sessions'],
+    windowsCases: [...connectedName.windowsCases, 'configured_logout_failure_then_retry', 'interactive_viewer_logs_out'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

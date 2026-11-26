@@ -3,6 +3,7 @@ use super::{Row, RowRecovery};
 use boardcraft_board::{BoardId, ItemId, store::StoredItem};
 use boardcraft_desktop::Save;
 use boardcraft_mobile_edit_client::{Credentials, EditClient, EditError};
+use gpui_kit::base::Disableable;
 use gpui_kit::component::{
     button::Button,
     input::{Input, InputState},
@@ -18,6 +19,7 @@ enum Screen {
     Retry(EditClient),
     Board {
         session: EditClient,
+        logging_out: bool,
         can_edit: bool,
         rows: Vec<Entity<Row>>,
     },
@@ -30,6 +32,8 @@ pub(super) struct Connected {
     message: &'static str,
     #[cfg(all(windows, feature = "native-smoke"))]
     pub(super) submissions: usize,
+    #[cfg(all(windows, feature = "native-smoke"))]
+    pub(super) loads: usize,
 }
 
 /// Decide locally, before constructing any request. Never interpret the supplied origin as a URL.
@@ -60,6 +64,8 @@ pub(super) fn open(port: u16, board: Uuid, cx: &mut App) {
                 message: "",
                 #[cfg(all(windows, feature = "native-smoke"))]
                 submissions: 0,
+                #[cfg(all(windows, feature = "native-smoke"))]
+                loads: 0,
             };
             #[cfg(windows)]
             match configured_session(port) {
@@ -81,6 +87,8 @@ pub(super) fn open(port: u16, board: Uuid, cx: &mut App) {
         cx.update_window(_window, |_, w, _| {
             if mode.starts_with("--name-") {
                 super::native_smoke::name::install(_view, &mode, w);
+            } else if mode.starts_with("--logout-") {
+                super::native_smoke::logout::install(_view, &mode, w);
             } else {
                 super::native_smoke::login::install(board, mode == "--smoke-session", w);
             }
@@ -154,6 +162,10 @@ impl Connected {
         cx: &mut Context<Self>,
     ) {
         self.screen = Screen::Loading;
+        #[cfg(all(windows, feature = "native-smoke"))]
+        {
+            self.loads += 1;
+        }
         let board = self.board;
         let work = cx.background_executor().spawn(async move {
             let rows = client
@@ -202,6 +214,7 @@ impl Connected {
                             .collect();
                         Screen::Board {
                             session: client,
+                            logging_out: false,
                             can_edit,
                             rows,
                         }
@@ -226,10 +239,54 @@ impl Connected {
         cx.notify();
     }
 
+    fn logout(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        let Screen::Board {
+            session,
+            rows,
+            logging_out,
+            ..
+        } = &mut self.screen
+        else {
+            return;
+        };
+        // A changed blur/Enter finishes through the normal save path first.
+        // Loads have no board controls; saves and logout never overlap.
+        if *logging_out
+            || rows.iter().any(|r| {
+                let row = r.read(cx);
+                row.baseline.is_some() || row.edit.phase() == &boardcraft_desktop::Phase::Pending
+            })
+        {
+            return;
+        }
+        *logging_out = true;
+        self.message = "";
+        let client = session.clone();
+        let work = cx
+            .background_executor()
+            .spawn(async move { client.logout() });
+        cx.spawn_in(w, async move |view, cx| {
+            let result = work.await;
+            _ = view.update_in(cx, |view, w, cx| {
+                if result.is_ok() {
+                    view.screen = Self::identifier(w, cx);
+                    view.message = "";
+                } else if let Screen::Board { logging_out, .. } = &mut view.screen {
+                    *logging_out = false;
+                    view.message = "Could not log out";
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn save(&mut self, row: Entity<Row>, save: Save, w: &mut Window, cx: &mut Context<Self>) {
         let Screen::Board {
             session,
             can_edit: true,
+            logging_out: false,
             rows,
         } = &self.screen
         else {
@@ -310,14 +367,28 @@ impl Render for Connected {
             }
             Screen::Loading => return column.child(Label::new("Loading…")),
             Screen::Retry(_) => "Retry loading",
-            Screen::Board { rows, can_edit, .. } => {
+            Screen::Board {
+                rows,
+                can_edit,
+                logging_out,
+                ..
+            } => {
                 column = column
                     .child(Label::new(if *can_edit {
                         "Board items"
                     } else {
                         "Board items · Read only"
                     }))
-                    .child(Label::new(self.message));
+                    .child(Label::new(self.message))
+                    .child(
+                        Button::new("logout")
+                            .label("Log out")
+                            .disabled(*logging_out)
+                            .on_click(cx.listener(|view, _, w, cx| view.logout(w, cx))),
+                    );
+                if *logging_out {
+                    return column.child(Label::new("Logging out…"));
+                }
                 if rows.is_empty() {
                     return column.child(Label::new("Empty board"));
                 }
