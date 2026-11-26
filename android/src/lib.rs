@@ -86,6 +86,15 @@ impl BoardView {
                                 view.board.items = rows.into_iter().map(Item::from).collect();
                                 view.message = "";
                             }
+                            Err(EditError::SessionRejected) => {
+                                view.message = "Sign in to open this board."
+                            }
+                            Err(EditError::PermissionDenied) => {
+                                view.message = "No access to this board."
+                            }
+                            Err(EditError::AccessUnavailable) => {
+                                view.message = "Access check unavailable. Reopen to retry."
+                            }
                             Err(_) => view.message = "Could not load board. Reopen to retry.",
                         }
                         cx.notify();
@@ -160,12 +169,24 @@ impl BoardView {
                         *item = row.into();
                         view.editor = None;
                     }
+                    Err(error @ (EditError::SessionRejected | EditError::PermissionDenied)) => {
+                        view.message = if error == EditError::SessionRejected {
+                            "Sign in again to edit."
+                        } else {
+                            "No permission to edit this board."
+                        };
+                        view.editor = None;
+                        view.board.items.clear();
+                    }
                     result => {
                         editor.error = Some(match result {
                             Err(EditError::InvalidDraft) if blank => "Name required",
                             Err(EditError::InvalidDraft) => "Name too long",
                             Err(EditError::Conflict) => "Revision conflict. Reopen the board.",
                             Err(EditError::Missing) => "Item not found. Reopen the board.",
+                            Err(EditError::AccessUnavailable) => {
+                                "Access check unavailable. Try again."
+                            }
                             _ => "Save failed. Try again.",
                         })
                     }

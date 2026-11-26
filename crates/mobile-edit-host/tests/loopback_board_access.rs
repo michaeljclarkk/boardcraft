@@ -1,0 +1,142 @@
+#[path = "fixture/caller.rs"]
+mod caller;
+mod fixture;
+
+use boardcraft_account::{Role, revoke};
+use boardcraft_mobile_edit_client::{EditClient, EditError, NameEdit, SavedItem};
+use caller::Caller;
+use fixture::{FIRST, Fixture, SECOND};
+
+fn rows(second: &str, revision: i64) -> [SavedItem; 2] {
+    [(FIRST, "Review", 1), (SECOND, second, revision)].map(|(id, title, revision)| SavedItem {
+        id,
+        title: title.into(),
+        revision,
+    })
+}
+
+fn rename(client: &EditClient, f: &Fixture, revision: i64) -> Result<SavedItem, EditError> {
+    client.rename(
+        f.board,
+        SECOND,
+        &NameEdit {
+            title: " Coral ".into(),
+            revision,
+        },
+    )
+}
+
+fn denied(client: &EditClient, f: &Fixture, error: EditError, expected: &[SavedItem]) {
+    assert_eq!(client.read(f.board).unwrap_err(), error);
+    assert_eq!(
+        client
+            .rename(
+                f.board,
+                SECOND,
+                &NameEdit {
+                    title: "Must not persist".into(),
+                    revision: expected[1].revision
+                }
+            )
+            .unwrap_err(),
+        error
+    );
+    f.check_store(expected);
+}
+
+#[test]
+fn viewer_reads_but_cannot_rename() {
+    let f = Fixture::start();
+    let _creator = Caller::board_creator(&f);
+    let viewer = Caller::sign_in(&f, Role::Viewer);
+    f.connect()
+        .execute(
+            "INSERT INTO private_board_subscribers(board_id,account_id) VALUES ($1,$2)",
+            &[&f.board, &viewer.id],
+        )
+        .unwrap();
+    let client = viewer.client(f.host.port);
+    let original = rows("Review", 1);
+    assert_eq!(client.read(f.board).unwrap(), original);
+    assert_eq!(rename(&client, &f, 1), Err(EditError::PermissionDenied));
+    f.check_store(&original);
+    revoke(&f.schema.config, &viewer.token).unwrap();
+    denied(&client, &f, EditError::SessionRejected, &original);
+    denied(
+        &EditClient::new(f.host.port),
+        &f,
+        EditError::SessionRejected,
+        &original,
+    );
+}
+
+#[test]
+fn member_edits_within_scope() {
+    let f = Fixture::start();
+    let member = Caller::board_creator(&f);
+    let original = rows("Review", 1);
+    let committed = rows("Coral", 2);
+    let client = member.client(f.host.port);
+    assert_eq!(client.read(f.board).unwrap(), original);
+    assert_eq!(
+        rename(&client, &f, original[1].revision).unwrap(),
+        committed[1]
+    );
+    assert_eq!(member.client(f.host.port).read(f.board).unwrap(), committed);
+    f.check_store(&committed);
+    let outsider = Caller::sign_in(&f, Role::Member);
+    // A real subscription on a different board is not transferable.
+    let other_board = uuid::Uuid::new_v4();
+    let mut db = f.connect();
+    db.execute("INSERT INTO boards(id) VALUES ($1)", &[&other_board])
+        .unwrap();
+    db.execute(
+        "INSERT INTO open_workspace_private_boards(board_id,creator_id) VALUES ($1,$2)",
+        &[&other_board, &member.id],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO private_board_subscribers(board_id,account_id) VALUES ($1,$2)",
+        &[&other_board, &outsider.id],
+    )
+    .unwrap();
+    denied(
+        &outsider.client(f.host.port),
+        &f,
+        EditError::PermissionDenied,
+        &committed,
+    );
+    f.connect()
+        .batch_execute("ALTER TABLE account_sessions RENAME TO unavailable_sessions")
+        .unwrap();
+    denied(&client, &f, EditError::AccessUnavailable, &committed);
+    f.connect()
+        .batch_execute("ALTER TABLE unavailable_sessions RENAME TO account_sessions")
+        .unwrap();
+    f.connect()
+        .execute(
+            "UPDATE accounts SET role='viewer' WHERE id=$1",
+            &[&member.id],
+        )
+        .unwrap();
+    assert_eq!(client.read(f.board).unwrap(), committed);
+    assert_eq!(
+        client.rename(
+            f.board,
+            SECOND,
+            &NameEdit {
+                title: "Another name".into(),
+                revision: 2
+            }
+        ),
+        Err(EditError::PermissionDenied)
+    );
+    f.check_store(&committed);
+    f.connect()
+        .execute(
+            "DELETE FROM open_workspace_private_boards WHERE board_id=$1",
+            &[&f.board],
+        )
+        .unwrap();
+    denied(&client, &f, EditError::PermissionDenied, &committed);
+}

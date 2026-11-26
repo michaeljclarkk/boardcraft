@@ -1,4 +1,5 @@
 //! Single-board host for a disposable database. No database configuration crosses HTTP.
+mod access;
 use std::{io::Read, sync::Arc, thread};
 
 use boardcraft_board::{
@@ -25,6 +26,9 @@ impl Host {
             .connect(NoTls)
             .map_err(|_| "database connection failed")?;
         store::migrate(&mut db).map_err(|_| "board migration failed")?;
+        boardcraft_account::migrate(config).map_err(|_| "account migration failed")?;
+        db.batch_execute(include_str!("../migrations/0001_private_board_access.sql"))
+            .map_err(|_| "board access migration failed")?;
         let server = Arc::new(
             Server::http((std::net::Ipv4Addr::LOCALHOST, 0)).map_err(|_| "loopback bind failed")?,
         );
@@ -36,6 +40,9 @@ impl Host {
                     Ok(body) => Response::from_data(body).with_header(
                         Header::from_bytes("Content-Type", "application/json").unwrap(),
                     ),
+                    Err(401) => Response::from_data(Vec::new())
+                        .with_status_code(401)
+                        .with_header(Header::from_bytes("WWW-Authenticate", "Bearer").unwrap()),
                     Err(status) => Response::from_data(Vec::new()).with_status_code(status),
                 };
                 // Losing the response does not undo a commit. The caller can read/replay.
@@ -72,12 +79,33 @@ fn handle(db: &mut Client, board: BoardId, req: &mut Request) -> Result<Vec<u8>,
     let ["", "boards", requested, route @ ..] = path.as_slice() else {
         return Err(404);
     };
-    if Uuid::parse_str(requested).ok() != Some(board.as_uuid()) {
+    let requested = Uuid::parse_str(requested).map_err(|_| 404u16)?;
+    let target = match (req.method(), route) {
+        (Method::Get, []) => None,
+        (Method::Put, ["items", id, "name"]) => Some(
+            Uuid::parse_str(id)
+                .ok()
+                .and_then(ItemId::new)
+                .ok_or(404u16)?,
+        ),
+        _ => return Err(404),
+    };
+    let token = access::bearer(req)?;
+    // Buffer bounded input before acquiring database locks. Do not return draft
+    // validation or board data before the caller has been authorized.
+    let rename = target.map(|item| (item, read_edit(req)));
+    let mut tx = db.transaction().map_err(|_| {
+        log::error!("begin board request failed board={requested}");
+        503u16
+    })?;
+    let account = access::resolve(&mut tx, &token)?;
+    if requested != board.as_uuid() {
         return Err(404);
     }
-    match (req.method(), route) {
-        (Method::Get, []) => {
-            let rows = store::load_items(db, board)
+    access::authorize(&mut tx, account, board, rename.is_some())?;
+    let body = match rename {
+        None => {
+            let rows = store::load_items(&mut tx, board)
                 .map_err(|error| {
                     log::error!(
                         "load_items board={} sqlstate={:?}",
@@ -88,32 +116,37 @@ fn handle(db: &mut Client, board: BoardId, req: &mut Request) -> Result<Vec<u8>,
                 })?
                 .ok_or(404u16)?;
             let items: Vec<_> = rows.into_iter().map(wire).collect();
-            Ok(serde_json::to_vec(&items).expect("serializable item list"))
+            serde_json::to_vec(&items).expect("serializable item list")
         }
-        (Method::Put, ["items", id, "name"]) => {
-            let item = Uuid::parse_str(id)
-                .ok()
-                .and_then(ItemId::new)
-                .ok_or(404u16)?;
-            const MAX_BODY: u64 = 64 * 1024;
-            let mut body = Vec::new();
-            req.as_reader()
-                .take(MAX_BODY + 1)
-                .read_to_end(&mut body)
-                .map_err(|_| 400u16)?;
-            if body.len() as u64 > MAX_BODY {
-                return Err(413);
-            }
-            let edit: NameEdit = serde_json::from_slice(&body).map_err(|_| 400u16)?;
-            let saved = store::rename_item_at_revision(db, board, item, edit.revision, &edit.title)
-                .map_err(|error| match error {
-                    SaveError::Rejected(RenameError::MissingItem(_)) => 404u16,
-                    SaveError::Rejected(_) => 422,
-                    SaveError::Conflict { .. } => 409,
-                    SaveError::Database(_) => 500,
-                })?;
-            Ok(serde_json::to_vec(&wire(saved)).expect("serializable item"))
+        Some((item, edit)) => {
+            let edit = edit?;
+            let saved =
+                store::rename_item_at_revision(&mut tx, board, item, edit.revision, &edit.title)
+                    .map_err(|error| match error {
+                        SaveError::Rejected(RenameError::MissingItem(_)) => 404u16,
+                        SaveError::Rejected(_) => 422,
+                        SaveError::Conflict { .. } => 409,
+                        SaveError::Database(_) => 500,
+                    })?;
+            serde_json::to_vec(&wire(saved)).expect("serializable item")
         }
-        _ => Err(404),
+    };
+    tx.commit().map_err(|_| {
+        log::error!("board request commit failed board={requested}");
+        500u16
+    })?;
+    Ok(body)
+}
+
+fn read_edit(req: &mut Request) -> Result<NameEdit, u16> {
+    const MAX_BODY: u64 = 64 * 1024;
+    let mut body = Vec::new();
+    req.as_reader()
+        .take(MAX_BODY + 1)
+        .read_to_end(&mut body)
+        .map_err(|_| 400u16)?;
+    if body.len() as u64 > MAX_BODY {
+        return Err(413);
     }
+    serde_json::from_slice(&body).map_err(|_| 400)
 }

@@ -41,7 +41,9 @@ With normal tools on PATH the activation script needs no configuration. To place
 
 With the disposable database active, run `cargo test --locked --workspace --test mobile_edit_service`. Each case seeds two `Review` rows in its own schema and starts the single-board host on `127.0.0.1:0` (OS-assigned port).
 
-To serve the synthetic `$board` from the seed command above, run `cargo run --locked -p boardcraft-mobile-edit-host -- $board`. Use the printed port with `EditClient::new(port)`; press Enter to stop. `GET /boards/{board}` returns ordered `{id,title,revision}` rows. `PUT /boards/{board}/items/{item}/name` takes JSON `{title,revision}` and returns the committed row. Title rejection, revision conflict and missing records return 422, 409 and 404 respectively. A database fault returns 500 without details. This is a local fixture, not a deployed API.
+Run `cargo test --locked --workspace --test loopback_board_access` for the protected-host fixture. It signs in generated accounts in memory and supplies `EditClient::with_bearer` with the issued session. Starting the host with a board UUID or seeding a desktop board grants no access. Do not put a bearer on a command line or in a URL.
+
+`GET /boards/{board}` returns ordered `{id,title,revision}` rows. `PUT /boards/{board}/items/{item}/name` takes JSON `{title,revision}` and returns the committed row. Both resolve the session and check the board grant on every call. Missing/rejected session: 401 (sign in); denied access: 403 (do not retry unchanged permissions); unavailable access check: 503 (retry later). Title rejection, revision conflict, missing records and unexpected board faults retain 422, 409, 404 and 500 respectively. This is a local fixture, not a deployed API.
 
 ### Android native host
 
@@ -74,7 +76,7 @@ Allow up to three minutes for boot. In this same environment, use `adb -s $env:R
 
 On Windows, platform-tools 36.0.0 and 37.0.3 both aborted on the second `reverse --no-rebind tcp:0` fixture: the device allocated a new listener, but the server still associated literal `tcp:0` with the first host port. After removing the actual listener and executable, the test checks that there are no remaining mappings, reconnects **only the selected transport**, repeats that emulator's registration on the private loopback server, and revalidates the AVD. No probe is replayed. To capture a server failure, start the private server in a second identically activated shell with `adb -L tcp:5039 nodaemon server` instead of `start-server` and inspect its stderr alongside Windows Application Error events.
 
-Packet 05 commands (the worker supplies the probe and feature-gated integration test):
+Packet 05 commands: the host test signs in a fixture Member with access and pipes its session to each probe via non-PTY stdin. No bearer is in adb arguments, the executable or a device file.
 
 ```powershell
 cargo build --locked -p boardcraft-mobile-edit-client --bin android-edit-probe --target x86_64-linux-android
@@ -105,6 +107,8 @@ node --test scripts/run.test.mjs        # gate regressions, not emulator evidenc
 The [frame gate](../scripts/android-kit-frame.mjs) checks package ID/ABI/debug flag before install and refuses to replace an existing package. It observes the foreground activity, captures PNG bytes directly, recognizes ordered text and derives touch coordinates from the first frame. It fails on missing frames, wrong order, stale frames and timeouts. Do not use a static screenshot or draw a second copy of the Input value for OCR. Keep observed strings legible and away from the system bars. Keyboard and lifecycle need their own checks; in particular the mobile host [documents the NativeActivity recreation limitation and host-driven alternative](https://github.com/longbridge/gpui-mobile/blob/7548ebc4b24f00494af9976af8852c7163ded9ce/src/android/host.rs#L1-L51). If blocked on another renderer/driver, preserve the error, package/version tuple and actual last frame; independent source work is the Windows display-to-editor transition (double-click/F2 → draft → Escape restores the accepted name, no revision change). Do not pass 06 with that separate interaction.
 
 ### Android Kit edit gate
+
+**Protected-host adoption:** the 07 and 08 connected launch recipes below supply no session. They cannot pass against the packet 14 host until the activity has an authenticated in-memory client. Keep their assertions; do not put a session in an intent extra or fall back to the offline board on denial. The no-arguments frame gate needs no credentials or host.
 
 Use the frame gate's dedicated AVD and host GPU setup, with `rustday_test` active in the operator shell. Use a JDK with `javac --release 8` support. The build compiles only `GpuiInputActivity.java` from the locked mobile host checkout and packages its DEX alongside the Rust library. Its transparent input connection forwards keyboard edits to the focused GPUI handler.
 

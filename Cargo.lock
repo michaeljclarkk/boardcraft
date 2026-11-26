@@ -752,10 +752,12 @@ dependencies = [
 name = "boardcraft-mobile-edit-host"
 version = "0.1.0"
 dependencies = [
+ "boardcraft-account",
  "boardcraft-board",
  "boardcraft-mobile-edit-client",
  "log",
  "postgres",
+ "ring",
  "serde_json",
  "tempfile",
  "tiny_http",

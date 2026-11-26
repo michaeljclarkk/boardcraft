@@ -140,10 +140,16 @@ pub fn sign_in(config: &Config, login: &str, password: &str) -> Result<Token, Er
 
 pub fn resolve(config: &Config, token: &Token) -> Result<Account, Error> {
     let mut db = config.connect(NoTls).map_err(unavailable("resolve"))?;
+    resolve_on(&mut db, token)
+}
+
+/// Within a protected operation's transaction, keep the session and current role
+/// stable until the caller finishes using this decision.
+pub fn resolve_on(db: &mut impl postgres::GenericClient, token: &Token) -> Result<Account, Error> {
     let row = db
         .query_opt(
             "SELECT a.id, a.role FROM account_sessions s JOIN accounts a ON a.id = s.account_id
-        WHERE s.token_digest = $1 AND a.active",
+        WHERE s.token_digest = $1 AND a.active FOR SHARE OF a, s",
             &[&token.digest().as_ref()],
         )
         .map_err(unavailable("resolve"))?

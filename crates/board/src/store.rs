@@ -67,7 +67,10 @@ pub struct StoredItem {
     pub revision: i64,
 }
 
-pub fn load_items(client: &mut Client, id: BoardId) -> Result<Option<Vec<StoredItem>>, Error> {
+pub fn load_items(
+    client: &mut impl postgres::GenericClient,
+    id: BoardId,
+) -> Result<Option<Vec<StoredItem>>, Error> {
     // One snapshot; the outer join distinguishes an empty board from an absent one.
     let rows = client.query(
         "SELECT i.id, i.title, i.revision FROM boards b LEFT JOIN board_items i ON i.board_id = b.id
@@ -152,7 +155,7 @@ pub fn rename_item_if_current(
 
 /// An older positive revision is valid for a name-only edit; a future one is not.
 pub fn rename_item_at_revision(
-    client: &mut Client,
+    client: &mut impl postgres::GenericClient,
     board: BoardId,
     item: ItemId,
     revision: i64,
@@ -194,7 +197,7 @@ enum Condition<'a> {
 }
 
 fn save_title(
-    client: &mut Client,
+    client: &mut impl postgres::GenericClient,
     board: BoardId,
     item: ItemId,
     condition: Condition<'_>,

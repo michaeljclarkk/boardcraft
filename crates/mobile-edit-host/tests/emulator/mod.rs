@@ -1,3 +1,4 @@
+use boardcraft_account::Token;
 use boardcraft_mobile_edit_client::{EditError, SavedItem};
 use std::{
     env,
@@ -64,6 +65,10 @@ impl Adb {
     }
 
     fn run(&self, args: &[&str]) -> io::Result<String> {
+        self.run_with_input(args, None)
+    }
+
+    fn run_with_input(&self, args: &[&str], token: Option<&Token>) -> io::Result<String> {
         // File-backed streams cannot deadlock waiting for pipe space or an
         // inherited pipe handle. Wait, then read only the small fixture reply.
         let mut stdout = tempfile()?;
@@ -73,10 +78,25 @@ impl Adb {
             .arg("-s")
             .arg(&self.serial)
             .args(args)
-            .stdin(Stdio::null())
+            .stdin(if token.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(stdout.try_clone()?)
             .stderr(Stdio::inherit())
             .spawn()?;
+        if let Some(token) = token
+            && let Err(error) = child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(token.encoded().as_bytes())
+        {
+            let _ = child.kill();
+            child.wait()?;
+            return Err(error);
+        }
         match child.wait_timeout(Duration::from_secs(20)) {
             Ok(Some(status)) if status.success() => (),
             Ok(Some(status)) => return Err(io::Error::other(format!("adb {}: {status}", args[0]))),
@@ -139,6 +159,7 @@ impl Adb {
 }
 
 pub struct Probe {
+    token: Token,
     adb: Adb,
     path: String,
     host: String,
@@ -147,7 +168,7 @@ pub struct Probe {
 }
 
 impl Probe {
-    pub fn install(adb: Adb, host_port: u16) -> Self {
+    pub fn install(adb: Adb, host_port: u16, token: Token) -> Self {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let target = env::var_os("CARGO_TARGET_DIR")
             .map(PathBuf::from)
@@ -160,6 +181,7 @@ impl Probe {
             "build android-edit-probe for x86_64-linux-android first"
         );
         let mut p = Self {
+            token,
             adb,
             path: format!(
                 "/data/local/tmp/boardcraft-edit-{}",
@@ -191,9 +213,9 @@ impl Probe {
     fn invoke(&self, board: Uuid, extra: &[&str]) -> String {
         let port = self.device_port.unwrap().to_string();
         let board = board.to_string();
-        let mut args = vec!["shell", "-n", "-T", &self.path, &port, &board];
+        let mut args = vec!["shell", "-T", &self.path, &port, &board];
         args.extend_from_slice(extra);
-        self.adb.run(&args).unwrap()
+        self.adb.run_with_input(&args, Some(&self.token)).unwrap()
     }
 
     pub fn read(&self, board: Uuid) -> Vec<SavedItem> {

@@ -1,3 +1,5 @@
+#[path = "fixture/caller.rs"]
+mod caller;
 mod fixture;
 
 use boardcraft_board::{BoardId, ItemId, store};
@@ -26,7 +28,8 @@ fn open(client: &EditClient, board: Uuid) -> Vec<SavedItem> {
 #[test]
 fn rename_then_reconnect() {
     let f = Fixture::start();
-    let client = EditClient::new(f.host.port);
+    let member = caller::Caller::board_creator(&f);
+    let client = member.client(f.host.port);
     let mut rows = open(&client, f.board);
     let request = edit(" Review artwork ", rows[1].revision);
     let saved = client.rename(f.board, SECOND, &request).unwrap();
@@ -36,7 +39,7 @@ fn rename_then_reconnect() {
     rows[1] = saved.clone();
     drop(client);
 
-    let fresh = EditClient::new(f.host.port);
+    let fresh = member.client(f.host.port);
     assert_eq!(fresh.read(f.board).unwrap(), rows);
     f.check_store(&rows);
     assert_eq!(fresh.rename(f.board, SECOND, &request).unwrap(), saved);
@@ -67,7 +70,7 @@ fn rename_then_reconnect() {
 #[test]
 fn reject_then_retry() {
     let f = Fixture::start();
-    let client = EditClient::new(f.host.port);
+    let client = caller::Caller::board_creator(&f).client(f.host.port);
     let mut rows = open(&client, f.board);
     for (board, item, request, error) in [
         (

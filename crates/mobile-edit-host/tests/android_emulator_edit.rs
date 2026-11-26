@@ -1,3 +1,5 @@
+#[path = "fixture/caller.rs"]
+mod caller;
 mod emulator;
 mod fixture;
 
@@ -30,7 +32,7 @@ fn save_and_reopen(f: &Fixture, probe: &Probe, mut rows: Vec<SavedItem>, draft: 
 fn emulator_rename_then_reopen() {
     let adb = Adb::dedicated();
     let f = Fixture::start();
-    let probe = Probe::install(adb, f.host.port);
+    let probe = Probe::install(adb, f.host.port, caller::Caller::board_creator(&f).token);
     let rows = open(&f, &probe);
     save_and_reopen(&f, &probe, rows, " Review artwork ", "Review artwork");
 }
@@ -39,7 +41,7 @@ fn emulator_rename_then_reopen() {
 fn emulator_reject_then_correct() {
     let adb = Adb::dedicated();
     let f = Fixture::start();
-    let probe = Probe::install(adb, f.host.port);
+    let probe = Probe::install(adb, f.host.port, caller::Caller::board_creator(&f).token);
     let rows = open(&f, &probe);
     assert_eq!(
         probe.rename(f.board, &rows[1], "   "),

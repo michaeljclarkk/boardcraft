@@ -9,7 +9,7 @@ pub const FIRST: Uuid = Uuid::from_u128(42);
 pub const SECOND: Uuid = Uuid::from_u128(17);
 
 pub struct Schema {
-    config: Config,
+    pub config: Config,
     pub name: String,
 }
 
