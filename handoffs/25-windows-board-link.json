@@ -1,0 +1,12 @@
+{
+  "status": "ready",
+  "summary": "Windows browse shares the accepted board's canonical loopback address. Opening it in a new window preserves the source selection; a recipient opening the same address needs current access.",
+  "evidence": [
+    "Prior attended Windows run: copies_selected_board_link_and_opens_window and copied_board_link_checks_recipient_access both passed. Share on the second Review (201) showed the existing-access notice. After Copy link reported success, Ctrl+V into a Kit input produced exactly the connected origin plus /boards/{UUID of 201}. A distinct window showed only 73 Sketch above 61 Ink, with the original window still on 201.",
+    "In that run, the recipient could correct a wrong-origin address (no connection to its listener) and an unsupported address. The subscribed Viewer pasted the sender's address but saw Destination unavailable, with no item, share or edit controls. After a separate grant of workspace membership, explicitly reopening the unchanged address showed Sketch and Ink read-only.",
+    "Independent PostgreSQL checks in the attended cases preserved the sender's session after selection, copy and new-window open. At denial and recovery, both sessions still resolved to their original accounts; subscriptions stayed unchanged, and the only added membership was the Viewer's. Ordered rows remained 73 Sketch/1 then 61 Ink/1 on 201 and 62 Outline/1 on sibling 202.",
+    "Source trace: both open actions call board_link::parse before dispatching EditClient::read_selected_board off the UI thread with the opening window's client. The pasted authority is never a request destination. The copy handler reports success after the Windows clipboard write and flush; its failure branch selects the address for manual copy. That failure path has not been exercised live. The attended clipboard cases were not rerun on this unattended retry.",
+    "This retry: the exact canonical-address parser test, all 8 loopback_board_access cases, all 23 locked workspace tests and all 13 inherited serial Windows smoke cases passed. Workspace and Android formatting checks and git diff --check passed. The worker shell denied node --test scripts/run.test.mjs, so there is no new Node runner result."
+  ],
+  "next": "Run the coordinator's unattended packet 25 verification gate, including the Node runner regressions."
+}

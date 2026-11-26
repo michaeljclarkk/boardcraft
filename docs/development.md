@@ -41,13 +41,15 @@ To check recovery manually, reject a blank name, close without dismissing and re
 
 To check an **unsubmitted** draft, reuse the same actor, board and directory. Double-click the second name, replace it (or clear it), then close the window with the input still focused. Relaunch: the changed text should be in the focused input. Escape should show the latest accepted title and clear only that draft. Opening and closing an untouched input should leave nothing to restore. Without an explicit actor, drafts last only in the window.
 
-Run the native acceptance test from an interactive Windows session. No manual window interaction is required:
+Run the ordinary native acceptance tests serially in a graphical Windows session. They exclude the two board-link clipboard journeys:
 
 ```powershell
 . .\scripts\dev.ps1
 & .\scripts\postgres.ps1 start
 cargo test --locked -p boardcraft-desktop --features native-smoke --test windows_smoke -- --test-threads=1 --nocapture
 ```
+
+The board-link journeys replace the system clipboard and paste through Kit inputs. Run them only in a dedicated graphical session with a fixture-only clipboard or during an agreed foreground and clipboard handoff for that run. Do not inspect or save previous clipboard contents. With that setup, use `cargo test --locked -p boardcraft-desktop --features attended-clipboard --test windows_smoke -- board_link --ignored --test-threads=1`.
 
 The five developer [`windows_smoke`](../crates/desktop/tests/windows_smoke.rs) cases create two `Review` rows (IDs 42 and 17) in a fresh `rustday_test` schema. The [in-app driver](../crates/desktop/src/native_smoke.rs) dispatches pointer and keyboard events to the displayed controls. It waits for the parent to check both IDs, order, spelling and revisions on a fresh connection before advancing. A submission count distinguishes an unchanged exit from a no-op transaction. The recovery case rejects `Coral` with a fixture-only constraint, removes it and locks the second row. While `Saving…` is visible the display includes the submitted padding and the stored title is still `Review`. The reopen case checks the committed spelling in a second process. The connected login case instead starts the shared loopback host with `Review sketch` and `Ink`; the parent checks the session count, account and board independently. Normal builds exclude the drivers. This checks GPUI event routing and frames, not physical device input or pixel fidelity.
 
@@ -70,6 +72,8 @@ Run `cargo test --locked --workspace --test loopback_board_access` for the prote
 The GET response header `boardcraft-board-access` describes access at read time: only a single `edit` value enables Windows name editing. `read`, a missing header or an unknown value leaves the board read-only. The PUT does not take a permission hint.
 
 For multi-board discovery, start `Host::start_with_navigation(config, target)` and launch `boardcraft-desktop browse <loopback-port>`. Use the same exact-origin session configuration or interactive sign-in as `connect`. `EditClient::list_boards` calls `GET /navigation/boards` and returns `{id, workspace_id, name}` summaries in global board order. Click a board to read its items through `GET /navigation/boards/{id}`. This view is read-only. **Back to boards** loads the list again. After **Destination unavailable**, return to the list; after **No boards**, use **Refresh** to check for newly visible boards. A service fault offers **Retry board list**; session rejection requires sign-in. Ordinary `Host::start` serves neither navigation route. In both modes the direct `/boards/{id}` GET/PUT routes remain restricted to `target`.
+
+In Windows browse, open a board and choose **Share** for its Board address. **Copy link** copies it to the clipboard. **Open in new window** reads that board independently. A recipient pastes the address into their own browse window and chooses **Open board link**. The connected origin must match and the recipient must already have access. After a denial, they can submit the same address again if access changes.
 
 ### Android native host
 

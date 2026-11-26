@@ -13,6 +13,9 @@ use std::{
 };
 use uuid::Uuid;
 
+#[cfg(feature = "attended-clipboard")]
+#[path = "windows/board_link.rs"]
+mod board_link;
 #[path = "../../mobile-edit-host/tests/fixture/mod.rs"]
 mod fixture;
 #[path = "windows/logout.rs"]
@@ -44,6 +47,20 @@ fn opens_selected_board_by_id() {
 #[test]
 fn revoked_membership_blocks_board_selection() {
     navigation::run(true);
+}
+
+#[test]
+#[cfg(feature = "attended-clipboard")]
+#[ignore = "requires an isolated clipboard or an attended handoff"]
+fn copies_selected_board_link_and_opens_window() {
+    board_link::open_window();
+}
+
+#[test]
+#[cfg(feature = "attended-clipboard")]
+#[ignore = "requires an isolated clipboard or an attended handoff"]
+fn copied_board_link_checks_recipient_access() {
+    board_link::recipient();
 }
 
 // Bound startup, rendering, and shutdown even if the native event loop stalls.

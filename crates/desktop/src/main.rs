@@ -534,7 +534,14 @@ fn main() {
         if let Some(extra) = args.next()
             && !(cfg!(all(windows, feature = "native-smoke"))
                 && (if board.is_none() {
-                    matches!(extra.as_str(), "--browse-open" | "--browse-revoked")
+                    matches!(
+                        extra.as_str(),
+                        "--browse-open"
+                            | "--browse-revoked"
+                            | "--link-window"
+                            | "--link-sender"
+                            | "--link-recipient"
+                    )
                 } else {
                     matches!(
                         extra.as_str(),

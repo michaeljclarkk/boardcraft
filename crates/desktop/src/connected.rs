@@ -11,6 +11,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::*;
 use uuid::Uuid;
+mod board_link;
 mod navigation;
 use navigation::Navigation;
 
@@ -32,6 +33,7 @@ pub(super) struct Connected {
     port: u16,
     direct_board: Option<Uuid>,
     navigation_request: u64,
+    link_input: Option<Entity<InputState>>,
     screen: Screen,
     message: &'static str,
     #[cfg(all(windows, feature = "native-smoke"))]
@@ -61,17 +63,7 @@ fn configured_session(port: u16) -> Result<Option<EditClient>, ()> {
 pub(super) fn open(port: u16, board: Option<Uuid>, cx: &mut App) {
     let (_window, _view) = open_window(WindowOptions::default(), cx, |window, cx| {
         cx.new(|cx| {
-            let mut view = Connected {
-                port,
-                direct_board: board,
-                navigation_request: 0,
-                screen: Screen::Loading,
-                message: "",
-                #[cfg(all(windows, feature = "native-smoke"))]
-                submissions: 0,
-                #[cfg(all(windows, feature = "native-smoke"))]
-                loads: 0,
-            };
+            let mut view = Connected::new(port, board);
             #[cfg(windows)]
             match configured_session(port) {
                 Ok(Some(client)) => {
@@ -94,6 +86,8 @@ pub(super) fn open(port: u16, board: Option<Uuid>, cx: &mut App) {
                 super::native_smoke::name::install(_view, &mode, w);
             } else if mode.starts_with("--logout-") {
                 super::native_smoke::logout::install(_view, &mode, w);
+            } else if mode.starts_with("--link-") {
+                super::native_smoke::board_link::install(&mode, port, w);
             } else if let Some(board) = board {
                 super::native_smoke::login::install(board, mode == "--smoke-session", w);
             } else {
@@ -105,6 +99,20 @@ pub(super) fn open(port: u16, board: Option<Uuid>, cx: &mut App) {
 }
 
 impl Connected {
+    fn new(port: u16, direct_board: Option<Uuid>) -> Self {
+        Self {
+            port,
+            direct_board,
+            navigation_request: 0,
+            link_input: None,
+            screen: Screen::Loading,
+            message: "",
+            #[cfg(all(windows, feature = "native-smoke"))]
+            submissions: 0,
+            #[cfg(all(windows, feature = "native-smoke"))]
+            loads: 0,
+        }
+    }
     fn identifier(w: &mut Window, cx: &mut Context<Self>) -> Screen {
         Screen::Identifier(cx.new(|cx| InputState::new(w, cx).placeholder("Username or email")))
     }
@@ -376,7 +384,20 @@ impl Render for Connected {
                 "Sign in"
             }
             Screen::Loading => return column.child(Label::new("Loading…")),
-            Screen::Navigation(nav) => return column.child(nav.render(cx)),
+            Screen::Navigation(nav) => {
+                return column
+                    .child(nav.render(cx))
+                    .child(
+                        Input::new(self.link_input.as_ref().expect("browse input"))
+                            .id("board-link"),
+                    )
+                    .child(
+                        Button::new("open-link")
+                            .label("Open board link")
+                            .on_click(cx.listener(|view, _, w, cx| view.open_link(false, w, cx))),
+                    )
+                    .child(Label::new(self.message));
+            }
             Screen::Retry(_) => "Retry loading",
             Screen::Board {
                 rows,

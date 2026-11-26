@@ -16,12 +16,12 @@ pub(crate) fn install(revoked: bool, w: &Window) {
     schedule(Step::Listed, revoked, w);
 }
 
-fn id(prefix: &str, n: u128) -> SharedString {
+pub(super) fn id(prefix: &str, n: u128) -> SharedString {
     format!("{prefix}-{}", Uuid::from_u128(n)).into()
 }
 
 // Check every possible catalog and item control in this fixture, including absence.
-fn controls(w: &Window, listed: bool, items: &[(u128, &str)]) {
+pub(super) fn controls(w: &Window, listed: bool, items: &[(u128, &str)]) {
     let expected_boards = if listed {
         &[(203, "Quartz"), (202, "Review"), (201, "Review")][..]
     } else {

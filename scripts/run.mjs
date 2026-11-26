@@ -56,6 +56,7 @@ export const packets = [
   { id: '22-visible-board-list', ...visibleBoardList },
   { id: '23-windows-board-navigation', ...boardNavigation },
   { id: '24-android-board-navigation', ...boardNavigation, kitBrowse: true },
+  { id: '25-windows-board-link', ...boardNavigation, boardLink: true },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -87,7 +88,7 @@ export function requireKitEmulator(exec = command, env = process.env) {
   requireEditEmulator(exec, env.RUSTDAY_ANDROID_SERIAL ?? '');
 }
 
-export function verify({ target, buildBins, cases = [], android, kitBrowse, kitFrame, kitEdit, delivery, probeRegression, windowsCases, logout, restore }, exec = command) {
+export function verify({ target, buildBins, cases = [], android, kitBrowse, kitFrame, kitEdit, delivery, probeRegression, windowsCases, logout, restore, boardLink }, exec = command) {
   exec('cargo', ['fmt', '--all', '--', '--check']);
   const windows = () => {
     const args = ['test', '--locked', '-p', 'boardcraft-desktop', '--features', 'native-smoke', '--test', 'windows_smoke'];
@@ -95,6 +96,11 @@ export function verify({ target, buildBins, cases = [], android, kitBrowse, kitF
     else exec('cargo', args);
   };
   if (windowsCases && !kitFrame) {
+    if (boardLink) {
+      const name = 'connected::board_link::tests::only_a_canonical_board_at_the_connected_origin';
+      requireCases('board address', [name], exec('cargo', ['test','--locked','-p','boardcraft-desktop','--bin','boardcraft-desktop',name,'--','--exact'], true));
+      console.log('SKIPPED in unattended runner: two Windows clipboard cases (see packet handoff for attended evidence).');
+    }
     exec('node', ['--test', 'scripts/run.test.mjs']);
     if (target) {
       requireCases(target, cases, exec('cargo', ['test', '--locked', '--workspace', '--test', target], true));
