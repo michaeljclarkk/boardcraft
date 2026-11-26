@@ -1,4 +1,7 @@
-use boardcraft_board::{BoardId, Item, ItemId, RenameError, store};
+use boardcraft_board::{
+    BoardId, ItemId, RenameError,
+    store::{self, StoredItem},
+};
 use postgres::{Client, Config, NoTls};
 
 /// This development window only opens the explicitly supplied disposable database.
@@ -26,11 +29,11 @@ pub enum Failure {
     Database,
 }
 
-impl From<store::SaveError> for Failure {
-    fn from(error: store::SaveError) -> Self {
+impl From<&store::SaveError> for Failure {
+    fn from(error: &store::SaveError) -> Self {
         match error {
-            store::SaveError::Rejected(reason) => Self::Rejected(reason),
-            store::SaveError::Conflict { current } => Self::Conflict(current),
+            store::SaveError::Rejected(reason) => Self::Rejected(reason.clone()),
+            store::SaveError::Conflict { current, .. } => Self::Conflict(current.clone()),
             store::SaveError::Database(_) => Self::Database,
         }
     }
@@ -41,39 +44,49 @@ pub struct Save {
     board: BoardId,
     item: ItemId,
     expected: String,
+    entry_revision: i64,
     draft: String,
     retry: bool,
 }
 
 impl Save {
-    pub fn connect_and_run(self, cfg: &Config) -> Result<String, Failure> {
-        let mut db = cfg.connect(NoTls).map_err(|_| {
+    pub fn connect_and_run(self, cfg: &Config) -> Result<StoredItem, store::SaveError> {
+        let mut db = cfg.connect(NoTls).map_err(|error| {
             eprintln!(
                 "rename_item connect board={} item={}",
                 self.board.as_uuid(),
                 self.item.as_uuid()
             );
-            Failure::Database
+            store::SaveError::Database(error)
         })?;
         self.run(&mut db)
     }
 
-    pub fn run(self, db: &mut Client) -> Result<String, Failure> {
+    pub fn run(self, db: &mut Client) -> Result<StoredItem, store::SaveError> {
         if self.retry {
-            let current = store::current_title(db, self.board, self.item)?;
-            if current != self.expected {
-                return Err(Failure::Conflict(current));
+            let current = store::current_item(db, self.board, self.item)?;
+            if current.title != self.expected {
+                return Err(store::SaveError::Conflict {
+                    current: current.title,
+                    revision: current.revision,
+                });
             }
         }
-        store::rename_item_if_current(db, self.board, self.item, &self.expected, &self.draft)
-            .map_err(Into::into)
+        store::finish_name_edit(
+            db,
+            self.board,
+            self.item,
+            self.entry_revision,
+            &self.expected,
+            &self.draft,
+        )
     }
 }
 
 /// View state for exactly one row. No second request may start before completion.
 pub struct InlineEdit {
     board: BoardId,
-    item: Item,
+    item: StoredItem,
     request: Option<String>,
     phase: Phase,
 }
@@ -86,7 +99,7 @@ impl InlineEdit {
         self.phase = Phase::Failed(reason);
     }
 
-    pub fn new(board: BoardId, item: Item) -> Self {
+    pub fn new(board: BoardId, item: StoredItem) -> Self {
         Self {
             board,
             request: None,
@@ -98,7 +111,6 @@ impl InlineEdit {
     pub fn identity(&self) -> (BoardId, ItemId) {
         (self.board, self.item.id)
     }
-
     pub fn request(&self) -> Option<&str> {
         self.request.as_deref()
     }
@@ -112,6 +124,9 @@ impl InlineEdit {
     pub fn accepted(&self) -> &str {
         &self.item.title
     }
+    pub fn revision(&self) -> i64 {
+        self.item.revision
+    }
     pub fn phase(&self) -> &Phase {
         &self.phase
     }
@@ -123,42 +138,44 @@ impl InlineEdit {
         }
     }
 
-    pub fn submit(&mut self, raw: String) -> Option<Save> {
-        if self.phase == Phase::Pending || raw == self.accepted() {
+    pub fn submit(&mut self, raw: String, entry: &str, entry_revision: i64) -> Option<Save> {
+        if self.phase == Phase::Pending || raw == entry {
             return None;
         }
         self.request = Some(raw);
-        Some(self.start(false))
+        Some(self.start(false, entry_revision))
     }
 
     pub fn retry(&mut self) -> Option<Save> {
-        matches!(self.phase, Phase::Failed(_)).then(|| self.start(true))
+        matches!(self.phase, Phase::Failed(_)).then(|| self.start(true, self.revision()))
     }
 
-    fn start(&mut self, retry: bool) -> Save {
+    fn start(&mut self, retry: bool, entry_revision: i64) -> Save {
         self.phase = Phase::Pending;
         Save {
             board: self.board,
             item: self.item.id,
             expected: self.item.title.clone(),
+            entry_revision,
             draft: self.request().unwrap().to_owned(),
             retry,
         }
     }
 
-    pub fn finish(&mut self, result: Result<String, Failure>) {
+    pub fn finish(&mut self, result: Result<StoredItem, store::SaveError>) {
         debug_assert_eq!(self.phase, Phase::Pending);
         match result {
-            Ok(title) => {
+            Ok(item) => {
                 self.request = None;
-                self.item.title = title;
+                self.item = item;
                 self.phase = Phase::Saved;
             }
             Err(reason) => {
-                if let Failure::Conflict(current) = &reason {
+                if let store::SaveError::Conflict { current, revision } = &reason {
                     self.item.title.clone_from(current);
+                    self.item.revision = *revision;
                 }
-                self.phase = Phase::Failed(reason);
+                self.phase = Phase::Failed((&reason).into());
             }
         }
     }

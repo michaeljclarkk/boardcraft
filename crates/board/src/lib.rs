@@ -31,7 +31,7 @@ pub struct Item {
 #[derive(Debug, PartialEq, Eq)]
 pub struct DuplicateItem(pub ItemId);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RenameError {
     BlankTitle,
     TitleTooLong,

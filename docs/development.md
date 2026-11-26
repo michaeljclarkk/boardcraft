@@ -17,6 +17,8 @@ For failed-name recovery, reuse the same actor UUID, board UUID and local direct
 
 To check recovery manually, reject a blank name, close without dismissing and relaunch. The board should show the accepted label, failure reason, `Retry change` and `Dismiss`. Dismiss and reopen: the failure should be gone. If local recovery cannot be read, the board still shows its accepted names and a warning. New failures last only in that window. The unreadable file stays untouched; there is no in-app repair or discard action.
 
+To check an **unsubmitted** draft, reuse the same actor, board and directory. Double-click the second name, replace it (or clear it), then close the window with the input still focused. Relaunch: the changed text should be in the focused input. Escape should show the latest accepted title and clear only that draft. Opening and closing an untouched input should leave nothing to restore. Without an explicit actor, drafts last only in the window.
+
 Run the native acceptance test from an interactive Windows session. No manual window interaction is required:
 
 ```powershell

@@ -1,4 +1,7 @@
-use boardcraft_board::{BoardId, Item, RenameError, store};
+use boardcraft_board::{
+    BoardId, RenameError,
+    store::{self, StoredItem},
+};
 use boardcraft_desktop::{Failure, InlineEdit, Phase, Save, database};
 use gpui_kit::component::{
     button::Button,
@@ -9,7 +12,7 @@ use gpui_kit::*;
 use postgres::{Config, NoTls};
 use uuid::Uuid;
 mod recovery;
-use recovery::{Record, Recovery};
+use recovery::{Draft, Record, Recovery};
 
 #[cfg(all(windows, feature = "native-smoke"))]
 mod native_smoke;
@@ -21,7 +24,10 @@ struct Row {
     display_focus: FocusHandle,
     // Present only while the Input is mounted. Take it before moving focus so
     // cancellation and Enter cannot be submitted again by the ensuing blur.
-    baseline: Option<String>,
+    baseline: Option<(String, i64)>,
+    draft: Option<Draft>,
+    recovery: Option<Recovery>,
+    draft_warning: Option<&'static str>,
     failure_token: Option<Uuid>,
     dismissing: bool,
     #[cfg(all(windows, feature = "native-smoke"))]
@@ -31,18 +37,25 @@ struct Row {
 
 impl EventEmitter<Save> for Row {}
 
+#[derive(Default)]
+struct RowRecovery {
+    failure: Option<Record>,
+    draft: Option<Draft>,
+    draft_store: Option<Recovery>,
+}
+
 impl Row {
     fn new(
         cfg: Config,
         board: BoardId,
-        item: Item,
-        record: Option<Record>,
+        item: StoredItem,
+        local: RowRecovery,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let id = item.id;
         let mut edit = InlineEdit::new(board, item);
-        let failure_token = record.map(|r| {
+        let failure_token = local.failure.map(|r| {
             let (token, raw, reason) = r.into_failure(id);
             edit.restore_failure(raw, reason);
             token
@@ -52,6 +65,7 @@ impl Row {
         let events = cx.subscribe_in(&input, window, |this, _, event, window, cx| match event {
             InputEvent::PressEnter { .. } => this.complete(true, window, cx),
             InputEvent::Blur => this.complete(false, window, cx),
+            InputEvent::Change => this.remember(cx),
             _ => {}
         });
         Self {
@@ -60,6 +74,9 @@ impl Row {
             input,
             display_focus: cx.focus_handle(),
             baseline: None,
+            draft: local.draft,
+            recovery: local.draft_store,
+            draft_warning: None,
             failure_token,
             dismissing: false,
             #[cfg(all(windows, feature = "native-smoke"))]
@@ -72,31 +89,81 @@ impl Row {
         if self.dismissing || self.baseline.is_some() || self.edit.phase() == &Phase::Pending {
             return;
         }
-        self.baseline = Some(self.edit.accepted().to_owned());
+        let (entry, revision, raw) = match &self.draft {
+            Some(d) => (d.entry.clone(), d.revision, d.raw.clone()),
+            None => (
+                self.edit.accepted().to_owned(),
+                self.edit.revision(),
+                self.edit.accepted().to_owned(),
+            ),
+        };
+        self.baseline = Some((entry, revision));
         self.input.update(cx, |input, cx| {
-            input.set_value(self.edit.accepted().to_owned(), window, cx);
+            input.set_value(raw, window, cx);
             input.focus(window, cx);
         });
         cx.notify();
     }
 
+    fn remember(&mut self, cx: &mut Context<Self>) {
+        let Some((entry, revision)) = &self.baseline else {
+            return;
+        };
+        let raw = self.input.read(cx).value().to_string();
+        // set_value on entry/restore can also emit Change. An untouched input
+        // is not a draft. Once changed, even returning to entry is recoverable.
+        if raw
+            == self
+                .draft
+                .as_ref()
+                .map_or(entry.as_str(), |d| d.raw.as_str())
+        {
+            return;
+        }
+        self.replace_draft(Some(Draft {
+            token: Uuid::new_v4(),
+            raw,
+            entry: entry.clone(),
+            revision: *revision,
+        }));
+        cx.notify();
+    }
+
+    fn replace_draft(&mut self, next: Option<Draft>) {
+        if self.draft.is_none() && next.is_none() {
+            return;
+        }
+        if let Some(store) = &self.recovery
+            && let Err(message) = store.replace(
+                self.edit.identity().1,
+                self.draft.as_ref().map(|d| d.token),
+                next.clone(),
+            )
+        {
+            self.draft_warning = Some(message);
+            // Keep the live input usable. Do not attempt blind cleanup later.
+            self.recovery = None;
+        }
+        self.draft = next;
+    }
+
     fn discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.baseline = None;
+        self.replace_draft(None);
         self.display_focus.focus(window, cx);
         cx.notify();
     }
 
     fn complete(&mut self, return_focus: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(baseline) = self.baseline.take() else {
+        let Some((entry, revision)) = self.baseline.take() else {
             return;
         };
         let raw = self.input.read(cx).value().to_string();
+        self.replace_draft(None);
         if return_focus {
             self.display_focus.focus(window, cx);
         }
-        if raw != baseline
-            && let Some(save) = self.edit.submit(raw)
-        {
+        if let Some(save) = self.edit.submit(raw, &entry, revision) {
             cx.emit(save);
         }
         cx.notify();
@@ -167,6 +234,7 @@ impl Row {
                 },
             ))
             .child(component::label::Label::new(message))
+            .when_some(self.draft_warning, |el, warning| el.child(warning))
     }
 }
 
@@ -198,13 +266,13 @@ impl Workbench {
             // A submitted change supersedes this occurrence before any database
             // read or write. A different window may already own a newer failure.
             let cleared = match (&recovery, token) {
-                (Some(store), Some(token)) => store.replace(item, Some(token), None),
+                (Some(store), Some(token)) => store.replace::<Record>(item, Some(token), None),
                 _ => Ok(None),
             };
             let result = save.connect_and_run(&cfg);
             let persisted = cleared.and_then(|_| match (&recovery, &result) {
                 (Some(store), Err(reason)) => {
-                    store.replace(item, None, Some(Record::from_error(raw, reason)))
+                    store.replace(item, None, Some(Record::from_error(raw, &reason.into())))
                 }
                 _ => Ok(None),
             });
@@ -249,7 +317,7 @@ impl Workbench {
         row.update(cx, |r, _| r.dismissing = true);
         let work = cx
             .background_executor()
-            .spawn(async move { store.replace(item, Some(token), None) });
+            .spawn(async move { store.replace::<Record>(item, Some(token), None) });
         cx.spawn_in(window, async move |board, cx| {
             let result = work.await;
             _ = board.update(cx, |board, cx| {
@@ -278,7 +346,7 @@ impl Workbench {
             let cfg = database()?;
             let board = cfg
                 .connect(NoTls)
-                .and_then(|mut db| store::load_board(&mut db, id))
+                .and_then(|mut db| store::load_items(&mut db, id))
                 .map_err(|e| {
                     eprintln!("load_board board={} sqlstate={:?}", id.as_uuid(), e.code());
                     "Cannot load board. Check the database connection and schema."
@@ -286,34 +354,44 @@ impl Workbench {
                 .ok_or("Board not found.")?;
             // Local recovery is optional. If unreadable, leave its bytes alone
             // for the lifetime of this view and still mount the accepted board.
-            let local = Recovery::configured(id).and_then(|recovery| {
-                let records = recovery.as_ref().map(Recovery::load).transpose()?;
-                Ok((recovery, records.unwrap_or_default()))
-            });
-            Ok::<_, &'static str>((cfg, board, local))
+            let local = Recovery::configured(id);
+            let recovery = local.as_ref().ok().and_then(Option::as_ref);
+            let failures = recovery.map(Recovery::load::<Record>).transpose();
+            let drafts = recovery.map(Recovery::load::<Draft>).transpose();
+            Ok::<_, &'static str>((cfg, board, local, failures, drafts))
         });
         cx.spawn_in(window, async move |view, cx| {
             let loaded = work.await;
             _ = view.update_in(cx, |view, window, cx| {
                 match loaded {
-                    Ok((cfg, board, local)) => {
-                        let warning = local.as_ref().err().copied();
-                        let (recovery, mut records) = local.unwrap_or_default();
-                        view.recovery = recovery;
+                    Ok((cfg, board, local, failures, drafts)) => {
+                        let warning = local.as_ref().err().or(failures.as_ref().err()).or(drafts.as_ref().err()).copied();
+                        let recovery = local.unwrap_or_default();
+                        view.recovery = recovery.clone().filter(|_| failures.is_ok());
+                        let draft_store = recovery.filter(|_| drafts.is_ok());
+                        let mut drafts = drafts.unwrap_or_default().unwrap_or_default();
+                        let mut records = failures.unwrap_or_default().unwrap_or_default();
                         view.message = if let Some(message) = warning {
                             message
-                        } else if board.items().is_empty() {
+                        } else if board.is_empty() {
                             "Empty board"
                         } else if view.recovery.is_none() {
-                            "Local actor not set. Failed changes last only in this window."
+                            "Local actor not set. Drafts and failed changes last only in this window."
                         } else {
                             "Double-click a name or focus it and press F2. Enter to finish; Escape to discard."
                         };
-                        view.rows = board
-                            .items()
-                            .iter()
+                        let mut restored_focus = false;
+                        view.rows = board.into_iter()
                             .map(|item| {
-                                 let row = cx.new(|cx| Row::new(cfg.clone(), id, item.clone(), records.remove(&item.id.as_uuid()), window, cx));
+                                 let uuid = item.id.as_uuid();
+                                 let draft = drafts.remove(&uuid);
+                                 let restore = draft.is_some() && !restored_focus;
+                                 let local = RowRecovery { failure: records.remove(&uuid), draft, draft_store: draft_store.clone() };
+                                 let row = cx.new(|cx| Row::new(cfg.clone(), id, item, local, window, cx));
+                                 if restore {
+                                     row.update(cx, |r, cx| r.open(window, cx));
+                                     restored_focus = true;
+                                 }
                                  cx.subscribe_in(&row, window, |board, row, save: &Save, w, cx| {
                                      board.run_save(row.clone(), save.clone(), w, cx);
                                  }).detach();

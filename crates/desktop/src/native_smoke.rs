@@ -14,6 +14,15 @@ enum Journey {
 
 #[derive(Debug, Copy, Clone)]
 enum Step {
+    DraftStart(&'static str, Option<&'static str>), // accepted display, replacement (None = untouched)
+    DraftInput(Option<&'static str>),
+    DraftClose(&'static str),
+    DraftRestore(&'static str),
+    DraftFinishEntry,
+    DraftExit(&'static str, usize),
+    OpenAlongsideFailure,
+    RestoreAlongsideFailure,
+    EscapedAlongsideFailure,
     Open(Journey),
     Focus(Journey),
     Editor(Journey),
@@ -54,6 +63,15 @@ enum Step {
 
 pub(super) fn install(window: AnyWindowHandle, board: Entity<Workbench>, cx: &mut App) {
     let step = match std::env::args().nth(2).as_deref() {
+        Some("--draft-with-failure") => Step::OpenAlongsideFailure,
+        Some("--restore-with-failure") => Step::RestoreAlongsideFailure,
+        Some("--draft-untouched") => Step::DraftStart("Review", None),
+        Some("--draft-amber") => Step::DraftStart("Review", Some(" Amber ")),
+        Some("--draft-empty") => Step::DraftStart("Review", Some("")),
+        Some("--draft-coral") => Step::DraftStart("Indigo", Some(" Coral ")),
+        Some("--restore-amber") => Step::DraftRestore(" Amber "),
+        Some("--restore-empty") => Step::DraftRestore(""),
+        Some("--restore-coral") => Step::DraftRestore(" Coral "),
         Some("--smoke-edit") => Step::Open(Journey::ReopenEdit),
         Some("--smoke-cell") => Step::Open(Journey::Cell),
         Some("--smoke-recovery") => Step::Open(Journey::Recovery),
@@ -140,6 +158,8 @@ fn schedule(step: Step, board: Entity<Workbench>, w: &Window) {
             if matches!(
                 step,
                 Step::Open(_)
+                    | Step::DraftStart(..)
+                    | Step::OpenAlongsideFailure
                     | Step::Reopen
                     | Step::Delivery
                     | Step::CleanReopen
@@ -147,12 +167,17 @@ fn schedule(step: Step, board: Entity<Workbench>, w: &Window) {
             ) {
                 assert!(editors.is_empty());
                 assert_eq!(r.submissions, 0);
-                if !matches!(step, Step::Restore(_)) {
+                if !matches!(step, Step::Restore(_) | Step::OpenAlongsideFailure) {
                     assert_eq!(r.edit.phase(), &Phase::Clean);
                 }
                 let label = control.label().expect("name display label");
                 assert_eq!(label, r.edit.accepted());
                 println!("row {} {} {label}", id.as_uuid(), item.as_uuid());
+            } else if matches!(step, Step::DraftRestore(_) | Step::RestoreAlongsideFailure) {
+                if matches!(step, Step::DraftRestore(_)) { assert_eq!(r.edit.phase(), &Phase::Clean); }
+                assert_eq!(r.submissions, 0);
+                let text = control.value().or(control.label()).unwrap();
+                println!("row {} {} {text}", id.as_uuid(), item.as_uuid());
             }
         }
         if matches!(step, Step::Delivery) {
@@ -173,6 +198,86 @@ fn schedule(step: Step, board: Entity<Workbench>, w: &Window) {
             assert_eq!(dismissals[0].label(), Some("Dismiss"));
         };
         let next = match step {
+            Step::OpenAlongsideFailure => {
+                actions();
+                assert_eq!(row.edit.request(), Some("   "));
+                w.double_click(row.title_id(), cx);
+                Step::DraftInput(Some(" Amber "))
+            }
+            Step::RestoreAlongsideFailure => {
+                actions();
+                assert_eq!(row.edit.request(), Some("   "));
+                editor(second, " Amber ");
+                checkpoint("both_restored");
+                w.press("escape", cx);
+                Step::EscapedAlongsideFailure
+            }
+            Step::EscapedAlongsideFailure => {
+                actions();
+                assert_eq!(row.edit.request(), Some("   "));
+                assert_eq!(second.label(), Some("Review"));
+                assert_eq!(row.submissions, 0);
+                checkpoint("failure_kept");
+                w.remove_window(); return;
+            }
+            Step::DraftStart(accepted, raw) => {
+                assert_eq!(second.label(), Some(accepted));
+                assert!(retries.is_empty() && dismissals.is_empty());
+                w.double_click(row.title_id(), cx);
+                Step::DraftInput(raw)
+            }
+            Step::DraftInput(raw) => {
+                editor(second, row.edit.accepted());
+                assert_eq!(row.submissions, 0);
+                match raw {
+                    None => { checkpoint("untouched"); w.remove_window(); return; }
+                    Some("") => { w.press("ctrl-a", cx); w.press("backspace", cx); }
+                    Some(raw) => replace(raw, w, cx),
+                }
+                Step::DraftClose(raw.unwrap())
+            }
+            Step::DraftClose(raw) => {
+                editor(second, raw);
+                assert_eq!(row.submissions, 0);
+                if let Phase::Failed(_) = row.edit.phase() {
+                    actions();
+                    assert_eq!(row.edit.request(), Some("   "));
+                } else {
+                    assert_eq!(row.edit.phase(), &Phase::Clean);
+                }
+                checkpoint("close_draft");
+                w.remove_window(); return;
+            }
+            Step::DraftRestore(raw) => {
+                editor(second, raw);
+                assert!(retries.is_empty() && dismissals.is_empty());
+                let (entry, revision, current, current_revision) = match raw {
+                    " Amber " => ("Review", 1, "Review", 1),
+                    "" => ("Review", 1, "Indigo", 2),
+                    " Coral " => ("Indigo", 2, "Silver", 3),
+                    _ => unreachable!(),
+                };
+                assert_eq!(row.baseline.as_ref(), Some(&(entry.into(), revision)));
+                assert_eq!((row.edit.accepted(), row.edit.revision()), (current, current_revision));
+                checkpoint("draft_restored");
+                match raw {
+                    " Amber " => { w.press("escape", cx); Step::DraftExit("Review", 0) }
+                    "" => { replace(entry, w, cx); Step::DraftFinishEntry }
+                    _ => { w.press("enter", cx); Step::DraftExit("Coral", 1) }
+                }
+            }
+            Step::DraftFinishEntry => {
+                editor(second, "Review");
+                w.press("enter", cx);
+                Step::DraftExit("Indigo", 0)
+            }
+            Step::DraftExit(title, submissions) if second.label() == Some(title) => {
+                assert_eq!(row.submissions, submissions);
+                assert_eq!(second.focused(), Some(true));
+                assert!(retries.is_empty() && dismissals.is_empty());
+                checkpoint("finished");
+                w.remove_window(); return;
+            }
             Step::Open(cell) => {
                 assert_eq!(second.label(), Some("Review"));
                 if matches!(cell, Journey::Unreadable) {

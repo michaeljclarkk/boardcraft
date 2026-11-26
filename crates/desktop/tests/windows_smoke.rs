@@ -72,12 +72,14 @@ fn exercise_as(
                 println!("{mode}: {line}");
                 if line.starts_with("row ") {
                     let item = &fixture.board.items()[presented];
-                    let label = if mode == "--smoke-reopen" && presented == 1 {
-                        "Review artwork"
-                    } else if mode == "--smoke-committed" && presented == 1 {
-                        "Coral"
-                    } else {
-                        "Review"
+                    let label = match (presented, mode) {
+                        (1, "--smoke-reopen") => "Review artwork",
+                        (1, "--smoke-committed") => "Coral",
+                        (1, "--draft-coral") => "Indigo",
+                        (1, "--restore-amber" | "--restore-with-failure") => " Amber ",
+                        (1, "--restore-empty") => "",
+                        (1, "--restore-coral") => " Coral ",
+                        _ => "Review",
                     };
                     assert_eq!(
                         line,
@@ -171,6 +173,87 @@ fn readback(fixture: &Fixture, title: &str, revision: i64) {
             (board.items()[1].id, title, revision)
         ]
     );
+}
+
+#[test]
+fn unsubmitted_name_reopens_with_entry_baseline() {
+    let f = fixture();
+    let original = |_: &str| readback(&f, "Review", 1);
+    exercise(&f, "--draft-untouched", &["untouched"], original);
+    exercise(&f, "--smoke-clean", &["clean"], original);
+    exercise(&f, "--draft-amber", &["close_draft"], original);
+    exercise_as(
+        &f,
+        f.recovery.path(),
+        Uuid::new_v4(),
+        "--smoke-clean",
+        &["clean"],
+        original,
+    );
+    let other = fixture();
+    exercise_as(
+        &other,
+        f.recovery.path(),
+        f.actor,
+        "--smoke-clean",
+        &["clean"],
+        |_| readback(&other, "Review", 1),
+    );
+    exercise(
+        &f,
+        "--restore-amber",
+        &["draft_restored", "finished"],
+        original,
+    );
+    exercise(&f, "--smoke-clean", &["clean"], original);
+
+    exercise(&f, "--smoke-fail-blank", &["rejected"], original);
+    exercise(&f, "--draft-with-failure", &["close_draft"], original);
+    exercise(
+        &f,
+        "--restore-with-failure",
+        &["both_restored", "failure_kept"],
+        original,
+    );
+    exercise(
+        &f,
+        "--smoke-restore-dismiss",
+        &["restored", "dismissed"],
+        original,
+    );
+
+    let independent_edit = |before, after, revision| {
+        readback(&f, before, revision - 1);
+        let mut db = f.cfg.connect(NoTls).unwrap();
+        store::rename_item_if_current(&mut db, f.board.id(), f.board.items()[1].id, before, after)
+            .unwrap();
+        readback(&f, after, revision);
+    };
+    exercise(&f, "--draft-empty", &["close_draft"], original);
+    independent_edit("Review", "Indigo", 2);
+    exercise(
+        &f,
+        "--restore-empty",
+        &["draft_restored", "finished"],
+        |_| readback(&f, "Indigo", 2),
+    );
+    exercise(&f, "--draft-coral", &["close_draft"], |_| {
+        readback(&f, "Indigo", 2)
+    });
+    independent_edit("Indigo", "Silver", 3);
+    exercise(
+        &f,
+        "--restore-coral",
+        &["draft_restored", "finished"],
+        |stage| match stage {
+            "draft_restored" => readback(&f, "Silver", 3),
+            "finished" => readback(&f, "Coral", 4),
+            _ => unreachable!(),
+        },
+    );
+    exercise(&f, "--smoke-committed", &["clean"], |_| {
+        readback(&f, "Coral", 4)
+    });
 }
 
 #[test]

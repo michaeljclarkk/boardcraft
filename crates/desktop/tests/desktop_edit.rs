@@ -28,12 +28,12 @@ fn save_failure_and_retry_at_the_row_boundary() {
         .unwrap();
     expected.add_item(second, "Review").unwrap();
     store::create_board(&mut db, &expected).unwrap();
-    let mut row = InlineEdit::new(board, reload(board).items()[1].clone());
+    let mut row = InlineEdit::new(board, store::current_item(&mut db, board, second).unwrap());
 
-    let save = row.submit(" Review artwork  ".into()).unwrap();
+    let save = row.submit(" Review artwork  ".into(), "Review", 1).unwrap();
     assert_eq!(row.phase(), &Phase::Pending);
     assert_eq!(row.accepted(), "Review");
-    assert!(row.submit("unrelated".into()).is_none());
+    assert!(row.submit("unrelated".into(), "Review", 1).is_none());
     row.dismiss();
     assert_eq!(row.display(), " Review artwork  ");
     row.finish(save.run(&mut db));
@@ -43,7 +43,7 @@ fn save_failure_and_retry_at_the_row_boundary() {
     assert_eq!(reload(board), expected);
 
     db.batch_execute("ALTER TABLE board_items ADD CONSTRAINT distinct_titles UNIQUE (board_id, title) DEFERRABLE INITIALLY DEFERRED").unwrap();
-    let save = row.submit(" Review ".into()).unwrap();
+    let save = row.submit(" Review ".into(), "Review artwork", 2).unwrap();
     row.finish(save.run(&mut db));
     assert_eq!(row.phase(), &Phase::Failed(Failure::Database));
     assert_eq!(row.request(), Some(" Review "));
@@ -58,7 +58,7 @@ fn save_failure_and_retry_at_the_row_boundary() {
     expected.rename_item(second, "Review").unwrap();
     assert_eq!(reload(board), expected);
 
-    let blank = row.submit("  ".into()).unwrap();
+    let blank = row.submit("  ".into(), "Review", 3).unwrap();
     row.finish(blank.run(&mut db));
     assert_eq!(
         row.phase(),
@@ -81,7 +81,7 @@ fn save_failure_and_retry_at_the_row_boundary() {
     assert_eq!(reload(board), expected);
 
     store::rename_item(&mut db, board, second, "Changed again").unwrap();
-    let stale = row.submit(" My edit ".into()).unwrap();
+    let stale = row.submit(" My edit ".into(), "Newer title", 4).unwrap();
     row.finish(stale.run(&mut db));
     assert_eq!(
         row.phase(),

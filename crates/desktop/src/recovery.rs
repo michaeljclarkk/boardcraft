@@ -1,4 +1,4 @@
-//! Local submitted-name failures. Never a source of board membership or accepted titles.
+//! Actor/board scoped recovery. Drafts and submitted failures use separate documents.
 use boardcraft_board::{BoardId, ItemId, RenameError};
 use boardcraft_desktop::Failure;
 use serde::{Deserialize, Serialize};
@@ -61,28 +61,68 @@ impl Record {
     }
 }
 
-type Records = BTreeMap<Uuid, Record>;
+pub trait LocalRecord: Serialize + serde::de::DeserializeOwned {
+    const FILE: &'static str;
+    fn token(&self) -> Uuid;
+    fn valid(&self) -> bool {
+        !self.token().is_nil()
+    }
+}
+
+impl LocalRecord for Record {
+    const FILE: &'static str = "names.json";
+    fn token(&self) -> Uuid {
+        self.token
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Draft {
+    pub token: Uuid,
+    pub raw: String,
+    pub entry: String,
+    pub revision: i64,
+}
+
+impl LocalRecord for Draft {
+    const FILE: &'static str = "drafts.json";
+    fn token(&self) -> Uuid {
+        self.token
+    }
+    fn valid(&self) -> bool {
+        !self.token.is_nil() && self.revision > 0
+    }
+}
+
+type Records<R> = BTreeMap<Uuid, R>;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Document {
+#[serde(bound = "R: LocalRecord")]
+struct Document<R> {
     version: u8,
     actor: Uuid,
     board: Uuid,
     #[serde(deserialize_with = "unique_names")]
-    names: Records,
+    names: Records<R>,
 }
 
 // BTreeMap's default decoder silently replaces duplicate keys. Reject ambiguous
 // files rather than dropping a failed request on the next unrelated write.
-fn unique_names<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Records, D::Error> {
-    struct Names;
-    impl<'de> serde::de::Visitor<'de> for Names {
-        type Value = Records;
+fn unique_names<'de, R: LocalRecord, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Records<R>, D::Error> {
+    struct Names<R>(std::marker::PhantomData<R>);
+    impl<'de, R: LocalRecord> serde::de::Visitor<'de> for Names<R> {
+        type Value = Records<R>;
         fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("one failed name per item UUID")
+            f.write_str("one local name record per item UUID")
         }
-        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut a: A) -> Result<Records, A::Error> {
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut a: A,
+        ) -> Result<Self::Value, A::Error> {
             let mut names = Records::new();
             while let Some((id, record)) = a.next_entry()? {
                 if names.insert(id, record).is_some() {
@@ -92,7 +132,7 @@ fn unique_names<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Records, D::Er
             Ok(names)
         }
     }
-    d.deserialize_map(Names)
+    d.deserialize_map(Names(std::marker::PhantomData))
 }
 
 #[derive(Clone)]
@@ -129,8 +169,8 @@ impl Recovery {
         }))
     }
 
-    fn document(&self) -> Result<Document, &'static str> {
-        let file = match File::open(self.dir.join("names.json")) {
+    fn document<R: LocalRecord>(&self) -> Result<Document<R>, &'static str> {
+        let file = match File::open(self.dir.join(R::FILE)) {
             Ok(f) => f,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 return Ok(Document {
@@ -149,31 +189,28 @@ impl Recovery {
         if bytes.len() as u64 > MAX_BYTES {
             return Err(INVALID);
         }
-        let doc: Document = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
+        let doc: Document<R> = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
         if doc.version != 1
             || doc.actor != self.actor
             || doc.board != self.board
-            || doc
-                .names
-                .iter()
-                .any(|(id, r)| id.is_nil() || r.token.is_nil())
+            || doc.names.iter().any(|(id, r)| id.is_nil() || !r.valid())
         {
             return Err(INVALID);
         }
         Ok(doc)
     }
 
-    pub fn load(&self) -> Result<Records, &'static str> {
+    pub fn load<R: LocalRecord>(&self) -> Result<Records<R>, &'static str> {
         Ok(self.document()?.names)
     }
 
     // All writers hold the same OS lock across read/compare/atomic replacement.
     // Compare the occurrence, not the raw value: identical failures can recur.
-    pub fn replace(
+    pub fn replace<R: LocalRecord>(
         &self,
         item: ItemId,
         expected: Option<Uuid>,
-        record: Option<Record>,
+        record: Option<R>,
     ) -> Result<Option<Uuid>, &'static str> {
         let io_error =
             "Cannot update local name recovery. Check the recovery directory and reopen.";
@@ -186,12 +223,12 @@ impl Recovery {
             .open(self.dir.join("names.lock"))
             .map_err(|_| io_error)?;
         lock.lock().map_err(|_| io_error)?;
-        let mut doc = self.document()?;
+        let mut doc = self.document::<R>()?;
         let id = item.as_uuid();
-        if doc.names.get(&id).map(|r| r.token) != expected {
+        if doc.names.get(&id).map(LocalRecord::token) != expected {
             return Err(CHANGED);
         }
-        let token = record.as_ref().map(|r| r.token);
+        let token = record.as_ref().map(LocalRecord::token);
         if let Some(record) = record {
             doc.names.insert(id, record);
         } else {
@@ -205,8 +242,7 @@ impl Recovery {
         temp.write_all(&bytes)
             .and_then(|_| temp.as_file().sync_all())
             .map_err(|_| io_error)?;
-        temp.persist(self.dir.join("names.json"))
-            .map_err(|_| io_error)?;
+        temp.persist(self.dir.join(R::FILE)).map_err(|_| io_error)?;
         Ok(token)
     }
 }
@@ -233,8 +269,8 @@ mod tests {
         let first = store.replace(item, None, failed()).unwrap();
         let other = store.replace(sibling, None, failed()).unwrap();
         let second = store.replace(item, first, failed()).unwrap();
-        assert_eq!(store.replace(item, first, None), Err(CHANGED));
-        let records = store.load().unwrap();
+        assert_eq!(store.replace::<Record>(item, first, None), Err(CHANGED));
+        let records = store.load::<Record>().unwrap();
         assert_eq!(Some(records[&item.as_uuid()].token), second);
         assert_eq!(Some(records[&sibling.as_uuid()].token), other);
     }
@@ -245,7 +281,7 @@ mod tests {
         let store = fixture(&dir);
         let path = dir.path().join("names.json");
         let item = ItemId::new(Uuid::from_u128(17)).unwrap();
-        let wrong = serde_json::to_vec(&Document {
+        let wrong = serde_json::to_vec(&Document::<Record> {
             version: 1,
             board: store.board,
             actor: Uuid::new_v4(),
@@ -254,7 +290,7 @@ mod tests {
         .unwrap();
         for bytes in [b"broken".to_vec(), wrong] {
             fs::write(&path, &bytes).unwrap();
-            assert!(store.load().is_err());
+            assert!(store.load::<Record>().is_err());
             assert_eq!(
                 store.replace(
                     item,
@@ -265,5 +301,27 @@ mod tests {
             );
             assert_eq!(fs::read(&path).unwrap(), bytes);
         }
+    }
+
+    #[test]
+    fn stale_escape_keeps_newer_draft_even_with_identical_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = fixture(&dir);
+        let item = ItemId::new(Uuid::from_u128(17)).unwrap();
+        let draft = || {
+            Some(Draft {
+                token: Uuid::new_v4(),
+                raw: "".into(),
+                entry: "Review".into(),
+                revision: 1,
+            })
+        };
+        let original = store.replace(item, None, draft()).unwrap();
+        let newer = store.replace(item, original, draft()).unwrap();
+        assert_eq!(store.replace::<Draft>(item, original, None), Err(CHANGED));
+        assert_eq!(
+            Some(store.load::<Draft>().unwrap()[&item.as_uuid()].token),
+            newer
+        );
     }
 }

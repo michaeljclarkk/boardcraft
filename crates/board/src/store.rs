@@ -93,22 +93,31 @@ pub fn load_items(client: &mut Client, id: BoardId) -> Result<Option<Vec<StoredI
 #[derive(Debug)]
 pub enum SaveError {
     Rejected(RenameError),
-    Conflict { current: String },
+    Conflict { current: String, revision: i64 },
     Database(Error),
 }
 
 /// Re-read just the name targeted by a user-requested retry.
-pub fn current_title(
+pub fn current_item(
     client: &mut Client,
     board: BoardId,
     item: ItemId,
-) -> Result<String, SaveError> {
+) -> Result<StoredItem, SaveError> {
     client
         .query_opt(
-            "SELECT title FROM board_items WHERE board_id=$1 AND id=$2",
+            "SELECT title, revision FROM board_items WHERE board_id=$1 AND id=$2",
             &[&board.0, &item.0],
         )
-        .and_then(|row| row.map(|r| r.try_get(0)).transpose())
+        .and_then(|row| {
+            row.map(|r| {
+                Ok(StoredItem {
+                    id: item,
+                    title: r.try_get(0)?,
+                    revision: r.try_get(1)?,
+                })
+            })
+            .transpose()
+        })
         .map_err(|error| {
             log::error!(
                 "current_title board={} item={} sqlstate={:?}",
@@ -158,10 +167,30 @@ pub fn rename_item_at_revision(
     )
 }
 
+/// Finish a name-only edit from its entry revision, guarded by the last title
+/// actually loaded in this Windows view. Check both on the same locked row.
+pub fn finish_name_edit(
+    client: &mut Client,
+    board: BoardId,
+    item: ItemId,
+    revision: i64,
+    observed: &str,
+    raw: &str,
+) -> Result<StoredItem, SaveError> {
+    save_title(
+        client,
+        board,
+        item,
+        Condition::ObservedName(revision, observed),
+        raw,
+    )
+}
+
 enum Condition<'a> {
     Any,
     Title(&'a str),
     KnownRevision(i64),
+    ObservedName(i64, &'a str),
 }
 
 fn save_title(
@@ -195,9 +224,10 @@ fn save_title(
         Condition::Any => true,
         Condition::Title(expected) => expected == current,
         Condition::KnownRevision(r) => (1..=revision).contains(&r),
+        Condition::ObservedName(r, observed) => observed == current && (1..=revision).contains(&r),
     };
     if !allowed {
-        return Err(SaveError::Conflict { current });
+        return Err(SaveError::Conflict { current, revision });
     }
     let mut saved = StoredItem {
         id: item,
