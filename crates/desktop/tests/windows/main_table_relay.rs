@@ -3,7 +3,7 @@ use std::{
     io::{Read, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering::SeqCst},
         mpsc,
     },
@@ -15,8 +15,17 @@ pub struct Relay {
     pub port: u16,
     pub fault: Arc<AtomicUsize>, // 1: next table GET, 2: next POST acknowledgment
     pub saves: Arc<AtomicUsize>,
+    pub reads: Arc<AtomicUsize>,
+    pub entries: Arc<Mutex<Vec<EntryCall>>>,
     stop: mpsc::Sender<()>,
     worker: Option<thread::JoinHandle<()>>,
+}
+
+pub struct EntryCall {
+    pub method: String,
+    pub path: String,
+    pub body: serde_json::Value,
+    pub status: u16,
 }
 
 impl Relay {
@@ -26,12 +35,16 @@ impl Relay {
         listener.set_nonblocking(true).unwrap();
         let fault = Arc::new(AtomicUsize::new(0));
         let saves = Arc::new(AtomicUsize::new(0));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let entries = Arc::new(Mutex::new(Vec::new()));
         let (stop, rx) = mpsc::channel();
         let (f, s) = (fault.clone(), saves.clone());
+        let calls = entries.clone();
+        let r = reads.clone();
         let worker = thread::spawn(move || {
             while rx.try_recv().is_err() {
                 match listener.accept() {
-                    Ok((stream, _)) => forward(stream, host, &f, &s),
+                    Ok((stream, _)) => forward(stream, host, &f, &s, &r, &calls),
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(2))
                     }
@@ -43,13 +56,22 @@ impl Relay {
             port,
             fault,
             saves,
+            reads,
+            entries,
             stop,
             worker: Some(worker),
         }
     }
 }
 
-fn forward(mut child: TcpStream, host: u16, fault: &AtomicUsize, saves: &AtomicUsize) {
+fn forward(
+    mut child: TcpStream,
+    host: u16,
+    fault: &AtomicUsize,
+    saves: &AtomicUsize,
+    reads: &AtomicUsize,
+    entries: &Mutex<Vec<EntryCall>>,
+) {
     child.set_nonblocking(false).unwrap();
     child
         .set_read_timeout(Some(Duration::from_secs(10)))
@@ -73,7 +95,12 @@ fn forward(mut child: TcpStream, host: u16, fault: &AtomicUsize, saves: &AtomicU
     let head = std::str::from_utf8(&bytes[..head_end]).unwrap().to_owned();
     let first = head.lines().next().unwrap();
     let read = first.starts_with("GET ") && first.contains("/main-table ");
-    let save = first.starts_with("POST ") && first.contains("/main-table-fold ");
+    if read {
+        reads.fetch_add(1, SeqCst);
+    }
+    let entry = (first.starts_with("POST ") || first.starts_with("PUT "))
+        && first.contains("/main-table/items");
+    let save = (first.starts_with("POST ") && first.contains("/main-table-fold ")) || entry;
     let length = head
         .lines()
         .find_map(|l| {
@@ -114,6 +141,22 @@ fn forward(mut child: TcpStream, host: u16, fault: &AtomicUsize, saves: &AtomicU
         .unwrap();
     let mut response = Vec::new();
     upstream.read_to_end(&mut response).unwrap();
+    if entry {
+        let mut line = first.split_whitespace();
+        let status = std::str::from_utf8(&response)
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .parse()
+            .unwrap();
+        entries.lock().unwrap().push(EntryCall {
+            method: line.next().unwrap().to_owned(),
+            path: line.next().unwrap().to_owned(),
+            body: serde_json::from_slice(&bytes[head_end..head_end + length]).unwrap(),
+            status,
+        });
+    }
     if save && fault.compare_exchange(2, 0, SeqCst, SeqCst).is_ok() {
         child.write_all(refused()).unwrap();
     } else {

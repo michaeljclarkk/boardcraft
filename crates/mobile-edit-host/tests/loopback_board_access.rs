@@ -6,10 +6,19 @@ mod caller;
 mod create;
 #[path = "fixture/fold_checks.rs"]
 mod fold_checks;
+#[path = "fixture/grouped_entry.rs"]
+mod grouped_entry;
+#[path = "fixture/grouped_entry_checks.rs"]
+mod grouped_entry_checks;
 #[path = "fixture/native_table.rs"]
 mod native_table;
 #[path = "fixture/native_table_checks.rs"]
 mod native_table_checks;
+
+#[test]
+fn native_grouped_item_entry_checks_current_access() {
+    grouped_entry_checks::current_access();
+}
 
 #[test]
 fn native_main_table_resolves_current_access() {

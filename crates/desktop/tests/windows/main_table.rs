@@ -1,10 +1,10 @@
+use super::main_table_relay;
 use super::{
     Window, http_window_command,
     native_table::{A, B, C, NativeTable},
     selection::SELECTED,
 };
 use std::sync::atomic::Ordering::SeqCst;
-mod main_table_relay;
 
 fn launch(f: &NativeTable, port: u16, mode: &str) -> Window {
     let mut cmd = http_window_command();

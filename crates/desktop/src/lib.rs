@@ -52,14 +52,23 @@ pub struct Save {
 
 impl Save {
     pub fn send(self, session: &EditClient) -> Result<StoredItem, EditError> {
-        let saved = session.rename(
-            self.board.as_uuid(),
-            self.item.as_uuid(),
-            &NameEdit {
-                title: self.draft,
-                revision: self.entry_revision,
-            },
-        )?;
+        self.send_name(session, false)
+    }
+
+    pub fn send_selected(self, session: &EditClient) -> Result<StoredItem, EditError> {
+        self.send_name(session, true)
+    }
+
+    fn send_name(self, session: &EditClient, selected: bool) -> Result<StoredItem, EditError> {
+        let edit = NameEdit {
+            title: self.draft,
+            revision: self.entry_revision,
+        };
+        let saved = if selected {
+            session.rename_main_table_item(self.board.as_uuid(), self.item.as_uuid(), &edit)
+        } else {
+            session.rename(self.board.as_uuid(), self.item.as_uuid(), &edit)
+        }?;
         if saved.id != self.item.as_uuid() || saved.revision < self.entry_revision {
             return Err(EditError::Transport);
         }
@@ -153,6 +162,15 @@ impl InlineEdit {
 
     pub fn dismiss(&mut self) {
         if matches!(self.phase, Phase::Failed(_)) {
+            self.request = None;
+            self.phase = Phase::Clean;
+        }
+    }
+
+    /// Drop only the local pending projection. The caller must read the server
+    /// before enabling another edit; this does not claim the write was undone.
+    pub fn discard_unconfirmed(&mut self) {
+        if self.phase == Phase::Pending {
             self.request = None;
             self.phase = Phase::Clean;
         }

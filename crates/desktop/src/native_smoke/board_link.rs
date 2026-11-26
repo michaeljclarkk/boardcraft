@@ -37,7 +37,6 @@ fn button(key: &'static str, w: &mut Window, cx: &mut App) {
 }
 
 fn selected(w: &Window) {
-    assert!(message(w, "Board items · Read only"));
     controls(w, false, &[(73, "Sketch"), (61, "Ink")]);
 }
 
@@ -52,7 +51,7 @@ fn drive(step: Step, port: u16, open_window: bool, w: &Window) {
                 click(&w.find_all(id("board", 201))[0], w, cx);
                 Selected
             }
-            Selected if message(w, "Board items · Read only") => {
+            Selected if message(w, "Board items") => {
                 selected(w);
                 checkpoint("selected");
                 button("share", w, cx);
@@ -152,13 +151,14 @@ fn drive(step: Step, port: u16, open_window: bool, w: &Window) {
 
 fn destination(source: AnyWindowHandle, w: &Window) {
     w.on_next_frame(move |w, cx| {
-        if !message(w, "Board items · Read only") {
+        if !message(w, "Board items") {
             destination(source, w);
             return;
         }
         assert!(source != w.window_handle());
         selected(w);
         cx.update_window(source, |_, w, _| {
+            assert!(message(w, "Board items"));
             selected(w);
             assert!(message(w, "Recipients need existing access to this board."));
             checkpoint("opened");

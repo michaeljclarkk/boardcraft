@@ -62,6 +62,58 @@ fn revision(headers: &ureq::http::HeaderMap, key: &str) -> Result<i64, EditError
 }
 
 impl EditClient {
+    /// Native selected-board create. Never replay automatically after a failed acknowledgment.
+    pub fn create_main_table_item(
+        &self,
+        board: Uuid,
+        group: &str,
+        id: Uuid,
+        title: &str,
+    ) -> Result<SavedItem, EditError> {
+        #[derive(Serialize)]
+        struct Draft<'a> {
+            id: Uuid,
+            group_id: &'a str,
+            title: &'a str,
+        }
+        #[derive(Deserialize)]
+        struct Created {
+            group_id: String,
+            #[serde(flatten)]
+            item: SavedItem,
+        }
+        let url = format!(
+            "http://127.0.0.1:{}/navigation/boards/{board}/main-table/items",
+            self.port
+        );
+        let saved: Created = decode(self.authorize(self.http.post(url)).send_json(Draft {
+            id,
+            group_id: group,
+            title,
+        }))?;
+        if saved.group_id != group || saved.item.id != id || saved.item.revision < 1 {
+            return Err(EditError::Transport);
+        }
+        Ok(saved.item)
+    }
+
+    pub fn rename_main_table_item(
+        &self,
+        board: Uuid,
+        item: Uuid,
+        edit: &NameEdit,
+    ) -> Result<SavedItem, EditError> {
+        let url = format!(
+            "http://127.0.0.1:{}/navigation/boards/{board}/main-table/items/{item}/name",
+            self.port
+        );
+        let saved: SavedItem = decode(self.authorize(self.http.put(url)).send_json(edit))?;
+        if saved.id != item || saved.revision < edit.revision || saved.revision < 1 {
+            return Err(EditError::Transport);
+        }
+        Ok(saved)
+    }
+
     pub fn read_main_table(&self, board: Uuid) -> Result<MainTableRead, EditError> {
         let url = format!(
             "http://127.0.0.1:{}/navigation/boards/{board}/main-table",

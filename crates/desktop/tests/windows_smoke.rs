@@ -22,10 +22,16 @@ mod fixture;
 mod group_create;
 #[path = "../../mobile-edit-host/tests/fixture/group_edit.rs"]
 mod group_edit;
+#[path = "windows/grouped_entry.rs"]
+mod grouped_entry;
+#[path = "../../mobile-edit-host/tests/fixture/grouped_entry.rs"]
+mod grouped_entry_fixture;
 #[path = "windows/logout.rs"]
 mod logout;
 #[path = "windows/main_table.rs"]
 mod main_table;
+#[path = "windows/main_table_relay.rs"]
+mod main_table_relay;
 #[path = "../../mobile-edit-host/tests/fixture/native_table.rs"]
 mod native_table;
 #[path = "windows/navigation.rs"]
@@ -39,6 +45,16 @@ fn windows_opens_and_folds_main_table() {
 #[test]
 fn windows_recovers_main_table_fold() {
     main_table::recovers();
+}
+
+#[test]
+fn windows_creates_and_renames_grouped_root() {
+    grouped_entry::creates_and_renames();
+}
+
+#[test]
+fn windows_recovers_grouped_item_entry() {
+    grouped_entry::recovers();
 }
 #[path = "../../mobile-edit-host/tests/fixture/peer.rs"]
 mod peer;

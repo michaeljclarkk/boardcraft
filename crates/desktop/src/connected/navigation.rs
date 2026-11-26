@@ -57,7 +57,8 @@ impl Connected {
                     let page = match result {
                         Ok(ReadPage::List(list)) => Page::List(list),
                         Ok(ReadPage::Table(read)) => {
-                            let table = MainTable::new(read, cx);
+                            let table =
+                                MainTable::new(read, board.expect("selected board"), None, w, cx);
                             table.focus_first(w, cx);
                             Page::Items(board.expect("selected board"), table)
                         }
@@ -97,6 +98,9 @@ impl Connected {
     }
 
     fn reload_main_table(&mut self, board: Uuid, w: &mut Window, cx: &mut Context<Self>) {
+        if self.refresh_item_entry(board, w, cx) {
+            return;
+        }
         let Screen::Navigation(nav) = &self.screen else {
             return;
         };

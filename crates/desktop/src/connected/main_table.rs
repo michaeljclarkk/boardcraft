@@ -7,17 +7,15 @@ use gpui_kit::component::{
     button::ButtonVariants,
     menu::{DropdownMenu, PopupMenuItem},
 };
-
-struct RootName {
-    id: Uuid,
-    title: SharedString,
-}
+mod item_entry;
+use item_entry::GroupEntry;
 
 struct Heading {
     id: SharedString,
     name: SharedString,
     count: SharedString,
-    rows: Vec<RootName>,
+    rows: Vec<Entity<Row>>,
+    entry: Entity<GroupEntry>,
     collapsed: bool,
     focus: FocusHandle,
 }
@@ -27,6 +25,9 @@ pub(super) struct MainTable {
     revision: i64,
     editable: bool,
     pending: bool,
+    folding: bool,
+    reconcile: bool,
+    _subscriptions: Vec<Subscription>,
 }
 
 enum FoldFailure {
@@ -43,15 +44,73 @@ impl MainTable {
             h.focus.focus(w, cx);
         }
     }
-    pub(super) fn new(read: MainTableRead, cx: &mut App) -> Self {
-        Self {
-            revision: read.view_revision(),
-            editable: read.is_editable(),
-            pending: false,
-            headings: read
-                .groups()
-                .iter()
-                .map(|g| Heading {
+    pub(super) fn new(
+        read: MainTableRead,
+        board: Uuid,
+        previous: Option<&Self>,
+        w: &mut Window,
+        cx: &mut Context<Connected>,
+    ) -> Self {
+        let editable = read.is_editable();
+        let mut subscriptions = Vec::new();
+        let headings = read
+            .groups()
+            .iter()
+            .map(|g| {
+                let old =
+                    previous.and_then(|t| t.headings.iter().find(|h| h.id.as_ref() == g.id()));
+                let entry = old
+                    .map(|h| h.entry.clone())
+                    .unwrap_or_else(|| cx.new(|cx| GroupEntry::new(g.id(), g.name(), w, cx)));
+                entry.update(cx, |e, cx| {
+                    e.enabled = editable;
+                    e.set_group_name(g.name());
+                    cx.notify();
+                });
+                subscriptions.push(cx.subscribe_in(
+                    &entry,
+                    w,
+                    |v, entry, _: &item_entry::Create, w, cx| {
+                        v.create_main_table_item(entry.clone(), w, cx)
+                    },
+                ));
+                let rows = g
+                    .items()
+                    .iter()
+                    .map(|r| {
+                        let row = cx.new(|cx| {
+                            Row::new(
+                                editable,
+                                BoardId::new(board).expect("selected board"),
+                                StoredItem {
+                                    id: ItemId::new(r.id).expect("validated read"),
+                                    title: r.title.clone(),
+                                    revision: r.revision,
+                                },
+                                RowRecovery::default(),
+                                w,
+                                cx,
+                            )
+                        });
+                        if let Some(prior) = old.and_then(|h| {
+                            h.rows
+                                .iter()
+                                .find(|row| row.read(cx).edit.identity().1.as_uuid() == r.id)
+                        }) {
+                            let focus = prior.read(cx).display_focus.clone();
+                            row.update(cx, |row, _| row.display_focus = focus);
+                        }
+                        subscriptions.push(cx.subscribe_in(
+                            &row,
+                            w,
+                            |v, row, save: &Save, w, cx| {
+                                v.rename_main_table_item(row.clone(), save.clone(), w, cx)
+                            },
+                        ));
+                        row
+                    })
+                    .collect();
+                Heading {
                     id: g.id().to_owned().into(),
                     name: g.name().to_owned().into(),
                     count: format!(
@@ -64,18 +123,23 @@ impl MainTable {
                         }
                     )
                     .into(),
-                    rows: g
-                        .items()
-                        .iter()
-                        .map(|r| RootName {
-                            id: r.id,
-                            title: r.title.clone().into(),
-                        })
-                        .collect(),
+                    rows,
+                    entry,
                     collapsed: g.is_collapsed(),
-                    focus: cx.focus_handle().tab_stop(true),
-                })
-                .collect(),
+                    focus: old
+                        .map(|h| h.focus.clone())
+                        .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
+                }
+            })
+            .collect();
+        Self {
+            revision: read.view_revision(),
+            editable,
+            pending: false,
+            folding: false,
+            reconcile: false,
+            headings,
+            _subscriptions: subscriptions,
         }
     }
 
@@ -85,13 +149,17 @@ impl MainTable {
             .flex_col()
             .gap_3()
             .child(Label::new("Main table"))
-            .child(Label::new("Board items · Read only"));
+            .child(Label::new(if self.editable && !self.reconcile {
+                "Board items"
+            } else {
+                "Board items · Read only"
+            }));
         if !self.editable {
             column = column.child(Label::new(
                 "Group presentation changes last only for this visit.",
             ));
         }
-        if self.pending {
+        if self.pending && self.folding {
             column = column.child(Label::new("Saving group presentation…"));
         }
         if self.headings.is_empty() {
@@ -125,6 +193,7 @@ impl MainTable {
                                 .accessibility_label(format!("Toggle {}", h.name))
                                 .aria_expanded(expanded)
                                 .loading(self.pending)
+                                .disabled(self.reconcile)
                                 .on_click(cx.listener(move |v, _, w, cx| {
                                     v.fold_main_table(id.as_ref(), false, w, cx)
                                 })),
@@ -136,7 +205,7 @@ impl MainTable {
                                 .small()
                                 .ghost()
                                 .label("Group options")
-                                .disabled(self.pending)
+                                .disabled(self.pending || self.reconcile)
                                 .dropdown_menu(move |menu, _, _| {
                                     let mut menu = menu;
                                     for all in [false, true] {
@@ -166,13 +235,42 @@ impl MainTable {
                     body = body.child(Label::new("No items"));
                 }
                 for r in &h.rows {
-                    body = body.child(
-                        Button::new(SharedString::from(format!("title-{}", r.id)))
-                            .small()
-                            .ghost()
-                            .label(r.title.clone())
-                            .disabled(true),
-                    );
+                    body = body.child(r.clone());
+                    if matches!(
+                        r.read(cx).edit.phase(),
+                        boardcraft_desktop::Phase::Failed(_)
+                    ) {
+                        let row = r.clone();
+                        body = body
+                            .child(Label::new(
+                                "Name not saved. Correct the draft or reload the board.",
+                            ))
+                            .child(
+                                Button::new(SharedString::from(format!(
+                                    "correct-{}",
+                                    r.read(cx).edit.identity().1.as_uuid()
+                                )))
+                                .small()
+                                .label("Correct name")
+                                .disabled(self.pending || self.reconcile || !self.editable)
+                                .on_click(move |_, w, cx| {
+                                    row.update(cx, |r, cx| {
+                                        let raw = r.edit.request().map(str::to_owned);
+                                        r.open(w, cx);
+                                        if r.baseline.is_some()
+                                            && let Some(raw) = raw
+                                        {
+                                            r.input.update(cx, |input, cx| {
+                                                input.set_value(raw, w, cx)
+                                            });
+                                        }
+                                    })
+                                }),
+                            );
+                    }
+                }
+                if self.editable && !self.reconcile {
+                    body = body.child(h.entry.clone());
                 }
                 section = section.child(body);
             }
@@ -190,7 +288,7 @@ impl Connected {
         let Page::Items(board, table) = &mut nav.page else {
             return;
         };
-        if table.pending {
+        if table.pending || table.reconcile {
             return;
         }
         let Some(heading) = table.headings.iter().find(|h| h.id.as_ref() == id) else {
@@ -217,7 +315,8 @@ impl Connected {
         let board = *board;
         let revision = table.revision;
         let client = nav.client.clone();
-        table.pending = true;
+        table.set_busy(true, cx);
+        table.folding = true;
         let request = self.navigation_request;
         self.message = "";
         #[cfg(all(windows, feature = "native-smoke"))]
@@ -239,10 +338,7 @@ impl Connected {
                 if *current != board || !old.pending { return; }
                 match result {
                     Ok(read) => {
-                        let mut table = MainTable::new(read, cx);
-                        for h in &mut table.headings {
-                            if let Some(previous) = old.headings.iter().find(|p| p.id == h.id) { h.focus = previous.focus.clone(); }
-                        }
+                        let table = MainTable::new(read, board, Some(old), w, cx);
                         // The original disclosure stays live across body replacement.
                         let target = table.headings.iter().find(|h| h.focus == focus).or_else(|| table.headings.first());
                         if let Some(h) = target { h.focus.focus(w, cx); }

@@ -74,7 +74,7 @@ impl Row {
             editable,
             edit,
             input,
-            display_focus: cx.focus_handle(),
+            display_focus: cx.focus_handle().tab_stop(true),
             baseline: None,
             draft: local.draft,
             recovery: local.draft_store,
@@ -549,6 +549,16 @@ fn main() {
                             | "--table-ack-fault"
                             | "--table-commit-fault"
                             | "--table-demoted"
+                            | "--entry-member"
+                            | "--entry-viewer"
+                            | "--entry-demoted-create"
+                            | "--entry-demoted-name"
+                            | "--entry-name-validation"
+                            | "--entry-ack-create"
+                            | "--entry-refresh-create"
+                            | "--entry-ack-name"
+                            | "--entry-refresh-name"
+                            | "--entry-revoked-name"
                     )
                 } else {
                     matches!(

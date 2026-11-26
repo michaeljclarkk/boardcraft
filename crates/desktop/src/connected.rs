@@ -91,6 +91,8 @@ pub(super) fn open(port: u16, board: Option<Uuid>, cx: &mut App) {
                 super::native_smoke::board_link::install(&mode, port, w);
             } else if mode.starts_with("--table-") {
                 super::native_smoke::main_table::install(_view, &mode, w);
+            } else if mode.starts_with("--entry-") {
+                super::native_smoke::grouped_entry::install(_view, &mode, w);
             } else if let Some(board) = board {
                 super::native_smoke::login::install(board, mode == "--smoke-session", w);
             } else {

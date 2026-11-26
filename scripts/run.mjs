@@ -141,6 +141,9 @@ export const packets = [
   { id: '44-windows-main-table', ...boardNavigation,
     cases: [...boardNavigation.cases, 'native_main_table_resolves_current_access'],
     windowsCases: [...boardNavigation.windowsCases, 'windows_opens_and_folds_main_table', 'windows_recovers_main_table_fold'] },
+  { id: '45-windows-grouped-item-entry', ...boardNavigation,
+    cases: [...boardNavigation.cases, 'native_main_table_resolves_current_access', 'native_grouped_item_entry_checks_current_access'],
+    windowsCases: [...boardNavigation.windowsCases, 'windows_opens_and_folds_main_table', 'windows_recovers_main_table_fold', 'windows_creates_and_renames_grouped_root', 'windows_recovers_grouped_item_entry'] },
 ].map(packet => ({ model: 'openai/gpt-6.1-sol#xhigh', ...packet }));
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

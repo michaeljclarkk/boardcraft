@@ -316,6 +316,24 @@ fn handle(
         {
             (board, SelectedWrite, None)
         }
+        (Method::Post, ["", "navigation", "boards", board, "main-table", "items"])
+            if mode != Mode::Scoped =>
+        {
+            (board, SelectedWrite, None)
+        }
+        (
+            Method::Put,
+            [
+                "",
+                "navigation",
+                "boards",
+                board,
+                "main-table",
+                "items",
+                id,
+                "name",
+            ],
+        ) if mode != Mode::Scoped => (board, SelectedWrite, Some(id)),
         (Method::Get, ["", "boards", id]) => (id, ScopedRead, None),
         (Method::Get, ["", "navigation", "boards", board, "archive"])
         | (Method::Get, ["", "navigation", "boards", board, "archive", "groups", _, _])

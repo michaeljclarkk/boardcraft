@@ -39,7 +39,7 @@ pub enum RenameError {
 }
 
 /// Only direct edits use this rule; loading an existing title preserves its spelling.
-fn interactive_title(draft: &str) -> Result<&str, RenameError> {
+pub fn interactive_title(draft: &str) -> Result<&str, RenameError> {
     let title = draft.trim();
     if title.is_empty() {
         Err(RenameError::BlankTitle)

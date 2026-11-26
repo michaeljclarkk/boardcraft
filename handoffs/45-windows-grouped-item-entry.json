@@ -1,0 +1,12 @@
+{
+  "status": "ready",
+  "summary": "Windows grouped entry uses group-keyed Kit inputs and the existing inline name editor. Selected-board writes reuse create_group_item and rename_item_at_revision. Both focused Windows journeys passed in running native windows against the synthetic PostgreSQL fixture.",
+  "evidence": [
+    "cargo test --locked -p boardcraft-desktop --features native-smoke --test windows_smoke -- grouped_ --test-threads=1: 2 passed, 0 failed, 15 filtered out (80.92s).",
+    "windows_creates_and_renames_grouped_root: blank, blur and Escape did not create. After a 422, correcting the padded duplicate reused the proposed UUID. While the write was locked, Backspace left the raw draft intact, the Add button reported disabled, Enter and click sent no duplicate request, and neither the table nor storage gained a pending row. After commit, only the second Work gained one Ink; the other draft survived. F2/Escape and unchanged Enter sent no rename. Double-click and blur renamed only the new UUID. Revisit and fresh database reads confirmed Coral at revision 2 in append position, with both sibling namesakes unchanged.",
+    "windows_recovers_grouped_item_entry: tested both create and rename after demotion, Viewer controls, mid-edit revocation, explicit correction after name rejection, and both lost acknowledgments and failed confirmation reads for each write. The relay counted one write and one additional GET on reconciliation; fresh database reads confirmed the committed result without replay.",
+    "native_grouped_item_entry_checks_current_access: coordinator reported this focused HTTP and persistence check passed before the Windows test run.",
+    "Runner verified 45: 17 Windows journeys, 35 loopback host cases, workspace tests, formatting and runner regressions passed. Two inherited navigation cases now expect the editable Member heading while still checking mounted rows and current membership. Attended clipboard cases were not run."
+  ],
+  "next": "Port selected-root batch moves into the Windows grouped table."
+}

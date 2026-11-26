@@ -92,7 +92,7 @@ fn schedule(step: Step, revoked: bool, w: &Window) {
                 click(&w.find_all("board-list")[0], w, cx);
                 Restored
             }
-            Selected | Sibling if message(w, "Board items · Read only") => {
+            Selected | Sibling if message(w, "Board items") => {
                 let sibling = matches!(step, Sibling);
                 controls(
                     w,
