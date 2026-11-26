@@ -19,7 +19,9 @@ export function launch(profile, foreground) {
     `--user-data-dir=${profile}`, '--remote-debugging-pipe', '--no-first-run',
     '--no-default-browser-check', '--disable-extensions', '--disable-background-networking',
     '--disable-sync', '--disable-component-update', '--disable-breakpad', '--disable-crash-reporter',
-    '--inprivate', '--incognito', ...(foreground ? [] : ['--headless=new']), 'about:blank'
+    // An occluded startup window can leave the fixture hidden and suppress HTML autofocus.
+    '--inprivate', '--incognito', foreground ? '--disable-backgrounding-occluded-windows' : '--headless=new',
+    'about:blank'
   ], {stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'], windowsHide: !foreground});
   const pending = new Map();
   const traffic = [];
