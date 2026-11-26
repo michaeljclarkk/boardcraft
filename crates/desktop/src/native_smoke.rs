@@ -1,6 +1,7 @@
 //! Fixed journeys in a normally presented Kit window. Only production controls handle input.
 use super::*;
 use gpui_kit::test::{ElementSnapshot, TestEventExt, TestWindowExt};
+pub(super) mod login;
 
 #[derive(Debug, Copy, Clone)]
 enum Journey {

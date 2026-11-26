@@ -729,9 +729,13 @@ dependencies = [
 name = "boardcraft-desktop"
 version = "0.1.0"
 dependencies = [
+ "boardcraft-account",
  "boardcraft-board",
+ "boardcraft-mobile-edit-client",
+ "boardcraft-mobile-edit-host",
  "gpui-kit",
  "postgres",
+ "ring",
  "serde",
  "serde_json",
  "tempfile",

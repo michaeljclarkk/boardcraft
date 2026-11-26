@@ -13,6 +13,13 @@ use std::{
 };
 use uuid::Uuid;
 
+#[path = "../../mobile-edit-host/tests/fixture/mod.rs"]
+#[expect(
+    dead_code,
+    reason = "this journey uses with_titles rather than the duplicate-title shorthand"
+)]
+mod connected_fixture;
+
 // Bound startup, rendering, and shutdown even if the native event loop stalls.
 struct SmokeProcess(Child);
 impl Drop for SmokeProcess {
@@ -20,6 +27,85 @@ impl Drop for SmokeProcess {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+#[test]
+fn windows_login_reject_retry() {
+    use boardcraft_mobile_edit_client::SavedItem;
+    use connected_fixture::{FIRST, SECOND};
+    let f = connected_fixture::Fixture::with_titles(["Review sketch", "Ink"]);
+    let secret = Uuid::new_v4().simple().to_string();
+    let member = f.seed_account("boardmember", &secret, boardcraft_account::Role::Member);
+    f.set_creator(member);
+    let rows = [(FIRST, "Review sketch"), (SECOND, "Ink")].map(|(id, title)| SavedItem {
+        id,
+        title: title.into(),
+        revision: 1,
+    });
+
+    let mut child = SmokeProcess(
+        Command::new(env!("CARGO_BIN_EXE_boardcraft-desktop"))
+            .args([
+                "connect",
+                &f.host.port.to_string(),
+                &f.board.to_string(),
+                "--smoke-login",
+            ])
+            .env_remove("RUSTDAY_TEST_DATABASE_URL")
+            .env_remove("DATABASE_URL")
+            .env_remove("BOARDCRAFT_LOCAL_ACTOR")
+            .env_remove("BOARDCRAFT_RECOVERY_DIR")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let rx = lines(&mut child);
+    let timeout = Duration::from_secs(45);
+    let rejected = rx
+        .recv_timeout(timeout)
+        .expect("expected rejection checkpoint");
+    assert!(rejected == "check rejected", "unexpected checkpoint");
+    let sessions = || {
+        f.connect()
+            .query("SELECT account_id FROM account_sessions", &[])
+            .unwrap()
+            .into_iter()
+            .map(|r| r.get::<_, Uuid>(0))
+            .collect::<Vec<_>>()
+    };
+    assert!(sessions().is_empty());
+    f.check_store(&rows);
+    writeln!(child.0.stdin.take().unwrap(), "{secret}").unwrap();
+    let opened = rx.recv_timeout(timeout).expect("expected displayed board");
+    assert!(
+        opened == format!("opened {}", f.board),
+        "unexpected displayed board"
+    );
+    assert_eq!(sessions(), [member]);
+    f.check_store(&rows);
+    let until = Instant::now() + timeout;
+    loop {
+        if let Some(exit) = child.0.try_wait().unwrap() {
+            assert!(exit.success());
+            break;
+        }
+        assert!(Instant::now() < until, "window did not close");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn lines(child: &mut SmokeProcess) -> mpsc::Receiver<String> {
+    let out = child.0.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(out).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    rx
 }
 
 fn exercise(fixture: &Fixture, mode: &str, checks: &[&str], check: impl FnMut(&str)) {
@@ -54,15 +140,7 @@ fn exercise_as(
             .spawn()
             .unwrap(),
     );
-    let out = child.0.stdout.take().unwrap();
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        for line in BufReader::new(out).lines().map_while(Result::ok) {
-            if tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
+    let rx = lines(&mut child);
     let until = Instant::now() + Duration::from_secs(45);
     let mut presented = 0;
     let mut checkpoints = checks.iter();

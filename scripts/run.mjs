@@ -32,6 +32,8 @@ export const packets = [
     probeRegression: true, logout: true, model: 'openai/gpt-6.2-astra#high' },
   { id: '17-android-session-restore', database: true, kitFrame: true, kitEdit: true, delivery: true,
     probeRegression: true, logout: true, restore: true, model: 'openai/gpt-6.2-astra#high' },
+  { id: '18-windows-connected-login', database: true, model: 'openai/gpt-6.2-astra#high',
+    windowsCases: ['windows_login_reject_retry', 'rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

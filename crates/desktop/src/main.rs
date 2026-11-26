@@ -11,6 +11,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use postgres::{Config, NoTls};
 use uuid::Uuid;
+mod connected;
 mod recovery;
 use recovery::{Draft, Record, Recovery};
 
@@ -497,16 +498,35 @@ impl Render for Workbench {
 }
 
 fn main() {
-    let Some(board) = std::env::args()
-        .nth(1)
-        .and_then(|s| s.parse::<Uuid>().ok())
-        .and_then(BoardId::new)
-    else {
-        eprintln!(
-            "Usage: boardcraft-desktop <board-uuid> (run the seed_board example for a new synthetic board)"
-        );
+    fn usage() -> ! {
+        eprintln!("Usage: boardcraft-desktop <board-uuid> | connect <loopback-port> <board-uuid>");
         std::process::exit(2);
+    }
+    let mut args = std::env::args().skip(1);
+    let first = args.next().unwrap_or_else(|| usage());
+    let (port, board) = if first == "connect" {
+        let port = args
+            .next()
+            .and_then(|s| s.parse::<u16>().ok())
+            .filter(|n| *n != 0)
+            .unwrap_or_else(|| usage());
+        let board = args.next().unwrap_or_else(|| usage());
+        if let Some(extra) = args.next()
+            && !(cfg!(all(windows, feature = "native-smoke"))
+                && extra == "--smoke-login"
+                && args.next().is_none())
+        {
+            usage();
+        }
+        (Some(port), board)
+    } else {
+        (None, first)
     };
+    let board = board
+        .parse::<Uuid>()
+        .ok()
+        .and_then(BoardId::new)
+        .unwrap_or_else(|| usage());
     application().with_assets(assets::Assets).run(move |cx| {
         init(cx);
         cx.on_window_closed(|cx, _| {
@@ -515,6 +535,10 @@ fn main() {
             }
         })
         .detach();
+        if let Some(port) = port {
+            connected::open(port, board.as_uuid(), cx);
+            return;
+        }
         let (_window, _board_view) = open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 let mut view = Workbench {

@@ -165,6 +165,12 @@ Gate: `node scripts/cross-client-reopen.mjs --restore`. On the dedicated AVD sig
 
 Fixture commands (after save, all require independent readback of the accepted board): `remember` records the sole session digest and account ID in memory; `same-session` checks exact equality; `revoke-original` revokes precisely that remembered session and confirms zero sessions; `no-session` confirms zero. Worker owns Android implementation, Rust fixture and handoff; coordinator owns runner and drivers.
 
+### 18-windows-connected-login
+
+Add a connected Windows Kit entry for opening a protected board: `boardcraft-desktop connect <loopback-port> <board-uuid>`. Use the existing Rust HTTP client to sign in, resolve the session, and read the board off the UI thread. Do not fall back to SQL or use the local actor selector on this path. Keep the existing developer entry and its editing journeys working. Start with read-only presentation and an in-memory session; secure Windows session restoration and authenticated editing are separate packets.
+
+Gate: `windows_smoke::windows_login_reject_retry`. Launch a real Windows process without any database URL or local actor context, against the shared test host on loopback. Operate actual identifier, masked password and submit controls, retry after an incorrect password, then verify ordered, ID-bound rows appear only after successful resolution and an authorized read. Independently read the disposable database: no session or board change after rejection; exactly one session for the expected account and both original rows after correction. No secrets in launch arguments, logs, snapshots, or public files. Reuse the existing fixture and behavior comparisons. No production credentials, token persistence or new test route. Exercise all five inherited Windows gestures/recovery cases and update the workflow register and handoff.
+
 ## Delivery phases after the first slice
 
 Each row is a group of independently testable packets. For each area, inventory the user actions, persisted settings, contracts and supported clients **before** estimating it. Add newly identified behavior to the register even if it falls between phases. The exit scenarios below are representative gates, not the entire inventory.
