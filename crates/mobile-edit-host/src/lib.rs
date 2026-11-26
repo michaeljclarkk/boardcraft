@@ -293,10 +293,28 @@ fn handle(
     shape: ReadShape,
 ) -> ApiResult {
     let path: Vec<_> = path.split('/').collect();
+    // Opt-in native contract; existing selected and direct reads stay flat.
+    let shape = if matches!(
+        path.as_slice(),
+        ["", "navigation", "boards", _, "main-table"]
+    ) && req.method() == &Method::Get
+    {
+        ReadShape::Grouped
+    } else {
+        shape
+    };
     use access::Operation::*;
     let (requested, operation, target) = match (req.method(), path.as_slice()) {
         (Method::Get, ["", "navigation", "boards", id]) if mode != Mode::Scoped => {
             (id, SelectedRead, None)
+        }
+        (Method::Get, ["", "navigation", "boards", id, "main-table"]) if mode != Mode::Scoped => {
+            (id, SelectedRead, None)
+        }
+        (Method::Post, ["", "navigation", "boards", board, "main-table-fold"])
+            if mode != Mode::Scoped =>
+        {
+            (board, SelectedWrite, None)
         }
         (Method::Get, ["", "boards", id]) => (id, ScopedRead, None),
         (Method::Get, ["", "navigation", "boards", board, "archive"])
@@ -344,7 +362,6 @@ fn handle(
             (board, SelectedWrite, Some(id))
         }
         (Method::Post, ["", "navigation", "boards", board, "items"])
-        | (Method::Post, ["", "navigation", "boards", board, "main-table-fold"])
         | (Method::Post, ["", "navigation", "boards", board, "items", "move-selection"])
             if matches!(shape, ReadShape::Grouped) =>
         {
@@ -658,7 +675,7 @@ fn handle(
         500u16
     })?;
     let hint = matches!(operation, ScopedRead)
-        || (mode == Mode::Preview && matches!(operation, SelectedRead));
+        || ((mode == Mode::Preview || revision.is_some()) && matches!(operation, SelectedRead));
     Ok((
         body,
         hint.then_some(ReadMetadata {

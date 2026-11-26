@@ -6,6 +6,15 @@ mod caller;
 mod create;
 #[path = "fixture/fold_checks.rs"]
 mod fold_checks;
+#[path = "fixture/native_table.rs"]
+mod native_table;
+#[path = "fixture/native_table_checks.rs"]
+mod native_table_checks;
+
+#[test]
+fn native_main_table_resolves_current_access() {
+    native_table_checks::current_access();
+}
 #[path = "fixture/group_create.rs"]
 mod group_create;
 #[path = "fixture/group_create_checks.rs"]

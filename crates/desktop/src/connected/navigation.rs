@@ -1,17 +1,24 @@
+use super::main_table::MainTable;
 use super::*;
-use boardcraft_mobile_edit_client::{BoardSummary, SavedItem};
+use boardcraft_mobile_edit_client::{BoardSummary, MainTableRead};
 
-enum Page {
+enum ReadPage {
     List(Vec<BoardSummary>),
-    Items(Uuid, Vec<SavedItem>),
+    Table(MainTableRead),
+}
+
+pub(super) enum Page {
+    List(Vec<BoardSummary>),
+    Items(Uuid, MainTable),
+    Recover(Uuid, FocusHandle),
     Unavailable,
-    Fault,
+    Fault(Option<Uuid>),
 }
 
 pub(super) struct Navigation {
-    client: EditClient,
-    page: Page,
-    share: Option<Entity<InputState>>,
+    pub(super) client: EditClient,
+    pub(super) page: Page,
+    pub(super) share: Option<Entity<InputState>>,
 }
 
 impl Connected {
@@ -28,13 +35,11 @@ impl Connected {
         let request = self.navigation_request;
         let work = cx.background_executor().spawn(async move {
             let result = match board {
-                Some(id) => client
-                    .read_selected_board(id)
-                    .map(|rows| Page::Items(id, rows)),
+                Some(id) => client.read_main_table(id).map(ReadPage::Table),
                 None => client
                     .resolve()
                     .and_then(|()| client.list_boards())
-                    .map(Page::List),
+                    .map(ReadPage::List),
             };
             (client, result)
         });
@@ -50,13 +55,18 @@ impl Connected {
                     view.screen = Self::identifier(w, cx);
                 } else {
                     let page = match result {
-                        Ok(page) => page,
+                        Ok(ReadPage::List(list)) => Page::List(list),
+                        Ok(ReadPage::Table(read)) => {
+                            let table = MainTable::new(read, cx);
+                            table.focus_first(w, cx);
+                            Page::Items(board.expect("selected board"), table)
+                        }
                         Err(EditError::PermissionDenied | EditError::Missing)
                             if board.is_some() =>
                         {
                             Page::Unavailable
                         }
-                        Err(_) => Page::Fault,
+                        Err(_) => Page::Fault(board),
                     };
                     view.link_input.get_or_insert_with(|| {
                         cx.new(|cx| InputState::new(w, cx).placeholder("Paste board address"))
@@ -84,6 +94,13 @@ impl Connected {
             return;
         }
         self.navigate(nav.client.clone(), board, w, cx);
+    }
+
+    fn reload_main_table(&mut self, board: Uuid, w: &mut Window, cx: &mut Context<Self>) {
+        let Screen::Navigation(nav) = &self.screen else {
+            return;
+        };
+        self.navigate(nav.client.clone(), Some(board), w, cx);
     }
 
     fn share(&mut self, w: &mut Window, cx: &mut Context<Self>) {
@@ -185,18 +202,17 @@ impl Navigation {
                 }
                 "Refresh"
             }
-            Page::Items(_, rows) => {
-                column = column.child(Label::new("Board items · Read only"));
-                if rows.is_empty() {
-                    column = column.child(Label::new("Empty board"));
-                }
-                for row in rows {
-                    column = column.child(
-                        Button::new(SharedString::from(format!("title-{}", row.id)))
-                            .label(row.title.clone())
-                            .disabled(true),
-                    );
-                }
+            Page::Items(id, table) => {
+                let id = *id;
+                column = column.child(table.render(cx));
+                column = column.child(
+                    Button::new("reload-table")
+                        .label("Reload board")
+                        .disabled(table.is_pending())
+                        .on_click(
+                            cx.listener(move |view, _, w, cx| view.reload_main_table(id, w, cx)),
+                        ),
+                );
                 column = column.child(
                     Button::new("share")
                         .label("Share")
@@ -222,11 +238,32 @@ impl Navigation {
                 }
                 "Back to boards"
             }
+            Page::Recover(id, focus) => {
+                let id = *id;
+                column = column.child(
+                    Button::new("reload-table")
+                        .label("Reload board")
+                        .track_focus(focus)
+                        .on_click(
+                            cx.listener(move |view, _, w, cx| view.reload_main_table(id, w, cx)),
+                        ),
+                );
+                "Back to boards"
+            }
             Page::Unavailable => {
                 column = column.child(Label::new("Destination unavailable"));
                 "Back to boards"
             }
-            Page::Fault => {
+            Page::Fault(Some(id)) => {
+                let id = *id;
+                column = column
+                    .child(Label::new("Could not load main table."))
+                    .child(Button::new("reload-table").label("Reload board").on_click(
+                        cx.listener(move |view, _, w, cx| view.reload_main_table(id, w, cx)),
+                    ));
+                "Back to boards"
+            }
+            Page::Fault(None) => {
                 column = column.child(Label::new("Could not load navigation."));
                 "Retry board list"
             }

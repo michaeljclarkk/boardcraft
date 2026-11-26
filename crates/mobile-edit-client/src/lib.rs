@@ -4,6 +4,8 @@ use std::time::Duration;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
+mod main_table;
+pub use main_table::{MainTableGroup, MainTableRead};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedItem {

@@ -1,0 +1,12 @@
+{
+  "status": "ready",
+  "summary": "Windows browse opens the physical main table with stock Kit disclosures and heading menus. Native selected reads and saves reuse current host authorization and set_main_table_fold; existing flat routes and direct-target boundaries remain intact. Coordinator owner-map/runbook wording still needs the grouped-browse update at milestone close.",
+  "evidence": [
+    "windows_opens_and_folds_main_table passed in owned Windows processes: headings g-old, g-z, g-end stayed ordered with counts 1,2,0; mounted Ink roots were 59,61,63. Space, pointer and single/all menus retained disclosure focus. A locked save rejected duplicate activation. Independent connections observed board/view revisions 7/1 through 14/8, ending with folds [g-z,g-end]; physical groups and items were unchanged. Viewer single/all overrides made no writes and revisiting or reopening restored those shared IDs.",
+    "windows_recovers_main_table_fold passed: peer C at 8/2 refused the stale B save; read-only recovery preceded a deliberate B choice at 9/3. Revoking membership before the next read removed all headings and roots. Deferred commit refusal preserved 7/1. Lost acknowledgment and failed post-commit refresh retained accepted B at 8/2; Reload sent no second POST. Demotion refused the stale write, then a fresh Viewer read allowed only a visit-local fold.",
+    "native_main_table_resolves_current_access passed over HTTP with separate PostgreSQL readbacks: current Member/Owner saves, Viewer denial, lost membership, revoked session, conflict, foreign targets and refused commit; grouped reads remained complete while flat responses and the original direct-target boundary were preserved.",
+    "Both client unit tests, opens_selected_board_by_id, production desktop/client/host Clippy with -D warnings, cargo fmt --all -- --check and git diff --check passed. Both new Windows journeys passed together on the final sources.",
+    "Comparison reuses the approved packets 31/43 fixture; no new reference runtime comparison was run. Grouped Windows root editing, ordering and selection remain open. Full workspace, selected-host, inherited Windows and runner regression suites are left to the runner per current AGENTS.md. Attended clipboard checks were not run; the new journeys require neither clipboard nor operator input."
+  ],
+  "next": "Implement grouped item entry in Windows browse. Runner verified packet 44: all 15 Windows journeys, 34 host cases, locked workspace tests, formatting and runner regressions passed."
+}

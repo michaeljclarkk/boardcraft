@@ -18,10 +18,28 @@ use uuid::Uuid;
 mod board_link;
 #[path = "../../mobile-edit-host/tests/fixture/mod.rs"]
 mod fixture;
+#[path = "../../mobile-edit-host/tests/fixture/group_create.rs"]
+mod group_create;
+#[path = "../../mobile-edit-host/tests/fixture/group_edit.rs"]
+mod group_edit;
 #[path = "windows/logout.rs"]
 mod logout;
+#[path = "windows/main_table.rs"]
+mod main_table;
+#[path = "../../mobile-edit-host/tests/fixture/native_table.rs"]
+mod native_table;
 #[path = "windows/navigation.rs"]
 mod navigation;
+
+#[test]
+fn windows_opens_and_folds_main_table() {
+    main_table::folds();
+}
+
+#[test]
+fn windows_recovers_main_table_fold() {
+    main_table::recovers();
+}
 #[path = "../../mobile-edit-host/tests/fixture/peer.rs"]
 mod peer;
 #[path = "../../mobile-edit-host/tests/fixture/selection.rs"]

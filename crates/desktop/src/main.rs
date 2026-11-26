@@ -541,6 +541,14 @@ fn main() {
                             | "--link-window"
                             | "--link-sender"
                             | "--link-recipient"
+                            | "--table-member"
+                            | "--table-reopen"
+                            | "--table-viewer"
+                            | "--table-conflict"
+                            | "--table-refresh-fault"
+                            | "--table-ack-fault"
+                            | "--table-commit-fault"
+                            | "--table-demoted"
                     )
                 } else {
                     matches!(

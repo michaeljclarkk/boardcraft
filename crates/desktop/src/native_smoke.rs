@@ -4,6 +4,7 @@ use gpui_kit::test::{ElementSnapshot, TestEventExt, TestWindowExt};
 pub(super) mod board_link;
 pub(super) mod login;
 pub(super) mod logout;
+pub(super) mod main_table;
 pub(super) mod name;
 pub(super) mod navigation;
 
