@@ -2,6 +2,8 @@
 mod browser_transport;
 #[path = "fixture/caller.rs"]
 mod caller;
+#[path = "fixture/create.rs"]
+mod create;
 mod fixture;
 #[path = "fixture/navigation.rs"]
 mod navigation;
@@ -11,6 +13,16 @@ mod peer;
 mod selection;
 #[path = "fixture/stored_session.rs"]
 mod stored_session;
+
+#[test]
+fn preview_create_requires_current_group_access() {
+    create::access();
+}
+
+#[test]
+fn preview_create_is_atomic_and_replay_safe() {
+    create::atomic();
+}
 
 #[test]
 fn preview_browser_session_is_origin_bound() {

@@ -61,6 +61,90 @@ fn browser_opens_and_edits_grouped_board() {
     }
 }
 
+fn creation_checkpoint(
+    app: &Preview,
+    session: &StoredSession,
+    role: &str,
+    appended: Option<uuid::Uuid>,
+) {
+    assert!(StoredSession::only(&app.f, app.account) == *session);
+    assert_eq!(
+        app.f
+            .connect()
+            .query_one("SELECT role FROM accounts WHERE id=$1", &[&app.account])
+            .unwrap()
+            .get::<_, String>(0),
+        role
+    );
+    app.catalog.check_grants(&app.f, true);
+    selection::check_group_items(
+        &app.f,
+        false,
+        appended.map(|id| (id, "g-20", 1, "Ink", app.account)),
+    );
+}
+
+#[test]
+fn browser_creates_item_in_selected_group() {
+    let (mut app, session) = grouped_board(boardcraft_account::Role::Member);
+    app.act("groups member");
+    app.act("create blank and cancel");
+    creation_checkpoint(&app, &session, "member", None);
+    let id = app.proposed_item("create rejected");
+    assert!(
+        app.f
+            .connect()
+            .query_opt("SELECT id FROM board_items WHERE id=$1", &[&id])
+            .unwrap()
+            .is_none()
+    );
+    creation_checkpoint(&app, &session, "member", None);
+    app.act("create corrected");
+    let mut db = app.f.connect();
+    let mut lock = db.transaction().unwrap();
+    lock.query_one(
+        "SELECT id FROM board_groups WHERE board_id=$1 AND id='g-20' FOR UPDATE",
+        &[&selection::SELECTED],
+    )
+    .unwrap();
+    app.act("create pending");
+    creation_checkpoint(&app, &session, "member", None);
+    lock.rollback().unwrap();
+    for action in ["create saved", "create reload"] {
+        app.act(action);
+        creation_checkpoint(&app, &session, "member", Some(id));
+    }
+}
+
+#[test]
+fn browser_demoted_viewer_cannot_create_item() {
+    let (mut app, session) = grouped_board(boardcraft_account::Role::Member);
+    app.act("groups member");
+    app.act("create member draft");
+    creation_checkpoint(&app, &session, "member", None);
+    assert_eq!(
+        app.f
+            .connect()
+            .execute(
+                "UPDATE accounts SET role='viewer' WHERE id=$1",
+                &[&app.account]
+            )
+            .unwrap(),
+        1
+    );
+    let id = app.proposed_item("create denied");
+    assert!(
+        app.f
+            .connect()
+            .query_opt("SELECT id FROM board_items WHERE id=$1", &[&id])
+            .unwrap()
+            .is_none()
+    );
+    creation_checkpoint(&app, &session, "viewer", None);
+    app.act("create viewer reload");
+    creation_checkpoint(&app, &session, "viewer", None);
+}
+
 #[test]
 fn browser_grouped_board_rechecks_membership() {
     let (mut app, session) = grouped_board(boardcraft_account::Role::Viewer);

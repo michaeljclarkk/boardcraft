@@ -105,7 +105,14 @@ impl Preview {
         if matches!(action, "login" | "direct login" | "peer login") {
             command["password"] = json!(self.password);
         }
-        self.driver.command(action, command);
+        assert!(self.driver.command(action, command).is_none());
+    }
+
+    #[cfg(test)]
+    pub fn proposed_item(&mut self, action: &str) -> Uuid {
+        self.driver
+            .command(action, json!({"action":action}))
+            .expect("synthetic create UUID")
     }
 
     pub fn open_peer(&mut self, port: u16) {
@@ -118,7 +125,7 @@ impl Preview {
 
 struct Driver {
     child: Child,
-    replies: Receiver<bool>,
+    replies: Receiver<Result<Option<Uuid>, ()>>,
     profile: Option<TempDir>,
 }
 
@@ -167,7 +174,15 @@ impl Driver {
         let (tx, replies) = mpsc::channel();
         std::thread::spawn(move || {
             for line in BufReader::new(output).lines().map_while(Result::ok) {
-                if tx.send(line == "ok").is_err() {
+                let reply = if line == "ok" {
+                    Ok(None)
+                } else {
+                    line.strip_prefix("ok ")
+                        .and_then(|id| Uuid::parse_str(id).ok())
+                        .map(Some)
+                        .ok_or(())
+                };
+                if tx.send(reply).is_err() {
                     break;
                 }
             }
@@ -179,7 +194,7 @@ impl Driver {
         }
     }
 
-    fn command(&mut self, action: &str, value: Value) {
+    fn command(&mut self, action: &str, value: Value) -> Option<Uuid> {
         let stdin = self.child.stdin.as_mut().unwrap();
         serde_json::to_writer(&mut *stdin, &value).expect("send browser action");
         stdin.write_all(b"\n").unwrap();
@@ -189,7 +204,8 @@ impl Driver {
         } else {
             self.replies.recv_timeout(Duration::from_secs(40)).ok()
         };
-        assert!(ok == Some(true), "browser checkpoint: {action}");
+        ok.and_then(Result::ok)
+            .unwrap_or_else(|| panic!("browser checkpoint: {action}"))
     }
 }
 

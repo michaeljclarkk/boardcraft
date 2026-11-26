@@ -32,6 +32,10 @@ const previewNames = { ...previewHistory, cases: [...previewHistory.cases, 'prev
 const previewResume = { ...previewNames, cases: [...previewNames.cases, 'preview_browser_session_is_origin_bound'],
   browserCases: [...previewNames.browserCases, 'browser_reload_and_independent_tab_resume', 'browser_unavailable_then_rejected_resume'] };
 
+const previewGroups = { ...previewResume,
+  cases: [...previewResume.cases, 'preview_groups_require_active_membership', 'group_migration_preserves_flat_boards'],
+  browserCases: [...previewResume.browserCases, 'browser_opens_and_edits_grouped_board', 'browser_grouped_board_rechecks_membership'] };
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -77,9 +81,10 @@ export const packets = [
   { id: '28-browser-board-history', ...previewHistory },
   { id: '29-browser-selected-name', ...previewNames },
   { id: '30-browser-session-resume', ...previewResume },
-  { id: '31-browser-board-groups', ...previewResume,
-    cases: [...previewResume.cases, 'preview_groups_require_active_membership', 'group_migration_preserves_flat_boards'],
-    browserCases: [...previewResume.browserCases, 'browser_opens_and_edits_grouped_board', 'browser_grouped_board_rechecks_membership'] },
+  { id: '31-browser-board-groups', ...previewGroups },
+  { id: '32-browser-group-item-create', ...previewGroups,
+    cases: [...previewGroups.cases, 'preview_create_requires_current_group_access', 'preview_create_is_atomic_and_replay_safe'],
+    browserCases: [...previewGroups.browserCases, 'browser_creates_item_in_selected_group', 'browser_demoted_viewer_cannot_create_item'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

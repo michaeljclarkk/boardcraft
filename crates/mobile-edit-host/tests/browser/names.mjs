@@ -15,7 +15,7 @@ export async function nameJourney(action, {uuid, wait, observe, named, click, ke
           li.innerText === ['Sketch',${JSON.stringify(title)}][i] &&
           !!li.querySelector('button') === ${editable} && li.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)) &&
           r.height > 0 && (!i || r.top >= rows[0].getBoundingClientRect().bottom);
-      }) && !document.querySelector('#items input') && failures.innerText.includes('Could not rename Ink.') === ${failed} &&
+      }) && !document.querySelector('#items li input') && failures.innerText.includes('Could not rename Ink.') === ${failed} &&
         failures.querySelectorAll('button').length === ${failed ? 2 : 0};
     })()`, 'visible name cells and recovery');
     if (failed) { await named('button','Retry change'); await named('button','Dismiss'); }
@@ -44,7 +44,7 @@ export async function nameJourney(action, {uuid, wait, observe, named, click, ke
     }
     case 'cancel name': case 'unchanged name': {
       await click(second,'Ink');
-      check(await observe(`document.activeElement.matches('${second}') && !document.querySelector('#items input')`), 'single click focuses name');
+      check(await observe(`document.activeElement.matches('${second}') && !document.querySelector('#items li input')`), 'single click focuses name');
       if (action === 'cancel name') { await f2(); await editor('Ink'); await replace('Draft'); await escape(); }
       else { await enter(); await editor('Ink'); await enter(); }
       await displayed(); requests([]); responses(); break;

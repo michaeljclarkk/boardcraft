@@ -40,6 +40,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
         tx.batch_execute(include_str!("../migrations/0003_board_groups.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (3)", &[])?;
     }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version = 4",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0004_item_creation.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (4)", &[])?;
+    }
     tx.commit()
 }
 
@@ -76,6 +86,50 @@ pub struct StoredItem {
     pub id: ItemId,
     pub title: String,
     pub revision: i64,
+}
+
+pub enum CreateError {
+    InvalidGroup,
+    InvalidTitle,
+    Collision,
+    Database(Error),
+}
+
+/// The caller holds current write access through commit. Lock the group before
+/// reading its tail so concurrent creators allocate distinct append positions.
+pub fn create_group_item(
+    tx: &mut postgres::Transaction<'_>,
+    board: BoardId,
+    group: &str,
+    item: ItemId,
+    creator: uuid::Uuid,
+    draft: &str,
+) -> Result<StoredItem, CreateError> {
+    use CreateError::*;
+    if tx
+        .query_opt(
+            "SELECT id FROM board_groups WHERE board_id=$1 AND id=$2 AND active FOR UPDATE",
+            &[&board.0, &group],
+        )
+        .map_err(Database)?
+        .is_none()
+    {
+        return Err(InvalidGroup);
+    }
+    let title = interactive_title(draft).map_err(|_| InvalidTitle)?;
+    let inserted = tx.query_opt("INSERT INTO board_items(id,board_id,group_id,created_by,title,creation_title,position)
+        SELECT $1,$2,$3,$4,$5,$5,COALESCE(max(position)+1,0) FROM board_items WHERE board_id=$2 AND group_id=$3
+        ON CONFLICT (id) DO NOTHING RETURNING title,revision", &[&item.0,&board.0,&group,&creator,&title]).map_err(Database)?;
+    let row = match inserted {
+        Some(row) => row,
+        None => tx.query_opt("SELECT title,revision FROM board_items WHERE id=$1 AND board_id=$2 AND group_id=$3 AND created_by=$4 AND creation_title=$5 FOR SHARE",
+            &[&item.0,&board.0,&group,&creator,&title]).map_err(Database)?.ok_or(Collision)?,
+    };
+    Ok(StoredItem {
+        id: item,
+        title: row.get(0),
+        revision: row.get(1),
+    })
 }
 
 pub fn load_items(

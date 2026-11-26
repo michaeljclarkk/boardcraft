@@ -264,7 +264,12 @@ fn handle(
         (Method::Put, ["", "navigation", "boards", board, "items", id, "name"])
             if mode == Mode::Preview =>
         {
-            (board, SelectedRename, Some(id))
+            (board, SelectedWrite, Some(id))
+        }
+        (Method::Post, ["", "navigation", "boards", board, "items"])
+            if matches!(shape, ReadShape::Grouped) =>
+        {
+            (board, SelectedWrite, None)
         }
         _ => return Err(404),
     };
@@ -275,7 +280,16 @@ fn handle(
     let token = token?;
     // Buffer bounded input before acquiring database locks. Do not return draft
     // validation or board data before the caller has been authorized.
-    let rename = target.map(|item| (item, read_edit(req)));
+    enum Action {
+        Read,
+        Rename(ItemId, Result<NameEdit, u16>),
+        Create(Result<CreateDraft, u16>),
+    }
+    let action = match target {
+        Some(item) => Action::Rename(item, read_edit(req)),
+        None if req.method() == &Method::Post => Action::Create(read_create(req)),
+        None => Action::Read,
+    };
     let mut tx = db.transaction().map_err(|_| {
         log::error!("begin board request failed board={requested}");
         503u16
@@ -285,12 +299,37 @@ fn handle(
         return Err(404);
     }
     let board = BoardId::new(requested).ok_or(404u16)?;
-    let can_edit = access::authorize(&mut tx, account, board, operation)?;
-    let body = match rename {
-        None if matches!((operation, shape), (SelectedRead, ReadShape::Grouped)) => {
+    let can_edit = access::authorize(&mut tx, &account, board, operation)?;
+    let body = match action {
+        Action::Create(draft) => {
+            let draft = draft?;
+            let item = ItemId::new(draft.id).ok_or(422u16)?;
+            let saved = store::create_group_item(
+                &mut tx,
+                board,
+                &draft.group_id,
+                item,
+                account.id,
+                &draft.title,
+            )
+            .map_err(|error| match error {
+                store::CreateError::InvalidGroup | store::CreateError::InvalidTitle => 422u16,
+                store::CreateError::Collision => 409,
+                store::CreateError::Database(e) => {
+                    log::error!(
+                        "create_group_item board={requested} item={} sqlstate={:?}",
+                        draft.id,
+                        e.code()
+                    );
+                    500
+                }
+            })?;
+            serde_json::to_vec(&serde_json::json!({"id":saved.id.as_uuid(), "group_id": draft.group_id, "title":saved.title, "revision":saved.revision})).unwrap()
+        }
+        Action::Read if matches!((operation, shape), (SelectedRead, ReadShape::Grouped)) => {
             grouped_body(&mut tx, board)?
         }
-        None => {
+        Action::Read => {
             let rows = store::load_items(&mut tx, board)
                 .map_err(|error| {
                     log::error!(
@@ -304,7 +343,7 @@ fn handle(
             let items: Vec<_> = rows.into_iter().map(wire).collect();
             serde_json::to_vec(&items).expect("serializable item list")
         }
-        Some((item, edit)) => {
+        Action::Rename(item, edit) => {
             let edit = edit?;
             let saved =
                 store::rename_item_at_revision(&mut tx, board, item, edit.revision, &edit.title)
@@ -327,6 +366,23 @@ fn handle(
 }
 
 fn read_edit(req: &mut Request) -> Result<NameEdit, u16> {
+    serde_json::from_slice(&read_body(req)?).map_err(|_| 400)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateDraft {
+    id: Uuid,
+    group_id: String,
+    title: String,
+}
+
+fn read_create(req: &mut Request) -> Result<CreateDraft, u16> {
+    if browser_session::one(req, "Content-Type")?.and_then(|v| v.split(';').next())
+        != Some("application/json")
+    {
+        return Err(415);
+    }
     serde_json::from_slice(&read_body(req)?).map_err(|_| 400)
 }
 

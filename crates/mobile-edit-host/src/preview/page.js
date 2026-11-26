@@ -124,11 +124,12 @@ async function loadDestination(id, current, notice = '') {
     mountNames(board, items, $('#failures'), {
       current: () => visit === mounted,
       read,
+      create: draft => request(`${path}/items`, {method: 'POST', body: JSON.stringify(draft)}),
       save: (item, edit) => request(`${path}/items/${encodeURIComponent(item)}/name`, {
         method: 'PUT', body: JSON.stringify(edit)
       }),
       expired: forgetSession,
-      denied: () => run(next => loadDestination(id, next, 'Name change denied.')),
+      denied: (message = 'Name change denied.') => run(next => loadDestination(id, next, message)),
       reload: message => {
         clearNavigation();
         alert.textContent = message;

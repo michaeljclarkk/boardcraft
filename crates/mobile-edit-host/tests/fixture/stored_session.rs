@@ -9,6 +9,16 @@ pub struct StoredSession {
 }
 
 impl StoredSession {
+    #[cfg(test)]
+    pub fn present(&self, f: &Fixture) -> bool {
+        f.connect()
+            .query_opt(
+                "SELECT 1 FROM account_sessions WHERE account_id=$1 AND token_digest=$2",
+                &[&self.member, &self.digest],
+            )
+            .unwrap()
+            .is_some()
+    }
     pub fn all(f: &Fixture, member: Uuid) -> Vec<Self> {
         f.connect()
             .query(

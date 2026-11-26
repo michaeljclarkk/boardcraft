@@ -96,19 +96,19 @@ pub(super) enum Operation {
     ScopedRead,
     ScopedRename,
     SelectedRead,
-    SelectedRename,
+    SelectedWrite,
 }
 
 pub(super) fn authorize(
     tx: &mut Transaction<'_>,
-    account: Account,
+    account: &Account,
     board: BoardId,
     operation: Operation,
 ) -> Result<bool, u16> {
     let can_edit = !account.role.is_read_only();
     if matches!(
         operation,
-        Operation::ScopedRename | Operation::SelectedRename
+        Operation::ScopedRename | Operation::SelectedWrite
     ) && !can_edit
     {
         return Err(403);

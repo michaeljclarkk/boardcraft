@@ -2,7 +2,15 @@
 // only its accepted rows supply editor baselines. A projection never changes them.
 export function mountNames(board, list, failures, api) {
   const rejected = new Map();
+  const drafts = new Map(); // Group IDs are local to this board visit.
   let busy = false;
+
+  function setBusy(value) {
+    busy = value;
+    for (const control of list.querySelectorAll('.add-item input, .add-item button')) {
+      control.disabled = value || !board.editable;
+    }
+  }
 
   function button(label, click) {
     const b = document.createElement('button');
@@ -32,7 +40,7 @@ export function mountNames(board, list, failures, api) {
 
   async function retry(id, edit) {
     if (busy || !api.current()) return;
-    busy = true;
+    setBusy(true);
     try {
       board = await api.read();
       if (!api.current()) return;
@@ -45,11 +53,11 @@ export function mountNames(board, list, failures, api) {
       await save(id, edit);
     } catch (error) {
       if (api.current()) failed(error, 'Could not reload board.');
-    } finally { busy = false; }
+    } finally { if (api.current()) setBusy(false); }
   }
 
   async function save(id, edit) {
-    busy = true;
+    setBusy(true);
     rejected.delete(id); showFailures();
     const accepted = board.rows.find(r => r.id === id);
     const display = list.querySelector(`[data-item-id="${CSS.escape(id)}"] button`);
@@ -68,7 +76,7 @@ export function mountNames(board, list, failures, api) {
         display.textContent = accepted.title;
         rejected.set(id, edit); showFailures();
       } else failed(error, error === 409 ? 'Name changed. Reload the board.' : 'Save outcome unavailable. Reload the board.');
-    } finally { busy = false; }
+    } finally { if (api.current()) setBusy(false); }
   }
 
   function cell(row) {
@@ -98,6 +106,63 @@ export function mountNames(board, list, failures, api) {
     }
     li.append(display); return li;
   }
+  function addEntry(group) {
+    const form = document.createElement('form');
+    form.className = 'add-item';
+    const input = document.createElement('input');
+    input.setAttribute('aria-label', `Add item to ${group.name}`);
+    const add = document.createElement('button');
+    const status = document.createElement('span');
+    status.setAttribute('role', 'status');
+    const draft = drafts.get(group.id) ?? {id: crypto.randomUUID(), title: '', rejected: false};
+    drafts.set(group.id, draft);
+    input.value = draft.title;
+    input.oninput = () => { draft.title = input.value; };
+    function present() {
+      add.textContent = draft.rejected ? 'Retry' : '+ Add item';
+      status.textContent = draft.rejected ? 'Could not add item.' : '';
+      input.disabled = add.disabled = busy || !board.editable;
+    }
+    input.onkeydown = e => {
+      if (e.key === 'Escape' && !busy) {
+        draft.title = input.value = ''; draft.id = crypto.randomUUID(); draft.rejected = false;
+        present();
+      }
+      if (e.key === 'Enter' && e.isComposing) e.preventDefault();
+    };
+    form.onsubmit = async event => {
+      event.preventDefault();
+      if (busy || !board.editable || !api.current() || !input.value.trim()) return;
+      setBusy(true);
+      status.textContent = 'Saving…';
+      try {
+        const saved = await api.create({id: draft.id, group_id: group.id, title: input.value});
+        if (!api.current()) return;
+        if (saved.id !== draft.id || saved.group_id !== group.id || typeof saved.title !== 'string' ||
+            !Number.isSafeInteger(saved.revision) || saved.revision < 1) throw Error('Unexpected created item');
+      } catch (error) {
+        if (!api.current()) return;
+        if (error === 422) {
+          draft.rejected = true; setBusy(false); present(); input.focus();
+        } else if (error === 403) api.denied('Item creation denied.');
+        else failed(error, 'Creation outcome unavailable. Reload the board.');
+        return;
+      }
+      drafts.delete(group.id); input.value = '';
+      try {
+        const refreshed = await api.read();
+        if (!api.current()) return;
+        board = refreshed;
+        if (!board.editable) { drafts.clear(); rejected.clear(); }
+        setBusy(false); render(); showFailures();
+        list.querySelector(`[data-group-id="${CSS.escape(group.id)}"] .add-item input`)?.focus();
+      } catch (error) {
+        if (api.current()) failed(error, 'Item added. Reload the board.');
+      }
+    };
+    present(); form.append(input, add, status); return form;
+  }
+
   function section(group) {
     const region = document.createElement('section');
     region.dataset.groupId = group.id;
@@ -109,7 +174,7 @@ export function mountNames(board, list, failures, api) {
     const rows = document.createElement('ul');
     rows.setAttribute('aria-label', 'Board items');
     rows.append(...group.items.map(cell));
-    region.append(heading, rows);
+    region.append(heading, rows, addEntry(group));
     return region;
   }
   function render() { list.replaceChildren(...board.groups.map(section)); }

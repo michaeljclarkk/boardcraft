@@ -61,6 +61,11 @@ pub fn seed_groups(f: &Fixture) {
 // Independent oracle includes inactive rows, which no product read returns.
 #[cfg(test)]
 pub fn check_groups(f: &Fixture, saved: bool) {
+    check_group_items(f, saved, None);
+}
+
+#[cfg(test)]
+pub fn check_group_items(f: &Fixture, saved: bool, created: Option<(Uuid, &str, i64, &str, Uuid)>) {
     let mut db = f.connect();
     let groups = db.query("SELECT board_id,id,name,position,active FROM board_groups WHERE board_id IN ($1,$2) ORDER BY board_id,id", &[&SELECTED,&SIBLING]).unwrap();
     let expected = [
@@ -84,7 +89,7 @@ pub fn check_groups(f: &Fixture, saved: bool) {
         );
     }
     let items = db.query("SELECT board_id,group_id,id,position,title,revision FROM board_items WHERE board_id IN ($1,$2,$3) ORDER BY id", &[&SELECTED,&SIBLING,&f.board]).unwrap();
-    let expected = [
+    let mut expected = vec![
         (f.board, "main", 17, 1, "Review", 1),
         (f.board, "main", 42, 0, "Review", 1),
         (SELECTED, "g-30", 57, 0, "Stored", 1),
@@ -100,6 +105,17 @@ pub fn check_groups(f: &Fixture, saved: bool) {
         (SIBLING, "g-70", 62, 0, "Outline", 1),
         (SELECTED, "g-90", 73, 0, "Sketch", 1),
     ];
+    if let Some((id, group, position, title, _)) = created {
+        expected.push((SELECTED, group, id.as_u128(), position, title, 1));
+        expected.sort_by_key(|e| e.2);
+    }
+    let provenance = db.query("SELECT id,created_by,creation_title FROM board_items WHERE created_by IS NOT NULL OR creation_title IS NOT NULL", &[]).unwrap();
+    assert_eq!(provenance.len(), usize::from(created.is_some()));
+    if let Some((id, _, _, title, creator)) = created {
+        assert_eq!(provenance[0].get::<_, Uuid>(0), id);
+        assert!(provenance[0].get::<_, Uuid>(1) == creator);
+        assert_eq!(provenance[0].get::<_, &str>(2), title);
+    }
     assert_eq!(items.len(), expected.len());
     for (r, e) in items.iter().zip(expected) {
         assert_eq!(

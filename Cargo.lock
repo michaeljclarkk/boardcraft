@@ -764,6 +764,7 @@ dependencies = [
  "log",
  "postgres",
  "ring",
+ "serde",
  "serde_json",
  "tempfile",
  "tiny_http",

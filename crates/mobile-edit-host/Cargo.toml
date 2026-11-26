@@ -11,6 +11,7 @@ boardcraft-account = { path = "../account" }
 boardcraft-board = { path = "../board" }
 boardcraft-mobile-edit-client = { path = "../mobile-edit-client" }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 tiny_http = "0.12"
 uuid = { version = "1", features = ["v4"] }
 

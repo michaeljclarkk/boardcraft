@@ -15,13 +15,13 @@ use std::{
 
 // Raw HTTP permits exercising duplicate fields. Extract just the cookie and
 // login result in process. No response/request is formatted on failure.
-struct Reply {
-    status: u16,
+pub(super) struct Reply {
+    pub(super) status: u16,
     access: Option<String>,
-    cookie: Option<String>,
-    body: String,
+    pub(super) cookie: Option<String>,
+    pub(super) body: String,
 }
-fn send(
+pub(super) fn send(
     port: u16,
     method: &str,
     path: &str,

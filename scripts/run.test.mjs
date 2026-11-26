@@ -426,3 +426,18 @@ test('31 requires the physical group grid, identity-preserving edit, revoked acc
   run();
   for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
 });
+
+test('32 requires grouped creation, current access, stable replay and atomic failure', () => {
+  const previous = packets.find(p => p.id === '31-browser-board-groups');
+  const packet = packets.find(p => p.id === '32-browser-group-item-create');
+  const browser = [...previous.browserCases, 'browser_creates_item_in_selected_group', 'browser_demoted_viewer_cannot_create_item'];
+  const host = [...previous.cases, 'preview_create_requires_current_group_access', 'preview_create_is_atomic_and_replay_safe'];
+  assert.deepEqual(packet, { ...previous, id: '32-browser-group-item-create', cases: host, browserCases: browser });
+  const run = missing => verify(packet, (_bin, args) => {
+    const names = args.includes('browser_preview') ? browser : args.includes('loopback_board_access') ? host : [];
+    const present = names.filter(n => n !== missing);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  run();
+  for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
+});
