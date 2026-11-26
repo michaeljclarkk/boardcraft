@@ -214,3 +214,16 @@ test('10 requires parent recovery, both Windows regressions, same-board delivery
   for (const gate of ['node scripts/android-kit-frame.mjs', 'node scripts/cross-client-reopen.mjs',
     'cargo test --locked --workspace', 'cargo build --locked --workspace --bins']) assert.ok(calls.includes(gate));
 });
+
+test('11 requires the fresh-process case and the previous Windows journeys without a device gate', () => {
+  const packet = packets.find(p => p.id === '11-windows-failure-reopen');
+  const existing = packets.find(p => p.id === '10-windows-name-recovery').windowsCases;
+  const required = [...existing, 'failed_name_reopens_only_for_actor_and_board'];
+  const run = names => verify(packet, (bin, args) => {
+    assert.ok(!args.some(arg => /android|cross-client/.test(arg)));
+    if (args.includes('windows_smoke')) return [...names.map(n => `test ${n} ... ok`),
+      `test result: ok. ${names.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  for (const name of required) assert.throws(() => run(required.filter(n => n !== name)), /Missing passing windows_smoke case/);
+  run(required);
+});

@@ -22,13 +22,33 @@ impl Drop for SmokeProcess {
     }
 }
 
-fn exercise(fixture: &Fixture, mode: &str, checks: &[&str], mut check: impl FnMut(&str)) {
+fn exercise(fixture: &Fixture, mode: &str, checks: &[&str], check: impl FnMut(&str)) {
+    exercise_as(
+        fixture,
+        fixture.recovery.path(),
+        fixture.actor,
+        mode,
+        checks,
+        check,
+    );
+}
+
+fn exercise_as(
+    fixture: &Fixture,
+    root: &std::path::Path,
+    actor: Uuid,
+    mode: &str,
+    checks: &[&str],
+    mut check: impl FnMut(&str),
+) {
     let board = fixture.board.id();
     let mut child = SmokeProcess(
         Command::new(env!("CARGO_BIN_EXE_boardcraft-desktop"))
             .arg(board.as_uuid().to_string())
             .arg(mode)
             .env("RUSTDAY_TEST_DATABASE_URL", &fixture.url)
+            .env("BOARDCRAFT_LOCAL_ACTOR", actor.to_string())
+            .env("BOARDCRAFT_RECOVERY_DIR", root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -54,6 +74,8 @@ fn exercise(fixture: &Fixture, mode: &str, checks: &[&str], mut check: impl FnMu
                     let item = &fixture.board.items()[presented];
                     let label = if mode == "--smoke-reopen" && presented == 1 {
                         "Review artwork"
+                    } else if mode == "--smoke-committed" && presented == 1 {
+                        "Coral"
                     } else {
                         "Review"
                     };
@@ -86,6 +108,8 @@ fn exercise(fixture: &Fixture, mode: &str, checks: &[&str], mut check: impl FnMu
 }
 
 struct Fixture {
+    recovery: tempfile::TempDir,
+    actor: Uuid,
     schema: String,
     url: String,
     cfg: Config,
@@ -123,6 +147,8 @@ fn fixture() -> Fixture {
     expected.add_item(second, "Review").unwrap();
     store::create_board(&mut db, &expected).unwrap();
     Fixture {
+        recovery: tempfile::tempdir().unwrap(),
+        actor: Uuid::new_v4(),
         schema,
         url,
         cfg,
@@ -145,6 +171,106 @@ fn readback(fixture: &Fixture, title: &str, revision: i64) {
             (board.items()[1].id, title, revision)
         ]
     );
+}
+
+#[test]
+fn failed_name_reopens_only_for_actor_and_board() {
+    let f = fixture();
+    let original = |_: &str| readback(&f, "Review", 1);
+    exercise(&f, "--smoke-fail-blank", &["rejected"], original);
+    exercise(
+        &f,
+        "--smoke-restore-dismiss",
+        &["restored", "dismissed"],
+        original,
+    );
+    exercise(&f, "--smoke-clean", &["clean"], original);
+
+    // Exercise an actual edit in the degraded window: no implicit repair on
+    // load, and recording its rejection must not replace the unreadable bytes.
+    let file = f
+        .recovery
+        .path()
+        .join(f.actor.to_string())
+        .join(f.board.id().as_uuid().to_string())
+        .join("names.json");
+    let corrupt = b"unfinished synthetic name recovery";
+    std::fs::write(&file, corrupt).unwrap();
+    exercise(
+        &f,
+        "--smoke-unreadable",
+        &["unreadable", "rejected"],
+        |name| {
+            original(name);
+            assert_eq!(std::fs::read(&file).unwrap(), corrupt);
+        },
+    );
+    std::fs::remove_file(file).unwrap();
+
+    let mut db = f.cfg.connect(NoTls).unwrap();
+    db.batch_execute(
+        "ALTER TABLE board_items ADD CONSTRAINT temporary_fault CHECK (title <> 'Coral')",
+    )
+    .unwrap();
+    exercise(&f, "--smoke-fail-coral", &["write_failed"], original);
+    exercise_as(
+        &f,
+        f.recovery.path(),
+        Uuid::new_v4(),
+        "--smoke-clean",
+        &["clean"],
+        original,
+    );
+    let other = fixture(); // separate schema permits the same item IDs on a different board
+    exercise_as(
+        &other,
+        f.recovery.path(),
+        f.actor,
+        "--smoke-clean",
+        &["clean"],
+        |_| readback(&other, "Review", 1),
+    );
+
+    db.batch_execute("ALTER TABLE board_items DROP CONSTRAINT temporary_fault")
+        .unwrap();
+    let mut lock = db.transaction().unwrap();
+    lock.query_one(
+        "SELECT id FROM board_items WHERE board_id=$1 AND id=$2 FOR UPDATE",
+        &[&f.board.id().as_uuid(), &f.board.items()[1].id.as_uuid()],
+    )
+    .unwrap();
+    let mut lock = Some(lock);
+    exercise(
+        &f,
+        "--smoke-restore-retry",
+        &["restored", "retry_pending", "retry_saved"],
+        |name| {
+            if name == "retry_saved" {
+                readback(&f, "Coral", 2);
+            } else {
+                original(name);
+            }
+            if name == "retry_pending" {
+                // A pending frame alone does not prove the worker reached SQL.
+                let until = Instant::now() + Duration::from_secs(5);
+                let tx = lock.as_mut().unwrap();
+                let has_waiter = "SELECT EXISTS (SELECT FROM pg_locks WHERE NOT granted
+                                  AND pg_backend_pid() = ANY(pg_blocking_pids(pid)))";
+                while !tx.query_one(has_waiter, &[]).unwrap().get::<_, bool>(0) {
+                    assert!(
+                        Instant::now() < until,
+                        "retry did not reach the fixture lock"
+                    );
+                    thread::sleep(Duration::from_millis(10));
+                }
+                exercise(&f, "--smoke-clean", &["clean"], original);
+                lock.take().unwrap().commit().unwrap();
+            }
+        },
+    );
+    exercise(&f, "--smoke-committed", &["clean"], |_| {
+        readback(&f, "Coral", 2)
+    });
 }
 
 #[test]

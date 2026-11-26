@@ -7,10 +7,15 @@ Run commands from the boardcraft checkout. On Windows use x64 MSVC Rust (tested 
 & .\scripts\postgres.ps1 start    # start/reuse the test cluster; export URL
 cargo build --locked -p boardcraft-desktop
 $board = cargo run --locked -p boardcraft-desktop --example seed_board
+$env:BOARDCRAFT_LOCAL_ACTOR = [guid]::NewGuid().ToString() # once per synthetic actor; reuse on reopen
 cargo run --locked -p boardcraft-desktop -- $board
 ```
 
 ### Windows inline edit acceptance
+
+For failed-name recovery, reuse the same actor UUID, board UUID and local directory across launches. `BOARDCRAFT_LOCAL_ACTOR` is an explicit development context, not sign-in or board authorization. Without it, failure actions work only in the live window. Local files default to `%LOCALAPPDATA%\boardcraft\name-recovery`; override with `BOARDCRAFT_RECOVERY_DIR` (an absolute directory private to the local user). The graphical tests supply their own temporary directories and actors. No database configuration goes into the recovery file.
+
+To check recovery manually, reject a blank name, close without dismissing and relaunch. The board should show the accepted label, failure reason, `Retry change` and `Dismiss`. Dismiss and reopen: the failure should be gone. If local recovery cannot be read, the board still shows its accepted names and a warning. New failures last only in that window. The unreadable file stays untouched; there is no in-app repair or discard action.
 
 Run the native acceptance test from an interactive Windows session. No manual window interaction is required:
 

@@ -721,6 +721,9 @@ dependencies = [
  "boardcraft-board",
  "gpui-kit",
  "postgres",
+ "serde",
+ "serde_json",
+ "tempfile",
  "uuid",
 ]
 

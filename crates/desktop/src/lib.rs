@@ -79,6 +79,13 @@ pub struct InlineEdit {
 }
 
 impl InlineEdit {
+    /// Called only when mounting a row loaded from the accepted board.
+    pub fn restore_failure(&mut self, request: String, reason: Failure) {
+        assert_eq!(self.phase, Phase::Clean);
+        self.request = Some(request);
+        self.phase = Phase::Failed(reason);
+    }
+
     pub fn new(board: BoardId, item: Item) -> Self {
         Self {
             board,

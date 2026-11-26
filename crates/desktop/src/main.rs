@@ -1,4 +1,4 @@
-use boardcraft_board::{Board, BoardId, Item, RenameError, store};
+use boardcraft_board::{BoardId, Item, RenameError, store};
 use boardcraft_desktop::{Failure, InlineEdit, Phase, Save, database};
 use gpui_kit::component::{
     button::Button,
@@ -8,6 +8,8 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use postgres::{Config, NoTls};
 use uuid::Uuid;
+mod recovery;
+use recovery::{Record, Recovery};
 
 #[cfg(all(windows, feature = "native-smoke"))]
 mod native_smoke;
@@ -20,6 +22,8 @@ struct Row {
     // Present only while the Input is mounted. Take it before moving focus so
     // cancellation and Enter cannot be submitted again by the ensuing blur.
     baseline: Option<String>,
+    failure_token: Option<Uuid>,
+    dismissing: bool,
     #[cfg(all(windows, feature = "native-smoke"))]
     submissions: usize,
     _events: Subscription,
@@ -32,10 +36,17 @@ impl Row {
         cfg: Config,
         board: BoardId,
         item: Item,
+        record: Option<Record>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let edit = InlineEdit::new(board, item);
+        let id = item.id;
+        let mut edit = InlineEdit::new(board, item);
+        let failure_token = record.map(|r| {
+            let (token, raw, reason) = r.into_failure(id);
+            edit.restore_failure(raw, reason);
+            token
+        });
         let input =
             cx.new(|cx| InputState::new(window, cx).default_value(edit.accepted().to_owned()));
         let events = cx.subscribe_in(&input, window, |this, _, event, window, cx| match event {
@@ -49,6 +60,8 @@ impl Row {
             input,
             display_focus: cx.focus_handle(),
             baseline: None,
+            failure_token,
+            dismissing: false,
             #[cfg(all(windows, feature = "native-smoke"))]
             submissions: 0,
             _events: events,
@@ -56,7 +69,7 @@ impl Row {
     }
 
     fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.baseline.is_some() || self.edit.phase() == &Phase::Pending {
+        if self.dismissing || self.baseline.is_some() || self.edit.phase() == &Phase::Pending {
             return;
         }
         self.baseline = Some(self.edit.accepted().to_owned());
@@ -159,6 +172,7 @@ impl Row {
 
 struct Workbench {
     board: BoardId,
+    recovery: Option<Recovery>,
     rows: Vec<Entity<Row>>,
     message: &'static str,
     failed: bool,
@@ -173,15 +187,37 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let cfg = row.read(cx).cfg.clone();
+        let r = row.read(cx);
+        let (_, item) = r.edit.identity();
+        let raw = r.edit.request().expect("submitted name").to_owned();
+        let token = r.failure_token;
+        let recovery = self.recovery.clone();
         #[cfg(all(windows, feature = "native-smoke"))]
         row.update(cx, |r, _| r.submissions += 1);
-        let work = cx
-            .background_executor()
-            .spawn(async move { save.connect_and_run(&cfg) });
+        let work = cx.background_executor().spawn(async move {
+            // A submitted change supersedes this occurrence before any database
+            // read or write. A different window may already own a newer failure.
+            let cleared = match (&recovery, token) {
+                (Some(store), Some(token)) => store.replace(item, Some(token), None),
+                _ => Ok(None),
+            };
+            let result = save.connect_and_run(&cfg);
+            let persisted = cleared.and_then(|_| match (&recovery, &result) {
+                (Some(store), Err(reason)) => {
+                    store.replace(item, None, Some(Record::from_error(raw, reason)))
+                }
+                _ => Ok(None),
+            });
+            (result, persisted)
+        });
         cx.spawn_in(window, async move |board, cx| {
-            let result = work.await;
-            _ = board.update(cx, |_, cx| {
+            let (result, persisted) = work.await;
+            _ = board.update(cx, |board, cx| {
                 row.update(cx, |r, cx| {
+                    r.failure_token = persisted.unwrap_or_else(|message| {
+                        board.message = message;
+                        None
+                    });
                     r.edit.finish(result);
                     cx.notify();
                 });
@@ -190,6 +226,48 @@ impl Workbench {
         })
         .detach();
         cx.notify();
+    }
+
+    fn dismiss(&mut self, row: Entity<Row>, window: &mut Window, cx: &mut Context<Self>) {
+        let r = row.read(cx);
+        if r.dismissing || !matches!(r.edit.phase(), Phase::Failed(_)) {
+            return;
+        }
+        let (_, item) = r.edit.identity();
+        let Some((store, token)) = self.recovery.clone().zip(r.failure_token) else {
+            row.update(cx, |r, cx| {
+                r.edit.dismiss();
+                cx.notify();
+            });
+            cx.notify();
+            return;
+        };
+        // Don't race a new edit with deletion of its predecessor.
+        if r.baseline.is_some() {
+            return;
+        }
+        row.update(cx, |r, _| r.dismissing = true);
+        let work = cx
+            .background_executor()
+            .spawn(async move { store.replace(item, Some(token), None) });
+        cx.spawn_in(window, async move |board, cx| {
+            let result = work.await;
+            _ = board.update(cx, |board, cx| {
+                row.update(cx, |r, cx| {
+                    r.dismissing = false;
+                    match result {
+                        Ok(_) => {
+                            r.failure_token = None;
+                            r.edit.dismiss();
+                        }
+                        Err(message) => board.message = message,
+                    }
+                    cx.notify();
+                });
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn load(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -206,15 +284,28 @@ impl Workbench {
                     "Cannot load board. Check the database connection and schema."
                 })?
                 .ok_or("Board not found.")?;
-            Ok::<(Config, Board), &str>((cfg, board))
+            // Local recovery is optional. If unreadable, leave its bytes alone
+            // for the lifetime of this view and still mount the accepted board.
+            let local = Recovery::configured(id).and_then(|recovery| {
+                let records = recovery.as_ref().map(Recovery::load).transpose()?;
+                Ok((recovery, records.unwrap_or_default()))
+            });
+            Ok::<_, &'static str>((cfg, board, local))
         });
         cx.spawn_in(window, async move |view, cx| {
             let loaded = work.await;
             _ = view.update_in(cx, |view, window, cx| {
                 match loaded {
-                    Ok((cfg, board)) => {
-                        view.message = if board.items().is_empty() {
+                    Ok((cfg, board, local)) => {
+                        let warning = local.as_ref().err().copied();
+                        let (recovery, mut records) = local.unwrap_or_default();
+                        view.recovery = recovery;
+                        view.message = if let Some(message) = warning {
+                            message
+                        } else if board.items().is_empty() {
                             "Empty board"
+                        } else if view.recovery.is_none() {
+                            "Local actor not set. Failed changes last only in this window."
                         } else {
                             "Double-click a name or focus it and press F2. Enter to finish; Escape to discard."
                         };
@@ -222,7 +313,7 @@ impl Workbench {
                             .items()
                             .iter()
                             .map(|item| {
-                                 let row = cx.new(|cx| Row::new(cfg.clone(), id, item.clone(), window, cx));
+                                 let row = cx.new(|cx| Row::new(cfg.clone(), id, item.clone(), records.remove(&item.id.as_uuid()), window, cx));
                                  cx.subscribe_in(&row, window, |board, row, save: &Save, w, cx| {
                                      board.run_save(row.clone(), save.clone(), w, cx);
                                  }).detach();
@@ -254,7 +345,7 @@ impl Render for Workbench {
             .flex_col()
             .gap_3()
             .child("boardcraft · Board items")
-            .child(self.message)
+            .child(component::label::Label::new(self.message))
             .when(self.failed, |el| {
                 el.child(
                     Button::new("reload")
@@ -303,7 +394,8 @@ impl Render for Workbench {
                                         .label("Retry change")
                                         .on_click(cx.listener(move |_, _, _, cx| {
                                             retry.update(cx, |r, cx| {
-                                                if r.baseline.is_none()
+                                                if !r.dismissing
+                                                    && r.baseline.is_none()
                                                     && let Some(save) = r.edit.retry()
                                                 {
                                                     cx.emit(save);
@@ -315,12 +407,8 @@ impl Render for Workbench {
                                 .child(
                                     Button::new(SharedString::from(format!("dismiss-{id}")))
                                         .label("Dismiss")
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            dismiss.update(cx, |r, cx| {
-                                                r.edit.dismiss();
-                                                cx.notify();
-                                            });
-                                            cx.notify();
+                                        .on_click(cx.listener(move |board, _, window, cx| {
+                                            board.dismiss(dismiss.clone(), window, cx);
                                         })),
                                 ),
                         ),
@@ -353,6 +441,7 @@ fn main() {
             cx.new(|cx| {
                 let mut view = Workbench {
                     board,
+                    recovery: None,
                     rows: vec![],
                     message: "",
                     failed: false,

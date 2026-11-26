@@ -7,6 +7,9 @@ enum Journey {
     Cell,
     ReopenEdit,
     Recovery,
+    FailBlank,
+    Unreadable,
+    FailCoral,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -36,9 +39,12 @@ enum Step {
     Dismissed,
     FaultEditor,
     FaultDraft,
-    WriteFailed,
-    RetryPending,
-    RetrySaved,
+    WriteFailed(bool),  // close on failure, or retry in this process
+    RetryPending(bool), // restored request
+    RetrySaved(bool),
+    Restore(bool), // retry the database failure, or dismiss the blank request
+    RestoredDismissed,
+    CleanReopen,
     Corrected,
     Pending,
     Saved,
@@ -51,6 +57,12 @@ pub(super) fn install(window: AnyWindowHandle, board: Entity<Workbench>, cx: &mu
         Some("--smoke-edit") => Step::Open(Journey::ReopenEdit),
         Some("--smoke-cell") => Step::Open(Journey::Cell),
         Some("--smoke-recovery") => Step::Open(Journey::Recovery),
+        Some("--smoke-fail-blank") => Step::Open(Journey::FailBlank),
+        Some("--smoke-unreadable") => Step::Open(Journey::Unreadable),
+        Some("--smoke-fail-coral") => Step::Open(Journey::FailCoral),
+        Some("--smoke-restore-retry") => Step::Restore(true),
+        Some("--smoke-restore-dismiss") => Step::Restore(false),
+        Some("--smoke-clean" | "--smoke-committed") => Step::CleanReopen,
         Some("--smoke-reopen") => Step::Reopen,
         Some("--smoke-delivery") => Step::Delivery,
         _ => return,
@@ -125,9 +137,19 @@ fn schedule(step: Step, board: Entity<Workbench>, w: &Window) {
         for (r, control) in [(first_row, first), (row, second)] {
             let (id, item) = r.edit.identity();
             assert_eq!(id, view.board);
-            if matches!(step, Step::Open(_) | Step::Reopen | Step::Delivery) {
+            if matches!(
+                step,
+                Step::Open(_)
+                    | Step::Reopen
+                    | Step::Delivery
+                    | Step::CleanReopen
+                    | Step::Restore(_)
+            ) {
                 assert!(editors.is_empty());
-                assert_eq!(r.edit.phase(), &Phase::Clean);
+                assert_eq!(r.submissions, 0);
+                if !matches!(step, Step::Restore(_)) {
+                    assert_eq!(r.edit.phase(), &Phase::Clean);
+                }
                 let label = control.label().expect("name display label");
                 assert_eq!(label, r.edit.accepted());
                 println!("row {} {} {label}", id.as_uuid(), item.as_uuid());
@@ -153,6 +175,11 @@ fn schedule(step: Step, board: Entity<Workbench>, w: &Window) {
         let next = match step {
             Step::Open(cell) => {
                 assert_eq!(second.label(), Some("Review"));
+                if matches!(cell, Journey::Unreadable) {
+                    assert!(message(w, "Local name recovery is unreadable. Check the recovery directory before retrying."));
+                    assert!(retries.is_empty() && dismissals.is_empty());
+                    checkpoint("unreadable");
+                }
                 click(second, w, cx);
                 Step::Focus(cell)
             }
@@ -164,7 +191,10 @@ fn schedule(step: Step, board: Entity<Workbench>, w: &Window) {
             }
             Step::Editor(journey) => {
                 editor(second, "Review");
-                if matches!(journey, Journey::Cell) {
+                if matches!(journey, Journey::FailCoral) {
+                    replace(" Coral ", w, cx);
+                    Step::FaultDraft
+                } else if matches!(journey, Journey::Cell) {
                     replace("Discard me", w, cx);
                     Step::CancelDraft
                 } else {
@@ -266,6 +296,10 @@ fn schedule(step: Step, board: Entity<Workbench>, w: &Window) {
                 let recovery = matches!(journey, Journey::Recovery);
                 assert_eq!(if recovery { first } else { second }.focused(), Some(true));
                 checkpoint("rejected");
+                if matches!(journey, Journey::FailBlank | Journey::Unreadable) {
+                    w.remove_window();
+                    return;
+                }
                 w.double_click(row.title_id(), cx);
                 if recovery {
                     Step::NewEditor(true)
@@ -314,7 +348,7 @@ fn schedule(step: Step, board: Entity<Workbench>, w: &Window) {
                 click(&dismissals[0], w, cx);
                 Step::Dismissed
             }
-            Step::Dismissed => {
+            Step::Dismissed if retries.is_empty() => {
                 assert!(retries.is_empty() && dismissals.is_empty());
                 assert_eq!(row.edit.request(), None);
                 assert_eq!(row.submissions, 2);
@@ -331,34 +365,79 @@ fn schedule(step: Step, board: Entity<Workbench>, w: &Window) {
             }
             Step::FaultDraft => {
                 editor(second, " Coral ");
+                let close = row.submissions == 0;
                 click(first, w, cx);
-                Step::WriteFailed
+                Step::WriteFailed(close)
             }
-            Step::WriteFailed if message(w, "Save failed. Check the connection and retry.") => {
+            Step::WriteFailed(close)
+                if message(w, "Save failed. Check the connection and retry.") =>
+            {
                 actions();
                 assert_eq!(second.label(), Some("Review"));
                 assert_eq!(first.focused(), Some(true));
-                assert_eq!(row.submissions, 3);
+                assert_eq!(row.submissions, if close { 1 } else { 3 });
                 assert_eq!(row.edit.request(), Some(" Coral "));
                 checkpoint("write_failed");
+                if close {
+                    w.remove_window();
+                    return;
+                }
                 click(&retries[0], w, cx);
-                Step::RetryPending
+                Step::RetryPending(false)
             }
-            Step::RetryPending if message(w, "Saving…") => {
+            Step::Restore(retry) => {
+                actions();
+                let (raw, reason) = if retry {
+                    (" Coral ", "Save failed. Check the connection and retry.")
+                } else {
+                    ("   ", "Not saved: enter a title.")
+                };
+                assert!(message(w, reason));
+                assert_eq!(row.edit.request(), Some(raw));
+                assert_eq!(second.label(), Some("Review"));
+                checkpoint("restored");
+                if retry {
+                    click(&retries[0], w, cx);
+                    Step::RetryPending(true)
+                } else {
+                    click(&dismissals[0], w, cx);
+                    Step::RestoredDismissed
+                }
+            }
+            Step::RestoredDismissed if retries.is_empty() => {
+                assert!(dismissals.is_empty());
+                assert_eq!(second.label(), Some("Review"));
+                assert_eq!(row.edit.phase(), &Phase::Clean);
+                assert_eq!(row.submissions, 0);
+                checkpoint("dismissed");
+                w.remove_window();
+                return;
+            }
+            Step::CleanReopen => {
+                assert!(retries.is_empty() && dismissals.is_empty());
+                checkpoint("clean");
+                w.remove_window();
+                return;
+            }
+            Step::RetryPending(restored) if message(w, "Saving…") => {
                 assert!(retries.is_empty() && dismissals.is_empty());
                 assert_eq!(second.label(), Some(" Coral "));
                 assert_eq!(row.edit.accepted(), "Review");
-                assert_eq!(row.submissions, 4);
-                assert_eq!(first.focused(), Some(true));
+                assert_eq!(row.submissions, if restored { 1 } else { 4 });
+                if !restored {
+                    assert_eq!(first.focused(), Some(true));
+                }
                 checkpoint("retry_pending");
-                Step::RetrySaved
+                Step::RetrySaved(restored)
             }
-            Step::RetrySaved if message(w, "Saved") => {
+            Step::RetrySaved(restored) if message(w, "Saved") => {
                 assert!(retries.is_empty() && dismissals.is_empty());
                 assert_eq!(second.label(), Some("Coral"));
                 assert_eq!(row.edit.request(), None);
-                assert_eq!(row.submissions, 4);
-                assert_eq!(first.focused(), Some(true));
+                assert_eq!(row.submissions, if restored { 1 } else { 4 });
+                if !restored {
+                    assert_eq!(first.focused(), Some(true));
+                }
                 checkpoint("retry_saved");
                 w.remove_window();
                 return;
