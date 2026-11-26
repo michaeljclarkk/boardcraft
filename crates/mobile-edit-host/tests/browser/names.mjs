@@ -12,8 +12,8 @@ export async function nameJourney(action, {uuid, wait, observe, named, click, ke
       return rows.length === 2 && rows.every((li,i) => {
         const r = li.getBoundingClientRect();
         return li.dataset.itemId === ['${uuid(73)}','${uuid(61)}'][i] &&
-          li.innerText === ['Sketch',${JSON.stringify(title)}][i] &&
-          !!li.querySelector('button') === ${editable} && li.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)) &&
+          li.querySelector('.item-name')?.innerText === ['Sketch',${JSON.stringify(title)}][i] &&
+          !!li.querySelector('button.item-name') === ${editable} && li.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)) &&
           r.height > 0 && (!i || r.top >= rows[0].getBoundingClientRect().bottom);
       }) && !document.querySelector('#items li input') && failures.innerText.includes('Could not rename Ink.') === ${failed} &&
         failures.querySelectorAll('button').length === ${failed ? 2 : 0};

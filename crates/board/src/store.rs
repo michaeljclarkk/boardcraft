@@ -50,6 +50,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
         tx.batch_execute(include_str!("../migrations/0004_item_creation.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (4)", &[])?;
     }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version=5",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0005_item_group_move.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (5)", &[])?;
+    }
     tx.commit()
 }
 
@@ -95,6 +105,22 @@ pub enum CreateError {
     Database(Error),
 }
 
+pub struct GroupItem {
+    pub group_id: String,
+    pub item: StoredItem,
+}
+
+fn group_item(row: postgres::Row, id: ItemId) -> GroupItem {
+    GroupItem {
+        group_id: row.get("group_id"),
+        item: StoredItem {
+            id,
+            title: row.get("title"),
+            revision: row.get("revision"),
+        },
+    }
+}
+
 /// The caller holds current write access through commit. Lock the group before
 /// reading its tail so concurrent creators allocate distinct append positions.
 pub fn create_group_item(
@@ -104,7 +130,7 @@ pub fn create_group_item(
     item: ItemId,
     creator: uuid::Uuid,
     draft: &str,
-) -> Result<StoredItem, CreateError> {
+) -> Result<GroupItem, CreateError> {
     use CreateError::*;
     if tx
         .query_opt(
@@ -117,19 +143,48 @@ pub fn create_group_item(
         return Err(InvalidGroup);
     }
     let title = interactive_title(draft).map_err(|_| InvalidTitle)?;
-    let inserted = tx.query_opt("INSERT INTO board_items(id,board_id,group_id,created_by,title,creation_title,position)
-        SELECT $1,$2,$3,$4,$5,$5,COALESCE(max(position)+1,0) FROM board_items WHERE board_id=$2 AND group_id=$3
-        ON CONFLICT (id) DO NOTHING RETURNING title,revision", &[&item.0,&board.0,&group,&creator,&title]).map_err(Database)?;
+    let inserted = tx.query_opt("INSERT INTO board_items(id,board_id,group_id,creation_group_id,created_by,title,creation_title,position)
+        SELECT $1,$2,$3,$3,$4,$5,$5,COALESCE(max(position)+1,0) FROM board_items WHERE board_id=$2 AND group_id=$3
+        ON CONFLICT (id) DO NOTHING RETURNING group_id,title,revision", &[&item.0,&board.0,&group,&creator,&title]).map_err(Database)?;
     let row = match inserted {
         Some(row) => row,
-        None => tx.query_opt("SELECT title,revision FROM board_items WHERE id=$1 AND board_id=$2 AND group_id=$3 AND created_by=$4 AND creation_title=$5 FOR SHARE",
+        None => tx.query_opt("SELECT i.group_id,i.title,i.revision FROM board_items i JOIN board_groups g ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.id=$1 AND i.board_id=$2 AND creation_group_id=$3 AND created_by=$4 AND creation_title=$5 AND g.active FOR SHARE",
             &[&item.0,&board.0,&group,&creator,&title]).map_err(Database)?.ok_or(Collision)?,
     };
-    Ok(StoredItem {
-        id: item,
-        title: row.get(0),
-        revision: row.get(1),
-    })
+    Ok(group_item(row, item))
+}
+
+pub enum MoveError {
+    MissingItem,
+    InvalidGroup,
+    Conflict,
+    Database(Error),
+}
+
+/// Move the existing row within the caller's authorized transaction. The
+/// group stamp, unlike equality of group IDs, detects an intervening round trip.
+pub fn move_group_item(
+    tx: &mut postgres::Transaction<'_>,
+    board: BoardId,
+    item: ItemId,
+    destination: &str,
+    expected: i64,
+) -> Result<GroupItem, MoveError> {
+    use MoveError::*;
+    let mut row = tx.query_opt("SELECT i.group_id,i.title,i.revision,i.group_revision FROM board_items i JOIN board_groups g ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.board_id=$1 AND i.id=$2 AND g.active FOR UPDATE OF i FOR SHARE OF g", &[&board.0,&item.0]).map_err(Database)?.ok_or(MissingItem)?;
+    tx.query_opt(
+        "SELECT id FROM board_groups WHERE board_id=$1 AND id=$2 AND active FOR SHARE",
+        &[&board.0, &destination],
+    )
+    .map_err(Database)?
+    .ok_or(InvalidGroup)?;
+    if !(row.get::<_, i64>("group_revision")..=row.get::<_, i64>("revision")).contains(&expected) {
+        return Err(Conflict);
+    }
+    if row.get::<_, &str>("group_id") != destination {
+        row = tx.query_one("UPDATE board_items SET group_id=$3,revision=revision+1,group_revision=revision+1 WHERE board_id=$1 AND id=$2 RETURNING group_id,title,revision", &[&board.0,&item.0,&destination]).map_err(Database)?;
+    }
+    Ok(group_item(row, item))
 }
 
 pub fn load_items(
@@ -141,7 +196,7 @@ pub fn load_items(
         "SELECT i.id, i.title, i.revision FROM boards b
          LEFT JOIN board_groups g ON g.board_id=b.id AND g.active
          LEFT JOIN board_items i ON (i.board_id,i.group_id)=(g.board_id,g.id)
-         WHERE b.id=$1 ORDER BY g.position,g.id,i.position",
+         WHERE b.id=$1 ORDER BY g.position,g.id,i.position,i.created_at NULLS FIRST,i.id",
         &[&id.0],
     )?;
     if rows.is_empty() {
@@ -184,7 +239,7 @@ pub fn load_groups(
             "SELECT g.id, g.name, i.id, i.title, i.revision FROM boards b
          LEFT JOIN board_groups g ON g.board_id=b.id AND g.active
          LEFT JOIN board_items i ON (i.board_id,i.group_id)=(g.board_id,g.id)
-         WHERE b.id=$1 ORDER BY g.position,g.id,i.position LIMIT $2",
+         WHERE b.id=$1 ORDER BY g.position,g.id,i.position,i.created_at NULLS FIRST,i.id LIMIT $2",
             &[&board.0, &(GROUPED_ROW_LIMIT + 1)],
         )
         .map_err(GroupReadError::Database)?;

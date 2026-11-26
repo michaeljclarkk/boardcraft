@@ -3,6 +3,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {launch} from './chromium.mjs';
 import {nameJourney} from './names.mjs';
 import {createJourney} from './create.mjs';
+import {moveJourney} from './moves.mjs';
 
 const [profile, mode, port] = process.argv.slice(2);
 const primary = `http://127.0.0.1:${port}`;
@@ -145,11 +146,15 @@ async function noRows(empty) {
 // Fixture UUIDs, independent of the page's labels, dataset and requests.
 const uuid = n => '00000000-0000-0000-0000-' + n.toString(16).padStart(12, '0');
 const selectedGet = n => ['GET', `/navigation/boards/${uuid(n)}`];
-async function grouped(board, editable, saved = false, appended) {
+async function grouped(board, editable, saved = false, appended, moved = false, recovering = false) {
   const expected = board === 202 ? [['g-70','Work / 1 item',[[62,'Outline']]]] : [
     ['g-90','Work / 2 items',[[73,'Sketch'],[61,'Ink']]], ['g-10','Reserve / No Items',[]],
     ['g-20','Work / 1 item',[[59,saved ? 'Coral' : 'Ink']]]
   ];
+  if (moved) {
+    expected[2][2].unshift(expected[0][2].pop());
+    expected[0][1] = 'Work / 1 item'; expected[2][1] = 'Work / 2 items';
+  }
   const shape = expected.map(([id,heading,items]) => [id,heading,items.map(([n,title]) => [uuid(n),title,editable])]);
   if (appended) {
     expected[2][1] = shape[2][1] = 'Work / 2 items';
@@ -160,9 +165,9 @@ async function grouped(board, editable, saved = false, appended) {
     const actual = [...document.querySelectorAll('#items > section')].map(s => {
       const h = s.querySelector('h2');
       return [s.dataset.groupId,visible(h) && h.innerText,[...s.querySelectorAll('li')].map(r =>
-        [r.dataset.itemId,visible(r) && r.innerText,!!r.querySelector('button:not(:disabled)')])];
+        [r.dataset.itemId,visible(r) && r.querySelector('.item-name')?.innerText,!!r.querySelector('button.item-name:enabled')])];
     });
-    return JSON.stringify(actual)===${JSON.stringify(JSON.stringify(shape))} && !document.querySelector('#items li input, #failures button');
+    return JSON.stringify(actual)===${JSON.stringify(JSON.stringify(shape))} && !document.querySelector('#items li input') && (${recovering} || !document.querySelector('#failures button'));
   })()`, 'visible grouped board');
   for (const [,heading] of expected) { await named('region',heading); await named('heading',heading); }
 }
@@ -176,14 +181,14 @@ async function destination(expected, fresh = true) {
   else await named('list', 'Board items');
   const rows = await observe(`Array.from(document.querySelectorAll('li'), li => {
     const r = li.getBoundingClientRect();
-    return [li.dataset.itemId, li.innerText, r.top, r.bottom, document.elementFromPoint(r.x+r.width/2, r.y+r.height/2) === li];
+    return [li.dataset.itemId, li.querySelector('.item-name')?.innerText, r.top, r.bottom, document.elementFromPoint(r.x+r.width/2, r.y+r.height/2) === li];
   })`);
   check(rows.length === (expected?.length ?? 0) && rows.every(([id,title,top,bottom,hit], i) =>
     id === uuid(expected[i][0]) && title === expected[i][1] && hit && bottom > top && (!i || top >= rows[i-1][3])), 'ordered destination items');
   const visibleControls = await observe(`Array.from(document.querySelectorAll('input, textarea, button, a, [contenteditable=true]'))
-    .filter(c => c.getClientRects().length).map(c => c.innerText)`);
+    .filter(c => c.getClientRects().length && !c.matches('.row-menu [aria-expanded=false]')).map(c => c.innerText)`);
   check(JSON.stringify(visibleControls) === JSON.stringify(denied ? ['Retry destination','Back to boards'] : ['', '+ Add item', 'Back to boards']) &&
-    await observe(`!document.querySelector('#items input:enabled, #items button:enabled')`), 'read only destination controls');
+    await observe(`!document.querySelector('#items input:enabled, #items button:enabled:not([aria-expanded])')`), 'read only destination controls');
   check(JSON.stringify(browser.selectionStatuses.splice(0)) === JSON.stringify(fresh ? [denied ? 403 : 200] : []), 'selected response status');
 }
 
@@ -200,6 +205,7 @@ async function resumed(n, denied = false) {
   requests([resolve,selectedGet(n)]); statuses([resolve,200],[selectedGet(n),denied ? 403 : 200]); await historyAt(boardPath(n));
 }
 async function perform({action, password, rows, otherPort}) {
+  if (action.startsWith('move ')) return moveJourney(action, {browser, uuid, click, key, wait, check, grouped, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe});
   if (action.startsWith('create ')) return createJourney(action, {browser,click,enter,type,key,wait,check,grouped,
     requests,statuses,reload,historyAt,boardPath,selectedGet,resolve,observe});
   switch (action) {

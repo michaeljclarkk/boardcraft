@@ -99,6 +99,8 @@ The browser detail GET returns ordered `{id, name, items}` groups, including emp
 
 On an editable board, type in **Add item to <group>** and press Enter or choose **+ Add item**. Escape clears the draft; leaving the field does not save. A rejected title stays in that group for correction. After a successful create the preview reads the groups again. If the outcome is uncertain, **Retry destination** reads the board without resubmitting the item.
 
+To move an existing row on that board, open **More options** beside its name, choose **Move to**, select the destination group and **Confirm**. A move preserves the item's position and creation time. If saving fails, **Review move** reads the current source and requested destination, including their IDs. **Apply reviewed move** submits once at the reviewed revision; **Dismiss** discards the failed request.
+
 ### Android native host
 
 Kit's [v0.11.0 mobile guide](https://github.com/longbridge/gpui-kit/blob/v0.11.0/website/docs/mobile.md) describes limited Android testing of chat controls including Input. Android uses the mobile activity/surface host, not the desktop window entry point. The guide's [example build](https://github.com/longbridge/gpui-mobile/blob/0b882efdac7f524e0bb0b1d4c886b2aa752f9f20/example/build.sh) packages an arm64 Rust library via cargo-ndk and Gradle. Its documented GPUI baseline is 0.3.4; even the [mobile fork revision inspected](https://github.com/longbridge/gpui-mobile/blob/7548ebc4b24f00494af9976af8852c7163ded9ce/Cargo.toml) pins core and Android renderer to 0.3.10. boardcraft's Kit 0.11.0 locks core at **0.3.14**. There is an experimental host, but no demonstrated matching set here.

@@ -4,6 +4,21 @@ mod browser_transport;
 mod caller;
 #[path = "fixture/create.rs"]
 mod create;
+#[path = "fixture/move_checks.rs"]
+mod move_checks;
+#[path = "fixture/move_state.rs"]
+mod move_state;
+
+#[test]
+fn preview_move_requires_current_group_access() {
+    move_checks::access();
+}
+
+#[test]
+fn preview_move_checks_group_revision_and_order() {
+    move_checks::revision_and_order();
+    move_checks::migration();
+}
 mod fixture;
 #[path = "fixture/navigation.rs"]
 mod navigation;

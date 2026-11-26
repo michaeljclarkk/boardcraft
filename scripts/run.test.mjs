@@ -441,3 +441,18 @@ test('32 requires grouped creation, current access, stable replay and atomic fai
   run();
   for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
 });
+
+test('33 requires the row move, denied and failed dialogs, group access and field revision checks', () => {
+  const previous = packets.find(p => p.id === '32-browser-group-item-create');
+  const packet = packets.find(p => p.id === '33-browser-group-item-move');
+  const browser = [...previous.browserCases, 'browser_moves_item_by_group_id', 'browser_demoted_viewer_cannot_move_item', 'browser_reviews_failed_group_move'];
+  const host = [...previous.cases, 'preview_move_requires_current_group_access', 'preview_move_checks_group_revision_and_order'];
+  assert.deepEqual(packet, { ...previous, id: '33-browser-group-item-move', cases: host, browserCases: browser });
+  const run = missing => verify(packet, (_bin, args) => {
+    const names = args.includes('browser_preview') ? browser : args.includes('loopback_board_access') ? host : [];
+    const present = names.filter(n => n !== missing);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  run();
+  for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
+});

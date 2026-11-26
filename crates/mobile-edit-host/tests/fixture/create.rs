@@ -11,7 +11,7 @@ use boardcraft_mobile_edit_host::Host;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-struct BrowserPair {
+pub(super) struct BrowserPair {
     cookie: String,
     binding: String,
 }
@@ -36,18 +36,18 @@ fn login(port: u16, identifier: &str, password: &str) -> BrowserPair {
     }
 }
 
-struct Case {
-    host: Host,
-    f: Fixture,
-    member: Uuid,
-    catalog: Catalog,
+pub(super) struct Case {
+    pub host: Host,
+    pub f: Fixture,
+    pub member: Uuid,
+    pub catalog: Catalog,
     password: String,
-    session: StoredSession,
-    pair: BrowserPair,
+    pub session: StoredSession,
+    pub pair: BrowserPair,
 }
 
 impl Case {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let f = Fixture::start();
         let password = Uuid::new_v4().to_string();
         let member = f.seed_account("reader", &password, Role::Member);
@@ -67,7 +67,13 @@ impl Case {
         }
     }
 
-    fn request(&self, pair: Option<&BrowserPair>, method: &str, path: &str, body: &Value) -> Reply {
+    pub fn request(
+        &self,
+        pair: Option<&BrowserPair>,
+        method: &str,
+        path: &str,
+        body: &Value,
+    ) -> Reply {
         let authority = format!("127.0.0.1:{}", self.host.port);
         let origin = format!("http://{authority}");
         let mut fields = vec![("Origin", origin.as_str())];
@@ -108,7 +114,7 @@ fn path() -> String {
 fn draft(id: Uuid, group: &str, title: &str) -> Value {
     json!({"id":id,"group_id":group,"title":title})
 }
-fn rejected(reply: Reply, status: u16) {
+pub fn rejected(reply: Reply, status: u16) {
     assert_eq!(reply.status, status);
     assert!(reply.body.is_empty());
 }

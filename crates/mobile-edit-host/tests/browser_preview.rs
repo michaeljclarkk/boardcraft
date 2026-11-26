@@ -1,6 +1,8 @@
 mod browser;
 #[allow(dead_code)]
 mod fixture;
+#[path = "fixture/move_state.rs"]
+mod move_state;
 #[path = "fixture/peer.rs"]
 mod peer;
 #[path = "browser/resume.rs"]
@@ -44,6 +46,135 @@ fn grouped_checkpoint(app: &Preview, session: &StoredSession, joined: bool, save
     assert!(StoredSession::only(&app.f, app.account) == *session);
     app.catalog.check_grants(&app.f, joined);
     selection::check_groups(&app.f, saved);
+}
+
+struct MoveBoard {
+    app: Preview,
+    session: StoredSession,
+    state: move_state::MoveState,
+}
+impl MoveBoard {
+    fn open() -> Self {
+        let (mut app, session) = grouped_board(boardcraft_account::Role::Member);
+        let state = move_state::MoveState::seed(&app.f, app.account);
+        app.act("groups member");
+        Self {
+            app,
+            session,
+            state,
+        }
+    }
+    fn check(&self, moved: bool, role: &str) {
+        let f = &self.app.f;
+        assert!(StoredSession::only(f, self.app.account) == self.session);
+        self.app.catalog.check_grants(f, true);
+        assert_eq!(
+            f.connect()
+                .query_one(
+                    "SELECT role FROM accounts WHERE id=$1",
+                    &[&self.app.account]
+                )
+                .unwrap()
+                .get::<_, String>(0),
+            role
+        );
+        self.state.groups(f, false);
+        let (group, rev) = if moved { ("g-20", 2) } else { ("g-90", 1) };
+        self.state.check(f, group, "Ink", rev, rev);
+        let board = boardcraft_board::BoardId::new(selection::SELECTED).unwrap();
+        let flat = boardcraft_board::store::load_items(&mut f.connect(), board)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            flat.iter()
+                .map(|r| r.id.as_uuid().as_u128())
+                .collect::<Vec<_>>(),
+            [73, 61, 59]
+        );
+    }
+}
+
+#[test]
+fn browser_moves_item_by_group_id() {
+    let mut case = MoveBoard::open();
+    case.app.act("move cancel");
+    case.check(false, "member");
+    case.app.act("move choose");
+    let mut db = case.app.f.connect();
+    let mut lock = db.transaction().unwrap();
+    lock.query_one(
+        "SELECT id FROM board_groups WHERE board_id=$1 AND id='g-20' FOR UPDATE",
+        &[&selection::SELECTED],
+    )
+    .unwrap();
+    case.app.act("move pending");
+    case.check(false, "member");
+    lock.rollback().unwrap();
+    for action in ["move saved", "move reload"] {
+        case.app.act(action);
+        case.check(true, "member");
+    }
+}
+
+#[test]
+fn browser_demoted_viewer_cannot_move_item() {
+    let mut case = MoveBoard::open();
+    case.app.act("move choose");
+    case.app
+        .f
+        .connect()
+        .execute(
+            "UPDATE accounts SET role='viewer' WHERE id=$1",
+            &[&case.app.account],
+        )
+        .unwrap();
+    for action in ["move denied", "move viewer reload"] {
+        case.app.act(action);
+        case.check(false, "viewer");
+    }
+}
+
+#[test]
+fn browser_reviews_failed_group_move() {
+    let mut case = MoveBoard::open();
+    let mut db = case.app.f.connect();
+    db.batch_execute("CREATE FUNCTION reject_move() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture move fault'; END $$;
+        CREATE CONSTRAINT TRIGGER fail_commit AFTER UPDATE ON board_items DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (OLD.group_id <> NEW.group_id) EXECUTE FUNCTION reject_move()").unwrap();
+    for action in [
+        "move choose",
+        "move failed",
+        "move review",
+        "move dismiss",
+        "move choose",
+        "move failed",
+    ] {
+        case.app.act(action);
+        case.check(false, "member");
+    }
+    db.batch_execute("DROP TRIGGER fail_commit ON board_items; DROP FUNCTION reject_move()")
+        .unwrap();
+    case.app.act("move review");
+    case.check(false, "member");
+    for action in ["move apply", "move reload"] {
+        case.app.act(action);
+        case.check(true, "member");
+    }
+    // A peer changes the source before the menu opens, then again after the
+    // explicit review. Neither the initial refresh nor stale Apply may win.
+    let peer_move = |db: &mut postgres::Client, group: &str| {
+        db.execute("UPDATE board_items SET group_id=$2,revision=revision+1,group_revision=revision+1 WHERE id=$1", &[&uuid::Uuid::from_u128(61),&group]).unwrap();
+    };
+    peer_move(&mut db, "g-90");
+    for action in ["move changed before open", "move review"] {
+        case.app.act(action);
+        case.state.check(&case.app.f, "g-90", "Ink", 3, 3);
+    }
+    peer_move(&mut db, "g-20");
+    case.app.act("move apply changed review");
+    case.state.check(&case.app.f, "g-20", "Ink", 4, 4);
+    case.state.groups(&case.app.f, false);
+    case.app.catalog.check_grants(&case.app.f, true);
+    assert!(StoredSession::only(&case.app.f, case.app.account) == case.session);
 }
 
 #[test]

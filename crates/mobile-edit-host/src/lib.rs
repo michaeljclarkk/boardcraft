@@ -271,6 +271,11 @@ fn handle(
         {
             (board, SelectedWrite, None)
         }
+        (Method::Put, ["", "navigation", "boards", board, "items", id, "group"])
+            if matches!(shape, ReadShape::Grouped) =>
+        {
+            (board, SelectedWrite, Some(id))
+        }
         _ => return Err(404),
     };
     let requested = Uuid::parse_str(requested).map_err(|_| 404u16)?;
@@ -284,10 +289,12 @@ fn handle(
         Read,
         Rename(ItemId, Result<NameEdit, u16>),
         Create(Result<CreateDraft, u16>),
+        Move(ItemId, Result<MoveDraft, u16>),
     }
     let action = match target {
+        Some(item) if path.last() == Some(&"group") => Action::Move(item, read_json(req)),
         Some(item) => Action::Rename(item, read_edit(req)),
-        None if req.method() == &Method::Post => Action::Create(read_create(req)),
+        None if req.method() == &Method::Post => Action::Create(read_json(req)),
         None => Action::Read,
     };
     let mut tx = db.transaction().map_err(|_| {
@@ -324,7 +331,31 @@ fn handle(
                     500
                 }
             })?;
-            serde_json::to_vec(&serde_json::json!({"id":saved.id.as_uuid(), "group_id": draft.group_id, "title":saved.title, "revision":saved.revision})).unwrap()
+            group_item_body(saved)
+        }
+        Action::Move(item, draft) => {
+            let draft = draft?;
+            let saved = store::move_group_item(
+                &mut tx,
+                board,
+                item,
+                &draft.group_id,
+                draft.expected_revision,
+            )
+            .map_err(|err| match err {
+                store::MoveError::InvalidGroup => 422u16,
+                store::MoveError::MissingItem => 404,
+                store::MoveError::Conflict => 409,
+                store::MoveError::Database(err) => {
+                    log::error!(
+                        "move_group_item board={requested} item={} sqlstate={:?}",
+                        item.as_uuid(),
+                        err.code()
+                    );
+                    500
+                }
+            })?;
+            group_item_body(saved)
         }
         Action::Read if matches!((operation, shape), (SelectedRead, ReadShape::Grouped)) => {
             grouped_body(&mut tx, board)?
@@ -377,7 +408,18 @@ struct CreateDraft {
     title: String,
 }
 
-fn read_create(req: &mut Request) -> Result<CreateDraft, u16> {
+fn group_item_body(saved: store::GroupItem) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({"id":saved.item.id.as_uuid(),"group_id":saved.group_id,"title":saved.item.title,"revision":saved.item.revision})).unwrap()
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MoveDraft {
+    group_id: String,
+    expected_revision: i64,
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(req: &mut Request) -> Result<T, u16> {
     if browser_session::one(req, "Content-Type")?.and_then(|v| v.split(';').next())
         != Some("application/json")
     {

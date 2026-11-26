@@ -1,9 +1,19 @@
 // State belongs to one mounted board visit. Requests close over that visit's path;
 // only its accepted rows supply editor baselines. A projection never changes them.
-export function mountNames(board, list, failures, api) {
+import {mountMoves} from './moves.js';
+
+export function mountNames(board, list, failureArea, api) {
+  const failures = document.createElement('div'), moveFailures = document.createElement('div');
+  failureArea.replaceChildren(failures, moveFailures);
   const rejected = new Map();
   const drafts = new Map(); // Group IDs are local to this board visit.
   let busy = false;
+  const moves = mountMoves({api, list, failures: moveFailures, button, setBusy, busy: () => busy,
+    board: () => board, refresh: next => {
+      board = next;
+      if (!board.editable) { drafts.clear(); rejected.clear(); }
+      render(); showFailures();
+    }});
 
   function setBusy(value) {
     busy = value;
@@ -70,6 +80,7 @@ export function mountNames(board, list, failures, api) {
       }
       Object.assign(accepted, saved);
       display.textContent = accepted.title;
+      display.parentNode.querySelector('.row-menu button').setAttribute('aria-label', `More options for ${accepted.title}`);
     } catch (error) {
       if (!api.current()) return;
       if (error === 422) {
@@ -79,11 +90,16 @@ export function mountNames(board, list, failures, api) {
     } finally { if (api.current()) setBusy(false); }
   }
 
-  function cell(row) {
+  function cell(row, group) {
     const li = document.createElement('li');
     li.dataset.itemId = row.id;
-    if (!board.editable) { li.textContent = row.title; return li; }
+    const menu = moves.menu(row, group);
+    if (!board.editable) {
+      const name = document.createElement('span'); name.className = 'item-name'; name.textContent = row.title;
+      li.append(name, menu); return li;
+    }
     const display = button(row.title, e => { if (e.detail === 0) open(); });
+    display.className = 'item-name';
     display.ondblclick = open;
     display.onkeydown = e => { if (e.key === 'F2') { e.preventDefault(); open(); } };
     function open() {
@@ -104,7 +120,7 @@ export function mountNames(board, list, failures, api) {
       };
       display.replaceWith(input); input.focus(); input.select();
     }
-    li.append(display); return li;
+    li.append(display, menu); return li;
   }
   function addEntry(group) {
     const form = document.createElement('form');
@@ -173,10 +189,10 @@ export function mountNames(board, list, failures, api) {
     region.setAttribute('aria-labelledby', heading.id);
     const rows = document.createElement('ul');
     rows.setAttribute('aria-label', 'Board items');
-    rows.append(...group.items.map(cell));
+    rows.append(...group.items.map(row => cell(row, group)));
     region.append(heading, rows, addEntry(group));
     return region;
   }
-  function render() { list.replaceChildren(...board.groups.map(section)); }
+  function render() { list.replaceChildren(...board.groups.map(section)); moves.showFailures(); }
   render();
 }
