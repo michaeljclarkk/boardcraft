@@ -1,0 +1,11 @@
+{
+  "status": "ready",
+  "summary": "store::rename_item commits a rename scoped by board and item UUID. It shares the in-memory interactive_title rule, returns the stored title after commit, and distinguishes rejected edits from database faults. The migration and snapshot operations preserve existing identities, spelling and order. Running-client acceptance remains open in docs/workflows.md.",
+  "evidence": [
+    "cargo test --locked --workspace --test postgres_board: 1 passed, 0 failed, 0 ignored against the database supplied by RUSTDAY_TEST_DATABASE_URL. The fixture renamed the second of two identically titled items. After reconnect and migration rerun, both UUIDs and their order were intact; only the selected title changed, to the trimmed 255-UTF-16-unit value.",
+    "The same fixture rejected whitespace, 256 UTF-16 units, and an item belonging to another board. A test-only deferred uniqueness constraint forced COMMIT to fail with a database error. A fresh connection read both boards unchanged from their last committed state, including the other board's untrimmed spelling.",
+    "cargo test --locked --workspace: passed all 4 board_edit tests and the postgres_board test, including missing and duplicate item IDs and rejection of nil board and item UUIDs.",
+    "cargo fmt --all -- --check and cargo clippy --locked --workspace --all-targets -- -D warnings: both passed."
+  ],
+  "next": "Let the runner verify 02-postgres against its packet gates."
+}

@@ -1,6 +1,12 @@
 # Rustday
 
-A native desktop workspace for managing boards and items, built with Rust, [Longbridge GPUI Kit](https://github.com/longbridge/gpui-kit) and PostgreSQL. The first end-to-end target: edit a board item, restart the app, and see the saved edit. This repository currently contains the development plan and session runner; the application is the work ahead.
+Rustday is a native workspace for organizing work on boards. It translates our own C# and React/TypeScript (TSX) application into Rust: C# business rules become Rust operations, and React interactions become native Longbridge GPUI Kit views. The goal is 1:1 parity with the monday.com workflows we use and our own extensions. Rustday is independent and uses no monday.com code, branding or assets.
+
+**First workflow:** Two items on a board are both called “Review”. Rename the second one to “Review artwork”, close the app, then reopen the board. The first row should still say “Review”; the second should keep its new name. The edit targets the item's ID, so matching titles never decide which row changes.
+
+**Available today:** The [board integration test](crates/board/tests/board_edit.rs) verifies the rename in memory. The [PostgreSQL test](crates/board/tests/postgres_board.rs) saves it and checks the board after reconnecting, including after a failed commit. Inline editing in the app is the next packet. Follow the [development runbook](docs/development.md) to launch the starter window and local test database. The [workflow register](docs/workflows.md) tracks what has been verified, and the [documentation map](docs/README.md) links the plan, owners and verification evidence.
+
+Windows and Android are the active targets; iOS follows Android. Rust owns the rules for board operations, PostgreSQL stores saved board data, and [Longbridge GPUI Kit](https://github.com/longbridge/gpui-kit) supplies the desktop controls.
 
 ## Run the migration
 

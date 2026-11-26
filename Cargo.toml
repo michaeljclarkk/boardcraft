@@ -1,0 +1,7 @@
+[workspace]
+members = ["crates/board", "crates/desktop"]
+resolver = "3"
+
+[profile.dev]
+# Keep cold GPUI builds manageable on a developer workstation.
+debug = "line-tables-only"

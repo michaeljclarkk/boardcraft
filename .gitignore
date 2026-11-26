@@ -1,6 +1,7 @@
 /target/
 /.rustday/
 /.private/
+/LOCAL-REFERENCE.md
 .env
 .env.*
 !.env.example

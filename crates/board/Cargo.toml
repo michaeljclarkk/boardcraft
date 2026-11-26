@@ -1,0 +1,13 @@
+[package]
+name = "rustday-board"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+log = "0.4"
+postgres = { version = "0.19", features = ["with-uuid-1"] }
+uuid = "1"
+
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }

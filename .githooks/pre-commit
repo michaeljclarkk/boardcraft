@@ -1,0 +1,9 @@
+#!/bin/sh
+# Count the index, not the working tree. Skip patch generation and rename detection.
+stats=$(git diff --cached --numstat --no-renames --no-ext-diff) || exit 1
+printf '%s\n' "$stats" | awk -F '\t' '
+  $1 ~ /^[0-9]+$/ { lines += $1 + $2 }
+  END {
+    printf "Rustday: %d staged text lines changed (limit 20000).\n", lines
+    if (lines > 20000) { print "Split at a tested workflow boundary before committing."; exit 1 }
+  }'
