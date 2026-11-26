@@ -1,6 +1,18 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "compaction": { "auto": true },
+  "agents": {
+    "build": {
+      "permissions": [
+        { "action": "edit", "resource": "AGENTS.md", "effect": "deny" },
+        { "action": "edit", "resource": "README.md", "effect": "deny" },
+        { "action": "edit", "resource": "ROADMAP.md", "effect": "deny" },
+        { "action": "edit", "resource": "packets/*", "effect": "deny" },
+        { "action": "edit", "resource": "docs/*", "effect": "deny" },
+        { "action": "edit", "resource": "docs/workflows.md", "effect": "allow" }
+      ]
+    }
+  },
   "policies": [
     { "action": "mcp.use", "resource": "*", "effect": "deny" },
     { "action": "mcp.use", "resource": "context7", "effect": "allow" }

@@ -153,7 +153,7 @@ cargo build --locked -p boardcraft-mobile-edit-client --bin android-edit-probe -
 cargo test --locked -p boardcraft-mobile-edit-host --features android-smoke --test android_emulator_edit -- --test-threads=1
 ```
 
-Use the cross-target debug executable from Cargo's target directory, never a host build. The runner gives each adb preflight 10 seconds and the focused host suite 10 minutes including compilation. The test itself must time out and reap hung adb children, parse successful **device** results, and fail if prerequisites disappear. It must not boot, wipe or stop any emulator. [05 acceptance](../ROADMAP.md#05-android-emulator-edit) specifies both journeys.
+Use the cross-target debug executable from Cargo's target directory, never a host build. The runner gives each adb preflight 10 seconds and the focused host suite 10 minutes including compilation. The test itself must time out and reap hung adb children, parse successful **device** results, and fail if prerequisites disappear. It must not boot, wipe or stop any emulator. [05 acceptance](../packets/05-android-emulator-edit.md) specifies both journeys.
 
 ### Android Kit frame gate
 

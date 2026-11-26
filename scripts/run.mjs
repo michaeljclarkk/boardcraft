@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
-const connectedName = { database: true, model: 'openai/gpt-6.2-astra#high',
+const connectedName = { database: true,
   target: 'loopback_board_access', cases: ['member_edits_within_scope', 'viewer_reads_but_cannot_rename'],
   windowsCases: ['connected_member_renames_then_reopens', 'connected_viewer_cannot_rename', 'windows_env_session_is_origin_scoped', 'windows_login_reject_retry', 'rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] };
 
@@ -19,7 +19,7 @@ const boardNavigation = { ...visibleBoardList,
     windowsCases: [...visibleBoardList.windowsCases, 'opens_selected_board_by_id', 'revoked_membership_blocks_board_selection'] };
 
 const previewCases = ['browser_reject_correct_list_logout', 'browser_empty_unavailable_then_retry'];
-const previewNavigation = { database: true, model: boardNavigation.model, target: boardNavigation.target,
+const previewNavigation = { database: true, target: boardNavigation.target,
   cases: boardNavigation.cases, browserCases: [...previewCases, 'browser_opens_selected_board_by_id', 'browser_revoked_membership_blocks_selection'] };
 
 const previewHistory = { ...previewNavigation,
@@ -93,23 +93,23 @@ export const packets = [
     windowsCases: ['rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter'] },
   { id: '10-windows-name-recovery', database: true, buildBins: true, kitFrame: true, kitEdit: true, delivery: true,
     windowsCases: ['rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit'] },
-  { id: '11-windows-failure-reopen', database: true, model: 'openai/gpt-6.2-astra#high',
+  { id: '11-windows-failure-reopen', database: true,
     windowsCases: ['rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board'] },
-  { id: '12-windows-name-draft', database: true, model: 'openai/gpt-6.2-astra#high',
+  { id: '12-windows-name-draft', database: true,
     windowsCases: ['rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] },
-  { id: '13-account-session', target: 'account_session', database: true, model: 'openai/gpt-6.2-astra#high',
+  { id: '13-account-session', target: 'account_session', database: true,
     cases: ['rejected_credentials_then_sign_in', 'resolve_retry_and_revoke'] },
-  { id: '14-loopback-board-access', target: 'loopback_board_access', database: true, model: 'openai/gpt-6.2-astra#high',
+  { id: '14-loopback-board-access', target: 'loopback_board_access', database: true,
     cases: ['viewer_reads_but_cannot_rename', 'member_edits_within_scope'] },
   { id: '15-android-kit-sign-in', database: true, kitFrame: true, kitEdit: true, delivery: true,
-    probeRegression: true, model: 'openai/gpt-6.2-astra#high' },
+    probeRegression: true },
   { id: '16-android-kit-logout', database: true, kitFrame: true, kitEdit: true, delivery: true,
-    probeRegression: true, logout: true, model: 'openai/gpt-6.2-astra#high' },
+    probeRegression: true, logout: true },
   { id: '17-android-session-restore', database: true, kitFrame: true, kitEdit: true, delivery: true,
-    probeRegression: true, logout: true, restore: true, model: 'openai/gpt-6.2-astra#high' },
-  { id: '18-windows-connected-login', database: true, model: 'openai/gpt-6.2-astra#high',
+    probeRegression: true, logout: true, restore: true },
+  { id: '18-windows-connected-login', database: true,
     windowsCases: ['windows_login_reject_retry', 'rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] },
-  { id: '19-windows-env-session', database: true, model: 'openai/gpt-6.2-astra#high',
+  { id: '19-windows-env-session', database: true,
     windowsCases: ['windows_env_session_is_origin_scoped', 'windows_login_reject_retry', 'rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] },
   { id: '20-windows-connected-name', ...connectedName },
   { id: '21-windows-connected-logout', ...connectedLogout },
@@ -138,7 +138,10 @@ export const packets = [
   { id: '43-browser-group-collapse', ...previewHeadingDrag,
     cases: [...previewHeadingDrag.cases, 'preview_group_collapse_checks_view_revision_and_scope', 'preview_group_collapse_requires_write_access_and_commit'],
     browserCases: [...previewHeadingDrag.browserCases, 'browser_collapses_physical_groups_by_id', 'browser_collapses_all_and_preserves_order', 'browser_viewer_temporarily_expands_groups', 'browser_recovers_group_presentation_save'] },
-];
+  { id: '44-windows-main-table', ...boardNavigation,
+    cases: [...boardNavigation.cases, 'native_main_table_resolves_current_access'],
+    windowsCases: [...boardNavigation.windowsCases, 'windows_opens_and_folds_main_table', 'windows_recovers_main_table_fold'] },
+].map(packet => ({ model: 'openai/gpt-6.1-sol#xhigh', ...packet }));
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
 const text = value => typeof value === 'string' && value.trim().length > 0;
@@ -294,8 +297,9 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
         if (database && !process.env.RUSTDAY_TEST_DATABASE_URL) throw Error('Set RUSTDAY_TEST_DATABASE_URL to the disposable boardcraft DB.');
         if (android) requireEditEmulator();
         if (kitFrame || kitBrowse) requireKitEmulator();
-        const brief = existsSync(`packets/${id}.md`) ? `packets/${id}.md` : 'ROADMAP.md';
-        command(cli, ['run', '--standalone', '--agent', 'build', ...(model ? ['--model', model] : []), '--title', `boardcraft ${id}`, `Complete only ${id} from ${brief}. Read AGENTS.md, prior handoffs and any ${state}/${id}.previous.json. Inspect existing edits before continuing. Write handoffs/${id}.json and stop.`]);
+        const brief = `packets/${id}.md`;
+        if (!existsSync(brief)) throw Error(`Missing workflow brief: ${brief}`);
+        command(cli, ['run', '--standalone', '--agent', 'build', '--model', model, '--title', `boardcraft ${id}`, `Implement ${brief} under AGENTS.md. Reuse existing work. Run focused checks; the runner does full verification once. Update only the affected workflow row and handoffs/${id}.json for documentation. Stop after the handoff.`]);
       }, verify);
     } else throw Error(`Usage: node scripts/run.mjs status | run <1-${packets.length}>`);
   } catch (error) { console.error(error.message); process.exitCode = 1; }

@@ -4,7 +4,7 @@
 
 boardcraft is a source-code translation of our internal application. Its C# operations and React/TypeScript (TSX) components define the scope, including our own extensions. A feature offered by the commercial platform alone is not a requirement. Trace each interaction through the source component and its C# operation, then verify the translation with synthetic acceptance cases.
 
-1. Read [ROADMAP.md](ROADMAP.md) for the assigned packet and acceptance criteria. `node scripts/run.mjs status` shows which packets passed in this checkout. Never edit verification markers to advance the queue.
+1. Read your own [packets/<packet-id>.md](packets/) for the assigned packet and acceptance criteria; [ROADMAP.md](ROADMAP.md) is an index only. `node scripts/run.mjs status` shows which packets passed in this checkout. Never edit verification markers to advance the queue.
 2. Inspect current edits, the previous `handoffs/<packet-id>.json`, and relevant entries in the [owner map](docs/architecture.md) and [workflow register](docs/workflows.md). Work within the assigned packet. Preserve unfinished edits across retries.
 3. Use the [development runbook](docs/development.md) for tools and checks. For feature work load `boardcraft-feature` or read its [instructions](.opencode/skills/boardcraft-feature/SKILL.md). A fresh public checkout must build without private material.
 
@@ -29,18 +29,28 @@ Translate C# business rules into Rust and React interactions into Longbridge GPU
 
 Use newly written boardcraft code, synthetic fixtures and a dedicated test database. Compare with approved reference behavior where available; record unknowns rather than guessing. Keep private names, paths, screenshots, records, transcripts and credentials out of public files, including skills and handoffs. Do not publish, commit, push, select a license, deploy, or change runner gates during a worker packet.
 
-Run focused success and failure tests, then the packet's workspace checks. For persistence, reconnect and read back accepted state. For interaction changes, exercise the control in a running GPUI window: compilation does not verify keyboard input, focus or recovery. Identify any checks that did not run and why.
+Run focused success and failure tests; leave the full packet suites to the runner once at handoff. For persistence, reconnect and read back accepted state. For interaction changes, exercise the control in a running GPUI window: compilation does not verify keyboard input, focus or recovery. Use the `gpui-kit` coding guides and `gpui-kit-design-guides` for native UI work. Identify any checks that did not run and why.
 
 ## Close a packet
 
 Plan sizeable port commits around **10,000–20,000 changed lines**, splitting earlier at a working boundary when appropriate. Small fixes stay small. Above 20,000 lines, split before committing. Inspect diff statistics before opening large patches; use one active build at a time. See [development](docs/development.md#change-size).
 
-Follow the [documentation map](docs/README.md). Update the affected workflow row and its code/test links. Update the owner map when ownership changes. Avoid a second competing task list.
+Update the affected workflow row and its code/test links. Do not edit the owner map, `docs/architecture.md`, `docs/development.md`, `docs/README.md` or [ROADMAP.md](ROADMAP.md) during a packet; raise the change to the coordinator and let it land at milestone close. Avoid a second competing task list.
 
 Write `handoffs/<packet-id>.json` with `status` (`ready` or `blocked`), `summary`, `evidence` (array of actual checks and outcomes), and `next` (one concrete action). All except `evidence` are strings. A blocker gets a handoff too. Only the runner marks a packet verified, after its checks pass.
 
+## Model roles
+
+| Role | Model | Use for |
+|---|---|---|
+| Coordinator | Astra 6.2, extra high | Choosing the next workflow, writing its packet file, reviewing handoffs and diffs, committing and pushing. |
+| Implementation | Sol 6.1, extra high | Rust, SQL, GPUI Kit views and acceptance tests. |
+| Research | DeepSeek V4 Flash 1017 | Read-only sweeps of the reference source, probe analysis and locating rule owners. No workspace edits. |
+
+Research agents return findings; they never write code. Exact CLI identifiers belong in the runner's per-packet `model` field (`openai/gpt-6.2-astra#high` is the current form); the owner sets the effort suffix. Do not invent a model identifier that the CLI has not confirmed.
+
 ## Continuous delivery on main (coordinator)
 
-Work directly on `main` until the roadmap's 1:1 release gate is satisfied. Dispatch one fresh worker per packet. After the runner verifies its handoff, review the diff, evidence and staged files for scope and private material. Commit the tested change and push to `origin/main` without force. Confirm the remote SHA, then report the commit link, what passed and the next packet. Start that packet without waiting for a reply.
+Work directly on `main` until the roadmap's 1:1 release gate is satisfied. Dispatch one fresh worker per workflow-grain packet, not per gesture. After the runner verifies its handoff, review the diff, evidence and staged files for scope and private material, and check that no process document outside the workflow row changed. Commit the tested change and push to `origin/main` without force. Confirm the remote SHA, then report the commit link, what passed and the next packet. Start that packet without waiting for a reply.
 
-An empty runner queue is not completion: choose the next uncovered source workflow from the register, add its acceptance case and runner gate, then dispatch it. Fix ordinary failures and retry. Interrupt the owner between pushes only for a blocker that needs their access, decision or direct observation.
+An empty runner queue is not completion: choose the next uncovered source workflow from the register, write its packet file and acceptance case, add its runner gate, then dispatch it. Adding a gate for a new workflow is the coordinator's job; extending gates mid-packet is not. Fix ordinary failures and retry. Interrupt the owner between pushes only for a blocker that needs their access, decision or direct observation.

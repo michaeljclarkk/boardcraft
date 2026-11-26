@@ -10,3 +10,6 @@
 *.dump
 *.pem
 *.key
+MICHAELS_NOTES_FOR_AGENTS
+scripts/
+out/

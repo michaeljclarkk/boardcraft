@@ -53,6 +53,13 @@ test('an upgraded checkout honors its existing lock and resumes from its markers
   } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('every queued implementation has a brief and a dedicated worker model', () => {
+  for (const { id, model } of packets) {
+    assert.ok(existsSync(new URL(`../packets/${id}.md`, import.meta.url)), id);
+    assert.equal(model, 'openai/gpt-6.1-sol#xhigh', id);
+  }
+});
+
 test('batch limits follow the queue and reject malformed counts', () => {
   for (let i = 1; i <= packets.length; i++) assert.ok(validLimit(String(i)));
   for (const value of [undefined, '0', '-1', '01', '1.1', '1x', String(packets.length + 1)]) {
@@ -81,7 +88,6 @@ test('the mobile service gate requires both cases, an enabled suite and workspac
 test('13 requires both account journeys against the disposable database', () => {
   const packet = packets.find(p => p.id === '13-account-session');
   assert.equal(packet.database, true);
-  assert.equal(packet.model, 'openai/gpt-6.2-astra#high');
   const cases = ['rejected_credentials_then_sign_in', 'resolve_retry_and_revoke'];
   const calls = [];
   const run = names => verify(packet, (bin, args) => {
