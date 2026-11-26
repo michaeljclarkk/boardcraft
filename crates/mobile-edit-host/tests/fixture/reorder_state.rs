@@ -32,6 +32,25 @@ pub struct Snapshot {
     receipts: Vec<Value>,
 }
 impl Snapshot {
+    pub fn group_transition(&self, f: &Fixture, id: &str, active: bool) -> Self {
+        let mut expected = self.clone();
+        let board = expected
+            .boards
+            .iter_mut()
+            .find(|r| r["id"] == json!(SELECTED))
+            .unwrap();
+        board["revision"] = json!(board["revision"].as_i64().unwrap() + 1);
+        let group = expected
+            .groups
+            .iter_mut()
+            .find(|r| r["board_id"] == json!(SELECTED) && r["id"] == id)
+            .unwrap();
+        assert_eq!(group["active"], !active);
+        group["active"] = json!(active);
+        group["revision"] = json!(group["revision"].as_i64().unwrap() + 1);
+        assert_eq!(Self::read(f), expected);
+        expected
+    }
     pub fn lifecycle(&self, f: &Fixture, actor: Uuid, action: &str) -> Self {
         let now = Self::read(f);
         let mut expected = self.clone();

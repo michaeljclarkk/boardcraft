@@ -64,6 +64,24 @@ struct ReorderBoard {
     state: reorder_state::Snapshot,
 }
 impl ReorderBoard {
+    fn group_owner() -> Self {
+        let (mut app, session) = grouped_board(boardcraft_account::Role::Owner);
+        let state = lifecycle::seed_group_recovery(&app.f, app.account);
+        app.act("group life open");
+        let c = Self {
+            app,
+            state,
+            session,
+        };
+        assert_eq!(c.state, reorder_state::Snapshot::read(&c.app.f));
+        c.access_checkpoint("owner");
+        c
+    }
+    fn group_changed(&mut self, step: &str, active: bool) {
+        self.app.act(step);
+        self.state = self.state.group_transition(&self.app.f, "g-90", active);
+        self.access_checkpoint("owner");
+    }
     fn owner_board() -> Self {
         let (mut app, session) = grouped_board(boardcraft_account::Role::Owner);
         lifecycle::seed(&app.f, app.account);
@@ -125,6 +143,97 @@ impl ReorderBoard {
             role
         );
     }
+}
+
+#[test]
+fn browser_archives_and_restores_one_group() {
+    let mut c = ReorderBoard::group_owner();
+    c.batch_unchanged("group life escape", "owner");
+    let mut db = c.app.f.connect();
+    let mut tx = db.transaction().unwrap();
+    tx.query_one(
+        "SELECT revision FROM boards WHERE id=$1 FOR UPDATE",
+        &[&selection::SELECTED],
+    )
+    .unwrap();
+    c.batch_unchanged("group life pending", "owner");
+    tx.rollback().unwrap();
+    c.group_changed("group life committed", false);
+    c.group_changed("group life undo", true);
+    c.group_changed("group life again", false);
+    for step in [
+        "group life dismiss",
+        "group life inspect",
+        "group life back",
+        "group life forward",
+        "group life reload recovery",
+    ] {
+        c.batch_unchanged(step, "owner");
+    }
+    c.group_changed("group life restore", true);
+    c.batch_unchanged("group life close", "owner");
+}
+
+#[test]
+fn browser_recovers_failed_group_lifecycle() {
+    let mut c = ReorderBoard::group_owner();
+    let mut db = c.app.f.connect();
+    db.batch_execute("CREATE FUNCTION fail_group() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture group fault'; END $$; CREATE CONSTRAINT TRIGGER fail_group AFTER UPDATE ON board_groups DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fail_group()").unwrap();
+    c.batch_unchanged("group life fault", "owner");
+    db.batch_execute("DROP TRIGGER fail_group ON board_groups")
+        .unwrap();
+    c.group_changed("group life archive", false);
+    c.batch_unchanged("group life inspect", "owner");
+    db.execute(
+        "UPDATE boards SET revision=4 WHERE id=$1",
+        &[&selection::SELECTED],
+    )
+    .unwrap();
+    c.state = reorder_state::Snapshot::read(&c.app.f);
+    for step in ["group life stale", "group life review"] {
+        c.batch_unchanged(step, "owner");
+    }
+    c.group_changed("group life refresh fault", true);
+    c.batch_unchanged("group life read accepted", "owner");
+}
+
+#[test]
+fn browser_demoted_owner_cannot_restore_group() {
+    let mut c = ReorderBoard::group_owner();
+    c.group_changed("group life archive", false);
+    c.batch_unchanged("group life inspect", "owner");
+    let mut db = c.app.f.connect();
+    for (role, steps) in [
+        (
+            "member",
+            vec![
+                "group life denied",
+                "group life readonly",
+                "group life member",
+                "group life inspect readonly",
+            ],
+        ),
+        ("viewer", vec!["group life readonly", "group life viewer"]),
+    ] {
+        db.execute(
+            "UPDATE accounts SET role=$2 WHERE id=$1",
+            &[&c.app.account, &role],
+        )
+        .unwrap();
+        for step in steps {
+            c.batch_unchanged(step, role);
+        }
+    }
+    c.app.catalog.membership(&c.app.f, false);
+    c.app.act("life unavailable");
+    assert_eq!(c.state, reorder_state::Snapshot::read(&c.app.f));
+    c.app.catalog.check_grants(&c.app.f, false);
+    assert!(c.session.present(&c.app.f));
+    c.session.revoke(&c.app.f);
+    c.app.act("life expired");
+    assert_eq!(c.state, reorder_state::Snapshot::read(&c.app.f));
+    c.app.catalog.check_grants(&c.app.f, false);
+    assert!(!c.session.present(&c.app.f));
 }
 
 #[test]

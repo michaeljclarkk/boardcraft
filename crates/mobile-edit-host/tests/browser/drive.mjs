@@ -8,6 +8,7 @@ import {reorderJourney} from './reorder.mjs';
 import {selectionJourney} from './selection.mjs';
 import {batchJourney} from './selection-move.mjs';
 import {lifecycleJourney} from './lifecycle.mjs';
+import {groupLifecycleJourney} from './group-lifecycle.mjs';
 
 const [profile, mode, port] = process.argv.slice(2);
 const primary = `http://127.0.0.1:${port}`;
@@ -190,7 +191,7 @@ async function destination(expected, fresh = true) {
   check(rows.length === (expected?.length ?? 0) && rows.every(([id,title,top,bottom,hit], i) =>
     id === uuid(expected[i][0]) && title === expected[i][1] && hit && bottom > top && (!i || top >= rows[i-1][3])), 'ordered destination items');
   const visibleControls = await observe(`Array.from(document.querySelectorAll('input, textarea, button, a, [contenteditable=true]'))
-    .filter(c => c.getClientRects().length && !c.matches('.row-menu [aria-expanded=false],input[type=checkbox]')).map(c => c.innerText)`);
+    .filter(c => c.getClientRects().length && !c.matches('.row-menu [aria-expanded=false],.group-menu [aria-expanded=false],input[type=checkbox]')).map(c => c.innerText)`);
   check(JSON.stringify(visibleControls) === JSON.stringify(denied ? ['Retry destination','Back to boards'] : ['', '+ Add item', 'Back to boards']) &&
     await observe(`!document.querySelector('#items input:enabled:not([type=checkbox]), #items button:enabled:not([aria-expanded])')`), 'read only destination controls');
   check(JSON.stringify(browser.selectionStatuses.splice(0)) === JSON.stringify(fresh ? [denied ? 403 : 200] : []), 'selected response status');
@@ -209,6 +210,7 @@ async function resumed(n, denied = false) {
   requests([resolve,selectedGet(n)]); statuses([resolve,200],[selectedGet(n),denied ? 403 : 200]); await historyAt(boardPath(n));
 }
 async function perform({action, password, rows, otherPort}) {
+  if (action.startsWith('group life ')) return groupLifecycleJourney(action.slice(11), {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, traverse, boardPath, selectedGet, resolve, observe, login, list, origin});
   if (action.startsWith('life ')) return lifecycleJourney(action, {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe, named, traverse});
   if (action.startsWith('batch ')) return batchJourney(action, {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe, named});
   if (action.startsWith('select ')) return selectionJourney(action, {uuid, send, click, key, wait, requests, statuses, reload, historyAt, selectedGet, boardPath, resolve, observe, named});

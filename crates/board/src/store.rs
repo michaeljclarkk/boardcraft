@@ -3,7 +3,9 @@ use postgres::{Client, Error};
 
 use crate::{Board, BoardId, Item, ItemId, RenameError, interactive_title};
 
+mod group_lifecycle;
 mod lifecycle;
+pub use group_lifecycle::{archived_groups, transition_group};
 pub use lifecycle::{ArchivePage, Lifecycle, RootCommand, archive_page, transition_root};
 mod reorder;
 mod selection_move;
@@ -96,6 +98,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
     {
         tx.batch_execute(include_str!("../migrations/0008_root_lifecycle.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (8)", &[])?;
+    }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version=9",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0009_group_lifecycle.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (9)", &[])?;
     }
     tx.commit()
 }

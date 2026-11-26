@@ -67,30 +67,59 @@ export function mountArchive(container, page, api) {
   if (page.has_more) container.append(element('p', `Showing the first ${page.items.length} items.`));
   const list = document.createElement('ul'); container.append(list);
   let busy = false;
+  function start() {
+    if (busy || !api.current()) return false;
+    busy = true;
+    for (const b of container.querySelectorAll('button')) b.disabled = true;
+    return true;
+  }
+  function recover(error, message) {
+    if (!api.current()) return;
+    if (error === 401) return api.expired();
+    if (error === 403) return api.refresh();
+    container.append(element('p', message));
+    const reload = element('button', 'Reload recovery list'); reload.onclick = api.refresh;
+    container.append(reload); reload.focus();
+  }
+  async function submit(restore, send) {
+    if (!start()) return;
+    const label = restore.textContent;
+    restore.textContent = 'Restoring…';
+    try { await send(); }
+    catch (error) {
+      restore.textContent = label;
+      return recover(error, error === 409 ? 'Archive changed.' : 'Restore outcome unavailable.');
+    }
+    if (!api.current()) return;
+    try { await api.readBoard(); if (api.current()) api.refresh(); }
+    catch (error) { recover(error, 'Restore saved. Reload recovery list.'); }
+  }
   for (const row of page.items) {
     const item = document.createElement('li'); item.dataset.itemId = row.id;
     const restore = element('button', 'Restore item'); restore.disabled = !row.restorable;
     item.append(element('span', `${row.title} · ${row.group_name}`), restore);
     if (!row.group_active) item.append(element('span', 'Restore its group first.'));
     list.append(item);
-    restore.onclick = async () => {
-      if (busy || !api.current()) return;
-      busy = true; restore.textContent = 'Restoring…';
-      for (const b of list.querySelectorAll('button')) b.disabled = true;
+    restore.onclick = () => submit(restore, () => api.transition(row.id, 'restore', {operation_id: crypto.randomUUID(), board_revision: page.board_revision, item_revision: row.revision}));
+  }
+  container.append(element('h2', 'Groups'));
+  const groups = document.createElement('ul'); container.append(groups);
+  if (!page.groups.length) container.append(element('p', 'No archived groups'));
+  for (const group of page.groups) {
+    const li = document.createElement('li'); li.dataset.groupId = group.id;
+    const restore = element('button', 'Restore group'); restore.disabled = !page.can_manage;
+    restore.onclick = () => submit(restore, () => api.transitionGroup(group.id, 'restore', page.board_revision));
+    li.append(element('span', group.name), restore); groups.append(li);
+  }
+  if (page.next_group_offset !== null) {
+    const more = element('button','Next groups'); container.append(more);
+    more.onclick = async () => {
+      if (!start()) return;
       try {
-        await api.transition(row.id, 'restore', {operation_id: crypto.randomUUID(), board_revision: page.board_revision, item_revision: row.revision});
+        const next = await api.more(page.board_revision, page.next_group_offset);
         if (!api.current()) return;
-        await api.readBoard();
-        if (api.current()) api.refresh();
-      } catch (error) {
-        if (!api.current()) return;
-        if (error === 401) return api.expired();
-        if (error === 403) return api.refresh();
-        restore.textContent = 'Restore item';
-        container.append(element('p', error === 409 ? 'Archive changed.' : 'Restore outcome unavailable.'));
-        const reload = element('button', 'Reload recovery list'); reload.onclick = api.refresh;
-        container.append(reload); reload.focus();
-      }
+        container.replaceChildren(); mountArchive(container, next, api);
+      } catch (error) { recover(error, 'Could not load next groups.'); }
     };
   }
 }

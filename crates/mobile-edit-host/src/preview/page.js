@@ -126,16 +126,24 @@ async function loadDestination(id, current, notice = '', recovery = false) {
     const ack = await request(`${path}/items/${encodeURIComponent(item)}/${action}`, {method:'POST', body:JSON.stringify(draft)});
     if (ack.board_id !== id || ack.item_id !== item || ack.operation_id !== draft.operation_id) throw Error('Unexpected acknowledgment');
   }
+  async function transitionGroup(group, action, revision) {
+    const ack = await request(`${path}/groups/${encodeURIComponent(group)}/${action}`, {
+      method:'POST', body:JSON.stringify({board_revision:revision})
+    });
+    if (ack.board_id !== id || ack.group_id !== group || ack.board_revision !== revision + 1) throw Error('Unexpected acknowledgment');
+  }
+  const readArchive = () => request(path+'/archive');
   const link = document.createElement('a');
   link.href = `/boards/${id}${recovery ? '' : '/archive'}`;
   link.textContent = recovery ? 'Close recovery' : 'Archive';
   link.onclick = e => { if (!e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey) { e.preventDefault(); navigate(link.pathname); } };
   try {
     if (recovery) {
-      const page = await request(path+'/archive');
+      const page = await readArchive();
       if (!current()) return;
       const mounted = visit = Symbol();
-      mountArchive(items, page, {transition, current: () => visit === mounted, expired: forgetSession, readBoard: read, refresh: () => run(loadRoute)});
+      mountArchive(items, page, {transition, transitionGroup, current: () => visit === mounted, expired: forgetSession, readBoard: read, refresh: () => run(loadRoute),
+        more: (revision, offset) => request(`${path}/archive/groups/${revision}/${offset}`)});
       $('#recovery-nav').append(link); return;
     }
     const board = await read();
@@ -147,6 +155,7 @@ async function loadDestination(id, current, notice = '', recovery = false) {
       current: () => visit === mounted,
       read,
       transition,
+      transitionGroup, readArchive,
       moveSelection: draft => request(`${path}/items/move-selection`, {method:'POST', body:JSON.stringify(draft)}),
       reorder: (item, draft) => request(`${path}/items/${encodeURIComponent(item)}/reorder`, {
         method: 'POST', body: JSON.stringify(draft)

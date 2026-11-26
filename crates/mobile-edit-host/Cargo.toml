@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 log = "0.4"
+percent-encoding = "2"
 postgres = "0.19"
 boardcraft-account = { path = "../account" }
 boardcraft-board = { path = "../board" }

@@ -22,7 +22,7 @@ export async function lifecycleJourney(action, {browser, uuid, click, key, wait,
   const restore=()=>click(row+' button','Restore item');
   async function listing(archived,owner=true){
     const shape=[[uuid(57),'Stored · Retired',true],...(archived?[[uuid(67),'Ink · Work',!owner]]:[])];
-    await wait(`document.querySelector('#items p')?.innerText==='${shape.length} archived item${archived?'s':''}' && JSON.stringify([...document.querySelectorAll('#items li')].map(r=>[r.dataset.itemId,r.firstChild.innerText,r.querySelector('button').disabled]))===${JSON.stringify(JSON.stringify(shape))} && document.querySelector('#items li').innerText.includes('Restore its group first.')`, 'board archive');
+    await wait(`document.querySelector('#items p')?.innerText==='${shape.length} archived item${archived?'s':''}' && JSON.stringify([...document.querySelectorAll('#items li[data-item-id]')].map(r=>[r.dataset.itemId,r.firstChild.innerText,r.querySelector('button').disabled]))===${JSON.stringify(JSON.stringify(shape))} && document.querySelector('#items li').innerText.includes('Restore its group first.')`, 'board archive');
     if (!owner) await wait(`document.querySelector('#items').innerText.includes('Owner access required.')`, 'read-only inventory');
   }
   async function enterArchive(){await click('#recovery-nav summary',null,null);await click('#recovery-nav a','Archive','link');}

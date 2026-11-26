@@ -4,10 +4,21 @@ mod browser_transport;
 mod caller;
 #[path = "fixture/create.rs"]
 mod create;
+#[path = "fixture/group_lifecycle_checks.rs"]
+mod group_lifecycle_checks;
 #[path = "fixture/lifecycle.rs"]
 mod lifecycle;
 #[path = "fixture/lifecycle_checks.rs"]
 mod lifecycle_checks;
+
+#[test]
+fn preview_group_lifecycle_requires_current_owner() {
+    group_lifecycle_checks::access();
+}
+#[test]
+fn preview_group_lifecycle_preserves_children_and_order() {
+    group_lifecycle_checks::round_trip();
+}
 #[path = "fixture/move_checks.rs"]
 mod move_checks;
 #[path = "fixture/move_state.rs"]

@@ -2,6 +2,7 @@
 // only its accepted rows supply editor baselines. A projection never changes them.
 import {mountMoves} from './moves.js';
 import {archiveDialog} from './lifecycle.js';
+import {groupMenus} from './group-lifecycle.js';
 import {mountReorder} from './reorder.js';
 import {mountSelection} from './selection.js';
 
@@ -21,6 +22,9 @@ export function mountNames(board, list, failureArea, api) {
   const moves = mountMoves({...controls, list, failures: moveFailures, archive: row => archiveDialog(row, controls, failureArea)});
   const selection = mountSelection(controls, failureArea);
   const grip = mountReorder({...controls, status: reorderStatus, multiDrag: selection.multiDrag});
+  const notice = document.createElement('div'); notice.className = 'group-notice'; notice.setAttribute('role', 'status');
+  failureArea.prepend(notice);
+  const groupMenu = groupMenus(controls, notice);
 
   function setBusy(value) {
     busy = value;
@@ -200,7 +204,7 @@ export function mountNames(board, list, failureArea, api) {
     const rows = document.createElement('ul');
     rows.setAttribute('aria-label', 'Board items');
     rows.append(...group.items.map(row => cell(row, group)));
-    region.append(selection.checkbox(group), heading, rows, addEntry(group));
+    region.append(selection.checkbox(group), groupMenu(group), heading, rows, addEntry(group));
     return region;
   }
   function render() {

@@ -762,6 +762,7 @@ dependencies = [
  "boardcraft-board",
  "boardcraft-mobile-edit-client",
  "log",
+ "percent-encoding",
  "postgres",
  "ring",
  "serde",

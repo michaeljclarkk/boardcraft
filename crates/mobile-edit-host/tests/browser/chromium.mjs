@@ -47,6 +47,11 @@ export function launch(profile, foreground) {
       if (msg.id) pending.get(msg.id)?.(msg);
       if (msg.method === 'Target.targetDestroyed' && msg.params.targetId === pageId) windowClosed();
       const tab = logs.get(msg.sessionId);
+      if (tab?.failRefresh && msg.method === 'Fetch.requestPaused') {
+        // Only the exact grouped GET on this owned tab is intercepted. The
+        // preceding lifecycle POST still reaches the fixture and commits.
+        send('Fetch.fulfillRequest',{requestId:msg.params.requestId,responseCode:503},msg.sessionId).catch(() => {});
+      }
       if (tab?.probe && msg.method === 'Network.requestWillBeSentExtraInfo') {
         const headers = msg.params.headers;
         const get = name => Object.entries(headers).find(([k])=>k.toLowerCase()===name)?.[1];
@@ -64,7 +69,7 @@ export function launch(profile, foreground) {
           && msg.params.type === 'Fetch') {
         const req = msg.params.request;
         tab.traffic.push([req.method, req.url]); // no headers or bodies
-        if (req.method === 'POST' && /\/items\/[0-9a-f-]+\/(archive|restore)$/.test(new URL(req.url).pathname)) tab.lifecycleIds.push(msg.params.requestId);
+        if (req.method === 'POST' && /\/(items|groups)\/[^/]+\/(archive|restore)$/.test(new URL(req.url).pathname)) tab.lifecycleIds.push(msg.params.requestId);
         if (req.method === 'POST' && new URL(req.url).pathname === '/preview/api/navigation/boards/00000000-0000-0000-0000-0000000000c9/items/move-selection') {
           tab.batchIds.push(msg.params.requestId);
         }
@@ -118,6 +123,13 @@ export function launch(profile, foreground) {
     get moveIds() { return logs.get(session).moveIds; },
     get batchIds() { return logs.get(session).batchIds; },
     get lifecycleIds() { return logs.get(session).lifecycleIds; },
+    async failGroupRead(url) {
+      logs.get(session).failRefresh = true;
+      await send('Fetch.enable',{patterns:[{urlPattern:url,resourceType:'Fetch',requestStage:'Request'}]});
+    },
+    async restoreGroupRead() {
+      await send('Fetch.disable'); logs.get(session).failRefresh = false;
+    },
     async isolatedProbe() {
       const tab = logs.get(session), p = tab.probe;
       for (let n = 0; n < 80 && !(p.id && p.extra.has(p.id)); n++) await delay(25);

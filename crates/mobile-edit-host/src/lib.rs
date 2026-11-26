@@ -289,10 +289,23 @@ fn handle(
         }
         (Method::Get, ["", "boards", id]) => (id, ScopedRead, None),
         (Method::Get, ["", "navigation", "boards", board, "archive"])
+        | (Method::Get, ["", "navigation", "boards", board, "archive", "groups", _, _])
             if matches!(shape, ReadShape::Grouped) =>
         {
             (board, SelectedRead, None)
         }
+        (
+            Method::Post,
+            [
+                "",
+                "navigation",
+                "boards",
+                board,
+                "groups",
+                _,
+                "archive" | "restore",
+            ],
+        ) if matches!(shape, ReadShape::Grouped) => (board, SelectedLifecycle, None),
         (
             Method::Post,
             [
@@ -340,7 +353,8 @@ fn handle(
     // validation or board data before the caller has been authorized.
     enum Action {
         Read,
-        ArchivePage,
+        ArchivePage(Option<(i64, i64)>),
+        Group(String, store::Lifecycle, Result<GroupDraft, u16>),
         Lifecycle(ItemId, store::Lifecycle, Result<RootDraft, u16>),
         Rename(ItemId, Result<NameEdit, u16>),
         Create(Result<CreateDraft, u16>),
@@ -355,7 +369,26 @@ fn handle(
         Some(item) if path.last() == Some(&"restore") => {
             Action::Lifecycle(item, store::Lifecycle::Restore, read_json(req))
         }
-        None if path.last() == Some(&"archive") => Action::ArchivePage,
+        None if path.get(4) == Some(&"groups") => Action::Group(
+            percent_encoding::percent_decode_str(path[5])
+                .decode_utf8()
+                .map_err(|_| 400u16)?
+                .into_owned(),
+            if path[6] == "archive" {
+                store::Lifecycle::Archive
+            } else {
+                store::Lifecycle::Restore
+            },
+            read_json(req),
+        ),
+        None if path.get(4) == Some(&"archive") => Action::ArchivePage(if path.len() == 8 {
+            Some((
+                path[6].parse().map_err(|_| 400u16)?,
+                path[7].parse().map_err(|_| 400u16)?,
+            ))
+        } else {
+            None
+        }),
         Some(item) if path.last() == Some(&"reorder") => Action::Reorder(item, read_json(req)),
         Some(item) if path.last() == Some(&"group") => Action::Move(item, read_json(req)),
         Some(item) => Action::Rename(item, read_edit(req)),
@@ -378,11 +411,20 @@ fn handle(
     let owner = account.role == boardcraft_account::Role::Owner;
     let mut revision = None;
     let body = match action {
-        Action::ArchivePage => {
+        Action::Group(group, action, draft) => {
+            let baseline = draft?.board_revision;
+            store::transition_group(&mut tx, board, &group, action, baseline)
+                .map_err(|e| order_error(e, requested, "transition_group"))?;
+            serde_json::to_vec(&serde_json::json!({"board_id":requested,"group_id":group,"board_revision":baseline+1})).unwrap()
+        }
+        Action::ArchivePage(cursor) => {
+            let gp = store::archived_groups(&mut tx, board, cursor)
+                .map_err(|e| order_error(e, requested, "archived_groups"))?;
+            let groups:Vec<_>=gp.groups.into_iter().map(|g|serde_json::json!({"id":g.id,"name":g.name,"position":g.position,"revision":g.revision})).collect();
             let page = store::archive_page(&mut tx, board)
                 .map_err(|e| order_error(e, requested, "archive_page"))?;
             let items:Vec<_>=page.items.into_iter().map(|r|serde_json::json!({"id":r.id,"title":r.title,"group_id":r.group_id,"group_name":r.group_name,"revision":r.revision,"state":r.state,"effective_state":1,"restorable":owner && r.group_active,"group_active":r.group_active})).collect();
-            serde_json::to_vec(&serde_json::json!({"board_revision":page.revision,"can_manage":owner,"total":page.total,"has_more":page.total>items.len() as i64,"items":items})).unwrap()
+            serde_json::to_vec(&serde_json::json!({"board_revision":page.revision,"can_manage":owner,"total":page.total,"has_more":page.total>items.len() as i64,"items":items,"groups":groups,"next_group_offset":gp.next_offset})).unwrap()
         }
         Action::Lifecycle(item, action, draft) => {
             let d = draft?;
@@ -564,6 +606,12 @@ struct RootDraft {
     operation_id: Uuid,
     board_revision: i64,
     item_revision: i64,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GroupDraft {
+    board_revision: i64,
 }
 
 #[derive(serde::Deserialize)]
