@@ -560,3 +560,18 @@ test('40 requires existing-group edit, draft recovery, current Owner and all pri
   run();
   for (const name of [...browser, ...host]) assert.throws(() => run(name), /Missing passing/);
 });
+
+test('41 requires adjacent menu moves, conflict recovery, current Owner and all prior browser-board gates', () => {
+  const previous = packets.find(p => p.id === '40-browser-group-edit');
+  const packet = packets.find(p => p.id === '41-browser-group-reorder');
+  const browser = [...previous.browserCases, 'browser_moves_group_one_place_from_menu', 'browser_reloads_order_before_moving_group_again', 'browser_demoted_owner_cannot_reorder_groups'];
+  const host = [...previous.cases, 'preview_group_reorder_requires_current_owner', 'preview_group_reorder_checks_active_permutation_and_commit'];
+  assert.deepEqual(packet, { ...previous, id: '41-browser-group-reorder', cases: host, browserCases: browser });
+  const run = missing => verify(packet, (_bin, args) => {
+    const names = args.includes('browser_preview') ? browser : args.includes('loopback_board_access') ? host : [];
+    const present = names.filter(n => n !== missing);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  run();
+  for (const name of [...browser, ...host]) assert.throws(() => run(name), /Missing passing/);
+});

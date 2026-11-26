@@ -33,7 +33,7 @@ export function groupMenus({api, board, busy, setBusy, refresh, button}, notice,
       else api.reload('Group changed. Reload the board.');
     }
   }
-  return group => {
+  return (group, index) => {
     const menu = document.createElement('span'); menu.className = 'group-menu';
     const toggle = button('⋯', () => {
       if (busy()) return;
@@ -43,14 +43,61 @@ export function groupMenus({api, board, busy, setBusy, refresh, button}, notice,
     toggle.setAttribute('aria-label', `Group menu for ${group.name}`);
     const archive = button('Archive group', () => { expand(false); submit(group, 'archive'); });
     const actions = ['Rename group','Change group colour'].map(label => button(label, () => { expand(false); edit(group, toggle); }));
+    for (const [label, delta] of [['Move group up', -1], ['Move group down', 1]]) {
+      const neighbour = index + delta;
+      const action = button(label, () => {
+        if (action.disabled || busy() || !api.current()) return;
+        expand(false); toggle.focus();
+        const ids = board().groups.map(g => g.id);
+        [ids[index], ids[neighbour]] = [ids[neighbour], ids[index]];
+        move(ids);
+      });
+      action.disabled = neighbour < 0 || neighbour >= board().groups.length;
+      actions.push(action);
+    }
     actions.push(archive);
     for (const action of actions) {
-      action.disabled = !board().owner;
-      if (action.disabled) action.title = 'Owner access required.';
+      if (!board().owner) { action.disabled = true; action.title = 'Owner access required.'; }
     }
     function expand(open) { for (const action of actions) action.hidden = !open; toggle.setAttribute('aria-expanded', String(open)); }
     menu.onkeydown = e => { if (e.key === 'Escape') { expand(false); toggle.focus(); } };
     menu.onfocusout = e => { if (!menu.contains(e.relatedTarget)) expand(false); };
     expand(false); menu.append(toggle, ...actions); return menu;
   };
+
+  // Until an authoritative read succeeds, keep the previous grid and block
+  // all new choices. Recovery never retains the submitted IDs or direction.
+  function reload(message) {
+    notice.replaceChildren(message+' ', button('Reload board', readOrder));
+  }
+  function accessChanged(error) {
+    if (error === 401) api.expired();
+    else if (error === 403) api.denied('Group reorder denied.');
+    else return false;
+    return true;
+  }
+  async function readOrder() {
+    if (!api.current()) return;
+    notice.textContent = 'Reading board…';
+    try {
+      const latest = await api.read();
+      if (!api.current()) return;
+      setBusy(false); refresh(latest); notice.replaceChildren();
+    } catch (error) {
+      if (api.current() && !accessChanged(error)) reload('Could not read group order.');
+    }
+  }
+  async function move(ids) {
+    setBusy(true); notice.textContent = 'Saving group order…';
+    try {
+      await api.reorderGroups(board().revision, ids);
+    } catch (error) {
+      if (!api.current() || accessChanged(error)) return;
+      if (error === 500 || error === 422 || error === 413) {
+        setBusy(false); notice.textContent = 'Could not move group. Reopen its menu to retry.';
+      } else reload(error === 409 ? 'Group order changed.' : 'Could not confirm group order.');
+      return;
+    }
+    await readOrder();
+  }
 }

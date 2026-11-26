@@ -11,6 +11,7 @@ import {lifecycleJourney} from './lifecycle.mjs';
 import {groupLifecycleJourney} from './group-lifecycle.mjs';
 import {groupCreateJourney} from './group-create.mjs';
 import {groupEditJourney} from './group-edit.mjs';
+import {groupOrderJourney} from './group-order.mjs';
 
 const [profile, mode, port] = process.argv.slice(2);
 const primary = `http://127.0.0.1:${port}`;
@@ -214,6 +215,7 @@ async function resumed(n, denied = false) {
 async function perform({action, password, rows, otherPort}) {
   if (action.startsWith('new group ')) return groupCreateJourney(action.slice(10), {browser,uuid,click,key,type,wait,check,requests,statuses,reload,selectedGet,resolve,observe,login,list,origin});
   if (action.startsWith('edit group ')) return groupEditJourney(action.slice(11), {browser,uuid,click,key,type,wait,check,requests,statuses,reload,selectedGet,resolve,observe,login,list,origin});
+  if (action.startsWith('order groups ')) return groupOrderJourney(action.slice(13), {browser,uuid,click,key,wait,check,requests,statuses,reload,selectedGet,resolve,observe,list,origin});
   if (action.startsWith('group life ')) return groupLifecycleJourney(action.slice(11), {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, traverse, boardPath, selectedGet, resolve, observe, login, list, origin});
   if (action.startsWith('life ')) return lifecycleJourney(action, {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe, named, traverse});
   if (action.startsWith('batch ')) return batchJourney(action, {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe, named});

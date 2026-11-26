@@ -6,6 +6,8 @@ use crate::{Board, BoardId, Item, ItemId, RenameError, interactive_title};
 mod group_fields;
 pub use group_fields::{create_group, edit_group};
 mod group_lifecycle;
+mod group_order;
+pub use group_order::reorder_groups;
 mod lifecycle;
 pub use group_lifecycle::{archived_groups, transition_group};
 pub use lifecycle::{ArchivePage, Lifecycle, RootCommand, archive_page, transition_root};

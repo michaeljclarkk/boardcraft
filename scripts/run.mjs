@@ -67,6 +67,10 @@ const previewGroupCreate = { ...previewGroupLifecycle,
   cases: [...previewGroupLifecycle.cases, 'preview_group_create_requires_current_owner', 'preview_group_create_preserves_identity_and_order'],
   browserCases: [...previewGroupLifecycle.browserCases, 'browser_creates_duplicate_group_in_position_order', 'browser_reviews_failed_group_create', 'browser_demoted_owner_cannot_create_group'] };
 
+const previewGroupEdit = { ...previewGroupCreate,
+  cases: [...previewGroupCreate.cases, 'preview_group_edit_requires_current_owner', 'preview_group_edit_checks_both_revisions_and_preserves_children'],
+  browserCases: [...previewGroupCreate.browserCases, 'browser_edits_existing_group_by_id', 'browser_reviews_conflicting_group_edit', 'browser_demoted_owner_cannot_edit_group'] };
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -121,9 +125,10 @@ export const packets = [
   { id: '37-browser-root-archive-restore', ...previewRootLifecycle },
   { id: '38-browser-group-archive-restore', ...previewGroupLifecycle },
   { id: '39-browser-group-create', ...previewGroupCreate },
-  { id: '40-browser-group-edit', ...previewGroupCreate,
-    cases: [...previewGroupCreate.cases, 'preview_group_edit_requires_current_owner', 'preview_group_edit_checks_both_revisions_and_preserves_children'],
-    browserCases: [...previewGroupCreate.browserCases, 'browser_edits_existing_group_by_id', 'browser_reviews_conflicting_group_edit', 'browser_demoted_owner_cannot_edit_group'] },
+  { id: '40-browser-group-edit', ...previewGroupEdit },
+  { id: '41-browser-group-reorder', ...previewGroupEdit,
+    cases: [...previewGroupEdit.cases, 'preview_group_reorder_requires_current_owner', 'preview_group_reorder_checks_active_permutation_and_commit'],
+    browserCases: [...previewGroupEdit.browserCases, 'browser_moves_group_one_place_from_menu', 'browser_reloads_order_before_moving_group_again', 'browser_demoted_owner_cannot_reorder_groups'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

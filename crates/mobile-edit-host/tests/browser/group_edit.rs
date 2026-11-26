@@ -8,7 +8,7 @@ use crate::{
 };
 use boardcraft_board::{BoardId, store};
 
-fn open() -> ReorderBoard {
+pub(super) fn open() -> ReorderBoard {
     let (app, session) = grouped_board(boardcraft_account::Role::Owner);
     group_edit::seed(&app.f);
     let state = Snapshot::read(&app.f);
@@ -81,6 +81,9 @@ pub fn review() {
 pub fn demote() {
     let mut c = open();
     c.batch_unchanged("edit group rename", "owner");
+    check_demotion(c, "edit group");
+}
+pub(super) fn check_demotion(mut c: ReorderBoard, action: &str) {
     for role in ["member", "viewer"] {
         c.app
             .f
@@ -91,9 +94,9 @@ pub fn demote() {
             )
             .unwrap();
         if role == "member" {
-            c.batch_unchanged("edit group denied", role);
+            c.batch_unchanged(&format!("{action} denied"), role);
         }
-        c.batch_unchanged(&format!("edit group {role}"), role);
+        c.batch_unchanged(&format!("{action} {role}"), role);
     }
     c.app.catalog.membership(&c.app.f, false);
     c.app.act("new group withdrawn");

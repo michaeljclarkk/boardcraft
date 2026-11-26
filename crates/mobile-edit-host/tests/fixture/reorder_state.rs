@@ -32,6 +32,60 @@ pub struct Snapshot {
     receipts: Vec<Value>,
 }
 impl Snapshot {
+    pub fn reordered_groups(&self, f: &Fixture, ids: &[&str]) -> Self {
+        let mut expected = self.clone();
+        let board = expected
+            .boards
+            .iter_mut()
+            .find(|b| b["id"] == json!(SELECTED))
+            .unwrap();
+        let revision = board["revision"].as_i64().unwrap() + 1;
+        board["revision"] = json!(revision);
+        let board_id = BoardId::new(SELECTED).unwrap();
+        let (read_revision, groups) = store::load_group_snapshot(&mut f.connect(), board_id)
+            .ok()
+            .unwrap();
+        assert_eq!(read_revision, revision);
+        assert_eq!(groups.len(), ids.len());
+        let mut flat = Vec::new();
+        for (position, (&id, group)) in ids.iter().zip(groups).enumerate() {
+            let row = expected
+                .groups
+                .iter_mut()
+                .find(|r| r["board_id"] == json!(SELECTED) && r["id"] == id)
+                .unwrap();
+            row["position"] = json!(position);
+            row["revision"] = json!(row["revision"].as_i64().unwrap() + 1);
+            assert_eq!(group.id, id);
+            assert_eq!(json!(group.revision), row["revision"]);
+            let children: &[u128] = match id {
+                "g-z" => &[61, 63],
+                "g-old" => &[59],
+                "g-end" => &[],
+                _ => panic!("unexpected group"),
+            };
+            assert_eq!(
+                group
+                    .items
+                    .iter()
+                    .map(|r| r.id.as_uuid().as_u128())
+                    .collect::<Vec<_>>(),
+                children
+            );
+            flat.extend_from_slice(children);
+        }
+        assert_eq!(
+            store::load_items(&mut f.connect(), board_id)
+                .unwrap()
+                .unwrap()
+                .iter()
+                .map(|r| r.id.as_uuid().as_u128())
+                .collect::<Vec<_>>(),
+            flat
+        );
+        assert_eq!(Self::read(f), expected);
+        expected
+    }
     pub fn edited_group(&self, f: &Fixture, id: &str, name: &str, colour: &str) -> Self {
         let mut expected = self.clone();
         let board = expected

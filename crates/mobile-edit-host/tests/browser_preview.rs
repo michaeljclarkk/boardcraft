@@ -7,6 +7,21 @@ mod group_create_browser;
 mod group_edit;
 #[path = "browser/group_edit.rs"]
 mod group_edit_browser;
+#[path = "browser/group_order.rs"]
+mod group_order_browser;
+
+#[test]
+fn browser_moves_group_one_place_from_menu() {
+    group_order_browser::moves();
+}
+#[test]
+fn browser_reloads_order_before_moving_group_again() {
+    group_order_browser::recovery();
+}
+#[test]
+fn browser_demoted_owner_cannot_reorder_groups() {
+    group_order_browser::demote();
+}
 
 #[test]
 fn browser_edits_existing_group_by_id() {

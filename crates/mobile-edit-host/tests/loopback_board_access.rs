@@ -12,6 +12,17 @@ mod group_create_checks;
 mod group_edit;
 #[path = "fixture/group_edit_checks.rs"]
 mod group_edit_checks;
+#[path = "fixture/group_order_checks.rs"]
+mod group_order_checks;
+
+#[test]
+fn preview_group_reorder_requires_current_owner() {
+    group_order_checks::access();
+}
+#[test]
+fn preview_group_reorder_checks_active_permutation_and_commit() {
+    group_order_checks::permutations();
+}
 
 #[test]
 fn preview_group_edit_requires_current_owner() {

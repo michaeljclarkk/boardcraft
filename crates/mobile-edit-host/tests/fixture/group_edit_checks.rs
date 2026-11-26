@@ -8,7 +8,7 @@ use boardcraft_board::{BoardId, store};
 use boardcraft_mobile_edit_host::Host;
 use serde_json::{Value, json};
 
-fn owner() -> Case {
+pub(super) fn owner() -> Case {
     let c = Case::new();
     group_edit::seed(&c.f);
     c.f.connect()
@@ -52,27 +52,36 @@ pub fn access() {
     ] {
         rejected(c.request(Some(&c.pair), method, &path, &d), status);
     }
+    deny_without_owner_grants(&c, &s, put);
+}
+
+pub(super) fn deny_without_owner_grants(
+    c: &Case,
+    s: &Snapshot,
+    submit: impl Fn() -> crate::browser_transport::Reply,
+) {
+    let mut db = c.f.connect();
     db.execute(
         "DELETE FROM board_subscribers WHERE board_id=$1 AND account_id=$2",
         &[&SELECTED, &c.member],
     )
     .unwrap();
-    rejected(put(), 403);
+    rejected(submit(), 403);
     db.execute(
         "INSERT INTO board_subscribers VALUES($1,$2)",
         &[&SELECTED, &c.member],
     )
     .unwrap();
     c.catalog.membership(&c.f, false);
-    rejected(put(), 403);
-    check(&c, &s, false, true);
+    rejected(submit(), 403);
+    check(c, s, false, true);
     c.catalog.membership(&c.f, true);
     for sql in [
         "UPDATE board_policies SET active=$2 WHERE board_id=$1",
         "UPDATE workspaces SET active=$2 WHERE id=(SELECT workspace_id FROM board_policies WHERE board_id=$1)",
     ] {
         db.execute(sql, &[&SELECTED, &false]).unwrap();
-        rejected(put(), 403);
+        rejected(submit(), 403);
         db.execute(sql, &[&SELECTED, &true]).unwrap();
     }
     db.execute(
@@ -86,12 +95,12 @@ pub fn access() {
             &[&c.member, &role],
         )
         .unwrap();
-        rejected(put(), 403);
-        check(&c, &s, true, true);
+        rejected(submit(), 403);
+        check(c, s, true, true);
     }
     c.session.revoke(&c.f);
-    rejected(put(), 401);
-    check(&c, &s, true, false);
+    rejected(submit(), 401);
+    check(c, s, true, false);
 }
 
 pub fn edits() {

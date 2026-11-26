@@ -195,7 +195,7 @@ export function mountNames(board, list, failureArea, api) {
     present(); form.append(input, add, status); return form;
   }
 
-  function section(group) {
+  function section(group, index) {
     const region = document.createElement('section');
     region.dataset.groupId = group.id;
     const heading = document.createElement('h2');
@@ -209,7 +209,7 @@ export function mountNames(board, list, failureArea, api) {
     const rows = document.createElement('ul');
     rows.setAttribute('aria-label', 'Board items');
     rows.append(...group.items.map(row => cell(row, group)));
-    region.append(selection.checkbox(group), groupMenu(group), heading, rows, addEntry(group));
+    region.append(selection.checkbox(group), groupMenu(group, index), heading, rows, addEntry(group));
     return region;
   }
   function render() {

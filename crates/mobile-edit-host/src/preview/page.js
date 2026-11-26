@@ -157,6 +157,10 @@ async function loadDestination(id, current, notice = '', recovery = false) {
       read,
       transition,
       transitionGroup, readArchive,
+      reorderGroups: async (revision, ids) => {
+        const ack = await request(path+'/group-order', {method:'POST', body:JSON.stringify({board_revision:revision, group_ids:ids})});
+        if (ack.board_id !== id || ack.board_revision !== revision + 1) throw Error('Unexpected acknowledgment');
+      },
       createGroup: draft => request(path+'/groups', {method:'POST', body:JSON.stringify(draft)}),
       editGroup: (id, draft) => request(`${path}/groups/${encodeURIComponent(id)}`, {method:'PUT', body:JSON.stringify(draft)}),
       moveSelection: draft => request(`${path}/items/move-selection`, {method:'POST', body:JSON.stringify(draft)}),

@@ -306,7 +306,7 @@ fn handle(
                 "archive" | "restore",
             ],
         )
-        | (Method::Post, ["", "navigation", "boards", board, "groups"])
+        | (Method::Post, ["", "navigation", "boards", board, "groups" | "group-order"])
         | (Method::Put, ["", "navigation", "boards", board, "groups", _])
             if matches!(shape, ReadShape::Grouped) =>
         {
@@ -360,6 +360,7 @@ fn handle(
     enum Action {
         Read,
         CreateGroup(Result<CreateGroupDraft, u16>),
+        GroupOrder(Result<GroupOrderDraft, u16>),
         EditGroup(String, Result<EditGroupDraft, u16>),
         ArchivePage(Option<(i64, i64)>),
         Group(String, store::Lifecycle, Result<GroupDraft, u16>),
@@ -379,6 +380,9 @@ fn handle(
         }
         None if path.get(4) == Some(&"groups") && path.len() == 5 => {
             Action::CreateGroup(read_json(req))
+        }
+        None if path.get(4) == Some(&"group-order") => {
+            Action::GroupOrder(read_json_limit(req, 1024 * 1024))
         }
         None if path.get(4) == Some(&"groups") => {
             let id = percent_encoding::percent_decode_str(path[5])
@@ -429,6 +433,15 @@ fn handle(
     let owner = account.role == boardcraft_account::Role::Owner;
     let mut revision = None;
     let body = match action {
+        Action::GroupOrder(draft) => {
+            let d = draft?;
+            store::reorder_groups(&mut tx, board, d.board_revision, &d.group_ids)
+                .map_err(|e| order_error(e, requested, "reorder_groups"))?;
+            serde_json::to_vec(
+                &serde_json::json!({"board_id":requested,"board_revision":d.board_revision+1}),
+            )
+            .unwrap()
+        }
         Action::EditGroup(id, draft) => {
             let d = draft?;
             store::edit_group(
@@ -650,6 +663,13 @@ struct RootDraft {
 #[serde(deny_unknown_fields)]
 struct GroupDraft {
     board_revision: i64,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GroupOrderDraft {
+    board_revision: i64,
+    group_ids: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]

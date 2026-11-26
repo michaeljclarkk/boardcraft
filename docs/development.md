@@ -101,6 +101,8 @@ An Owner can open **New item options → New group of items** and save the defau
 
 To edit an active group as Owner, double-click its name, or choose **Rename group** or **Change group colour** from its menu. Explicit Save advances the group and board revisions even if neither field changed. On conflict, review the accepted group by ID, name, colour and revisions before adopting; Save is a separate action. If the group has disappeared, the draft cannot replace another heading. **Reload board** after an uncertain save reads the accepted state without repeating the command.
 
+To move a physical group as Owner, open its heading menu and choose **Move group up** or **Move group down**. The choice saves immediately. If the order changed or the result could not be confirmed, choose **Reload board**, then decide whether to move the group relative to its current neighbour.
+
 On an editable board, type in **Add item to <group>** and press Enter or choose **+ Add item**. Escape clears the draft; leaving the field does not save. A rejected title stays in that group for correction. After a successful create the preview reads the groups again. If the outcome is uncertain, **Retry destination** reads the board without resubmitting the item.
 
 To move an existing row on that board, open **More options** beside its name, choose **Move to**, select the destination group and **Confirm**. A move preserves the item's position and creation time. If saving fails, **Review move** reads the current source and requested destination, including their IDs. **Apply reviewed move** submits once at the reviewed revision; **Dismiss** discards the failed request.
