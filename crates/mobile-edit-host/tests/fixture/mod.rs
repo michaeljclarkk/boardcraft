@@ -1,4 +1,5 @@
 mod account;
+pub use account::seed_account_on;
 use boardcraft_board::{Board, BoardId, ItemId, store};
 use boardcraft_mobile_edit_client::SavedItem;
 use boardcraft_mobile_edit_host::Host;
@@ -44,6 +45,10 @@ impl Fixture {
     }
 
     pub fn with_titles(titles: [&str; 2]) -> Self {
+        Self::before_host(titles, |_, _, _| {})
+    }
+
+    pub fn before_host(titles: [&str; 2], setup: impl FnOnce(&Config, &mut Client, Uuid)) -> Self {
         let mut config: Config = std::env::var("RUSTDAY_TEST_DATABASE_URL")
             .expect("RUSTDAY_TEST_DATABASE_URL is required")
             .parse()
@@ -65,6 +70,7 @@ impl Fixture {
             seed.add_item(ItemId::new(id).unwrap(), title).unwrap();
         }
         store::create_board(&mut db, &seed).unwrap();
+        setup(&schema.config, &mut db, board);
         let host = Host::start(&schema.config, seed.id()).unwrap();
         Self {
             host,

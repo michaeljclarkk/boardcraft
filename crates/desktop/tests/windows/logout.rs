@@ -135,7 +135,7 @@ pub(super) fn interactive() {
     let viewer = f.seed_account("boardmember", &password, Role::Viewer);
     f.connect()
         .execute(
-            "INSERT INTO private_board_subscribers(board_id,account_id) VALUES ($1,$2)",
+            "INSERT INTO board_subscribers(board_id,account_id) VALUES ($1,$2)",
             &[&f.board, &viewer],
         )
         .unwrap();

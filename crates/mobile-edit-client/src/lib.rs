@@ -14,6 +14,14 @@ pub struct SavedItem {
 
 pub const BOARD_ACCESS_HEADER: &str = "boardcraft-board-access";
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardSummary {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub name: String,
+}
+
 pub struct BoardRead {
     pub rows: Vec<SavedItem>,
     pub can_edit: bool,
@@ -128,6 +136,11 @@ impl EditClient {
         // Check current connectivity, not a pooled stream through an old bridge.
         let http = Self::new(self.port).http;
         decode(self.authorize(http.post(url)).send_empty())
+    }
+
+    pub fn list_boards(&self) -> Result<Vec<BoardSummary>, EditError> {
+        let url = format!("http://127.0.0.1:{}/navigation/boards", self.port);
+        decode(self.authorize(self.http.get(url)).call())
     }
 
     pub fn read(&self, board: Uuid) -> Result<Vec<SavedItem>, EditError> {

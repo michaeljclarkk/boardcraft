@@ -19,6 +19,15 @@ pub struct Host {
 
 impl Host {
     pub fn start(config: &Config, board: BoardId) -> Result<Self, &'static str> {
+        Self::listen(config, board, false)
+    }
+
+    /// Advertise the caller's visible catalog. Item requests still target only `board`.
+    pub fn start_with_navigation(config: &Config, board: BoardId) -> Result<Self, &'static str> {
+        Self::listen(config, board, true)
+    }
+
+    fn listen(config: &Config, board: BoardId, navigation: bool) -> Result<Self, &'static str> {
         if config.get_dbname() != Some("rustday_test") {
             return Err("expected explicit rustday_test database");
         }
@@ -27,8 +36,7 @@ impl Host {
             .map_err(|_| "database connection failed")?;
         store::migrate(&mut db).map_err(|_| "board migration failed")?;
         boardcraft_account::migrate(config).map_err(|_| "account migration failed")?;
-        db.batch_execute(include_str!("../migrations/0001_private_board_access.sql"))
-            .map_err(|_| "board access migration failed")?;
+        access::migrate(&mut db).map_err(|_| "board access migration failed")?;
         let server = Arc::new(
             Server::http((std::net::Ipv4Addr::LOCALHOST, 0)).map_err(|_| "loopback bind failed")?,
         );
@@ -40,6 +48,9 @@ impl Host {
                 let result = match req.url() {
                     "/session" => session(&config, &mut db, &mut req).map(|body| (body, None)),
                     "/session/logout" => logout(&config, &req).map(|body| (body, None)),
+                    "/navigation/boards" if navigation => {
+                        navigation_boards(&mut db, &req).map(|body| (body, None))
+                    }
                     _ => handle(&mut db, board, &mut req),
                 };
                 let response = match result {
@@ -124,6 +135,18 @@ fn logout(config: &Config, req: &Request) -> Result<Vec<u8>, u16> {
     }
     boardcraft_account::revoke(config, &access::bearer(req)?).map_err(access::account_status)?;
     Ok(b"null".to_vec())
+}
+
+fn navigation_boards(db: &mut Client, req: &Request) -> Result<Vec<u8>, u16> {
+    if req.method() != &Method::Get {
+        return Err(405);
+    }
+    let token = access::bearer(req)?;
+    let mut tx = db.transaction().map_err(access::navigation_unavailable)?;
+    let account = access::resolve(&mut tx, &token)?;
+    let summaries = access::list_visible_boards(&mut tx, account)?;
+    tx.commit().map_err(access::navigation_unavailable)?;
+    Ok(serde_json::to_vec(&summaries).expect("serializable summaries"))
 }
 
 fn handle(

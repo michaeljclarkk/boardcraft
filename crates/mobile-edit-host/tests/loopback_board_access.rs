@@ -1,6 +1,8 @@
 #[path = "fixture/caller.rs"]
 mod caller;
 mod fixture;
+#[path = "fixture/navigation.rs"]
+mod navigation;
 #[path = "fixture/peer.rs"]
 mod peer;
 #[path = "fixture/stored_session.rs"]
@@ -30,6 +32,116 @@ fn rename(client: &EditClient, f: &Fixture, revision: i64) -> Result<SavedItem, 
     )
 }
 
+#[test]
+fn list_visible_boards_in_navigation_order() {
+    let f = Fixture::start();
+    let catalog = navigation::Catalog::seed(&f);
+    let host = catalog.host(&f);
+    let member = catalog.member.client(host.port);
+    let viewer = catalog.viewer.client(host.port);
+    assert_eq!(member.list_boards().unwrap(), catalog.open_for_member());
+    assert_eq!(
+        viewer.list_boards().unwrap(),
+        [
+            catalog.ash.clone(),
+            catalog.amber.clone(),
+            catalog.quartz.clone(),
+            catalog.pine.clone()
+        ]
+    );
+    assert_eq!(
+        EditClient::new(host.port).list_boards(),
+        Err(EditError::SessionRejected)
+    );
+    assert_eq!(
+        catalog.member.client(f.host.port).list_boards(),
+        Err(EditError::Missing)
+    );
+    catalog.check_state(&f, "member", false, true);
+    catalog.check_limits(&f, &viewer);
+}
+
+#[test]
+fn workspace_membership_changes_refresh_list_and_access() {
+    let f = Fixture::start();
+    let catalog = navigation::Catalog::seed(&f);
+    let host = catalog.host(&f);
+    let client = catalog.member.client(host.port);
+    let original = rows("Review", 1);
+    assert_eq!(client.list_boards().unwrap(), catalog.open_for_member());
+    denied(&client, &f, EditError::PermissionDenied, &original);
+    catalog.check_state(&f, "member", false, true);
+
+    let membership: &[&(dyn postgres::types::ToSql + Sync)] =
+        &[&catalog.ash.workspace_id, &catalog.member.id];
+    f.connect()
+        .execute("INSERT INTO workspace_members VALUES ($1,$2)", membership)
+        .unwrap();
+    let joined = catalog.joined_for_member();
+    assert_eq!(client.list_boards().unwrap(), joined);
+    let read = client.read_with_access(f.board).unwrap();
+    assert!(read.can_edit);
+    assert_eq!(read.rows, original);
+    assert_eq!(client.read(catalog.amber.id), Err(EditError::Missing));
+    assert_eq!(
+        client.rename(
+            catalog.amber.id,
+            SECOND,
+            &NameEdit {
+                title: "Coral".into(),
+                revision: 1
+            }
+        ),
+        Err(EditError::Missing)
+    );
+    catalog.check_state(&f, "member", true, true);
+
+    f.connect()
+        .execute(
+            "UPDATE accounts SET role='viewer' WHERE id=$1",
+            &[&catalog.member.id],
+        )
+        .unwrap();
+    assert_eq!(client.list_boards().unwrap(), joined);
+    let read = client.read_with_access(f.board).unwrap();
+    assert!(!read.can_edit);
+    assert_eq!(read.rows, original);
+    assert_eq!(rename(&client, &f, 1), Err(EditError::PermissionDenied));
+    catalog.check_state(&f, "viewer", true, true);
+
+    f.connect()
+        .execute(
+            "DELETE FROM workspace_members WHERE workspace_id=$1 AND account_id=$2",
+            membership,
+        )
+        .unwrap();
+    assert_eq!(client.list_boards().unwrap(), catalog.open_for_member());
+    denied(&client, &f, EditError::PermissionDenied, &original);
+    catalog.check_state(&f, "viewer", false, true);
+
+    f.connect()
+        .batch_execute("ALTER TABLE board_subscribers RENAME TO unavailable_subscribers")
+        .unwrap();
+    assert_eq!(client.list_boards(), Err(EditError::AccessUnavailable));
+    f.connect()
+        .batch_execute("ALTER TABLE unavailable_subscribers RENAME TO board_subscribers")
+        .unwrap();
+    assert_eq!(client.list_boards().unwrap(), catalog.open_for_member());
+
+    f.connect()
+        .execute(
+            "UPDATE workspaces SET is_open=false WHERE id=$1",
+            &[&catalog.amber.workspace_id],
+        )
+        .unwrap();
+    assert!(client.list_boards().unwrap().is_empty());
+    client.resolve().unwrap();
+    catalog.check_state(&f, "viewer", false, true);
+    revoke(&f.schema.config, &catalog.member.token).unwrap();
+    assert_eq!(client.list_boards(), Err(EditError::SessionRejected));
+    catalog.check_state(&f, "viewer", false, false);
+}
+
 fn denied(client: &EditClient, f: &Fixture, error: EditError, expected: &[SavedItem]) {
     assert_eq!(client.read(f.board).unwrap_err(), error);
     assert_eq!(
@@ -51,10 +163,36 @@ fn denied(client: &EditClient, f: &Fixture, error: EditError, expected: &[SavedI
 #[test]
 fn stored_bearer_reopens_only_while_authorized() {
     use stored_session::{StoredSession, assert_no_session};
-    let f = Fixture::start();
     let password = uuid::Uuid::new_v4().simple().to_string();
-    let member = f.seed_account("boardmember", &password, Role::Member);
-    f.set_creator(member);
+    // Upgrade a populated packet 14 schema. Its subscriber still has direct
+    // private access, even though there was no workspace ID or catalog name.
+    let f = Fixture::before_host(["Review", "Review"], |config, db, board| {
+        boardcraft_account::migrate(config).unwrap();
+        db.batch_execute(include_str!("../migrations/0001_private_board_access.sql"))
+            .unwrap();
+        let owner = fixture::seed_account_on(
+            db,
+            "creator",
+            &uuid::Uuid::new_v4().to_string(),
+            Role::Member,
+        );
+        let member = fixture::seed_account_on(db, "boardmember", &password, Role::Member);
+        db.execute(
+            "INSERT INTO open_workspace_private_boards VALUES ($1,$2)",
+            &[&board, &owner],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO private_board_subscribers VALUES ($1,$2)",
+            &[&board, &member],
+        )
+        .unwrap();
+    });
+    let member = f
+        .connect()
+        .query_one("SELECT id FROM accounts WHERE username='boardmember'", &[])
+        .unwrap()
+        .get(0);
     let credentials = || Credentials {
         identifier: "boardmember".into(),
         password: password.clone(),
@@ -71,6 +209,18 @@ fn stored_bearer_reopens_only_while_authorized() {
         Ok::<_, EditError>(())
     })
     .unwrap();
+    let discovery = boardcraft_mobile_edit_host::Host::start_with_navigation(
+        &f.schema.config,
+        boardcraft_board::BoardId::new(f.board).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        EditClient::with_bearer(discovery.port, &stored)
+            .unwrap()
+            .list_boards()
+            .unwrap()
+            .is_empty()
+    );
     rename(&client, &f, 1).unwrap();
     drop(client);
     let original = StoredSession::only(&f, member);
@@ -80,10 +230,7 @@ fn stored_bearer_reopens_only_while_authorized() {
     assert_eq!(reopened.read(f.board).unwrap(), saved);
     f.check_store(&saved);
     f.connect()
-        .execute(
-            "DELETE FROM open_workspace_private_boards WHERE board_id=$1",
-            &[&f.board],
-        )
+        .execute("DELETE FROM board_policies WHERE board_id=$1", &[&f.board])
         .unwrap();
     reopened.resolve().unwrap();
     denied(&reopened, &f, EditError::PermissionDenied, &saved);
@@ -180,7 +327,7 @@ fn viewer_reads_but_cannot_rename() {
     let viewer = Caller::sign_in(&f, Role::Viewer);
     f.connect()
         .execute(
-            "INSERT INTO private_board_subscribers(board_id,account_id) VALUES ($1,$2)",
+            "INSERT INTO board_subscribers(board_id,account_id) VALUES ($1,$2)",
             &[&f.board, &viewer.id],
         )
         .unwrap();
@@ -224,12 +371,12 @@ fn member_edits_within_scope() {
     db.execute("INSERT INTO boards(id) VALUES ($1)", &[&other_board])
         .unwrap();
     db.execute(
-        "INSERT INTO open_workspace_private_boards(board_id,creator_id) VALUES ($1,$2)",
+        "INSERT INTO board_policies(board_id,creator_id) VALUES ($1,$2)",
         &[&other_board, &member.id],
     )
     .unwrap();
     db.execute(
-        "INSERT INTO private_board_subscribers(board_id,account_id) VALUES ($1,$2)",
+        "INSERT INTO board_subscribers(board_id,account_id) VALUES ($1,$2)",
         &[&other_board, &outsider.id],
     )
     .unwrap();
@@ -268,10 +415,7 @@ fn member_edits_within_scope() {
     );
     f.check_store(&committed);
     f.connect()
-        .execute(
-            "DELETE FROM open_workspace_private_boards WHERE board_id=$1",
-            &[&f.board],
-        )
+        .execute("DELETE FROM board_policies WHERE board_id=$1", &[&f.board])
         .unwrap();
     denied(&client, &f, EditError::PermissionDenied, &committed);
 }

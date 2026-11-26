@@ -202,7 +202,7 @@ impl NameFixture {
         let member = account("boardmember");
         f.connect()
             .execute(
-                "INSERT INTO private_board_subscribers(board_id,account_id) VALUES ($1,$2)",
+                "INSERT INTO board_subscribers(board_id,account_id) VALUES ($1,$2)",
                 &[&f.board, &member],
             )
             .unwrap();

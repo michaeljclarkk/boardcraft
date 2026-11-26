@@ -69,6 +69,8 @@ Run `cargo test --locked --workspace --test loopback_board_access` for the prote
 
 The GET response header `boardcraft-board-access` describes access at read time: only a single `edit` value enables Windows name editing. `read`, a missing header or an unknown value leaves the board read-only. The PUT does not take a permission hint.
 
+For multi-board discovery, explicitly use `Host::start_with_navigation(config, target)`. `EditClient::list_boards` calls `GET /navigation/boards` with the current session and returns `{id, workspace_id, name}` summaries in global board order. An empty list is a successful read. Session rejection requires sign-in; an unavailable access store can be retried with the same session. Ordinary `Host::start` leaves the list route disabled. Both host modes serve item reads and writes only for `target`.
+
 ### Android native host
 
 Kit's [v0.11.0 mobile guide](https://github.com/longbridge/gpui-kit/blob/v0.11.0/website/docs/mobile.md) describes limited Android testing of chat controls including Input. Android uses the mobile activity/surface host, not the desktop window entry point. The guide's [example build](https://github.com/longbridge/gpui-mobile/blob/0b882efdac7f524e0bb0b1d4c886b2aa752f9f20/example/build.sh) packages an arm64 Rust library via cargo-ndk and Gradle. Its documented GPUI baseline is 0.3.4; even the [mobile fork revision inspected](https://github.com/longbridge/gpui-mobile/blob/7548ebc4b24f00494af9976af8852c7163ded9ce/Cargo.toml) pins core and Android renderer to 0.3.10. boardcraft's Kit 0.11.0 locks core at **0.3.14**. There is an experimental host, but no demonstrated matching set here.
