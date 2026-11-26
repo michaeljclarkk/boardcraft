@@ -381,3 +381,18 @@ test('28 adds real browser traversal, signed-out direct entry and a scoped docum
   run();
   for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
 });
+
+test('29 requires selected rename recovery, stale Viewer denial and current catalog write access', () => {
+  const previous = packets.find(p => p.id === '28-browser-board-history');
+  const packet = packets.find(p => p.id === '29-browser-selected-name');
+  const browser = [...previous.browserCases, 'browser_member_recovers_selected_name', 'browser_demoted_viewer_cannot_rename'];
+  const host = [...previous.cases, 'preview_selected_rename_requires_current_access'];
+  assert.deepEqual(packet, { ...previous, id: '29-browser-selected-name', cases: host, browserCases: browser });
+  const run = missing => verify(packet, (_bin, args) => {
+    const names = args.includes('browser_preview') ? browser : args.includes('loopback_board_access') ? host : [];
+    const present = names.filter(n => n !== missing);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  run();
+  for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
+});

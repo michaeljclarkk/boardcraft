@@ -1,6 +1,7 @@
 import {createInterface} from 'node:readline';
 import {setTimeout as delay} from 'node:timers/promises';
 import {launch} from './chromium.mjs';
+import {nameJourney} from './names.mjs';
 
 const [profile, mode, port] = process.argv.slice(2);
 const origin = `http://127.0.0.1:${port}`;
@@ -26,16 +27,16 @@ async function named(role, name) {
   const {nodes} = await send('Accessibility.getFullAXTree');
   check(nodes.some(n => !n.ignored && n.role?.value === role && n.name?.value === name), 'accessible control');
 }
-async function click(selector, name, role = 'button') {
-  await named(role, name);
+async function click(selector, name, role = 'button', count = 1) {
+  if (role) await named(role, name);
   const point = await observe(`(() => {
     const b = document.querySelector(${JSON.stringify(selector)}), r = b.getBoundingClientRect();
     const x = r.x + r.width/2, y = r.y + r.height/2;
     return !b.disabled && document.elementFromPoint(x,y) === b && {x,y};
   })()`);
   check(point, 'control hit target');
-  for (const type of ['mousePressed', 'mouseReleased']) {
-    await send('Input.dispatchMouseEvent', {type, ...point, button:'left', clickCount:1});
+  for (let i = 1; i <= count; i++) for (const type of ['mousePressed', 'mouseReleased']) {
+    await send('Input.dispatchMouseEvent', {type, ...point, button:'left', clickCount:i});
   }
 }
 async function key(key, code, vk, modifiers = 0, text) {
@@ -144,9 +145,9 @@ async function destination(expected) {
 
 async function perform({action, password, rows}) {
   switch (action) {
-    case 'open': case 'open direct': {
-      const path = action === 'open' ? root : boardPath(202);
-      await browser.open(origin+path); await identifierScreen(); requests([]); await historyAt(path); break;
+    case 'open': case 'open member': case 'open direct': {
+      const path = action === 'open direct' ? boardPath(202) : root;
+      await browser.open(origin+path, action === 'open member'); await identifierScreen(); requests([]); await historyAt(path); break;
     }
     case 'direct identifier':
       await passwordStep('reader'); await historyAt(boardPath(202)); break;
@@ -212,7 +213,7 @@ async function perform({action, password, rows}) {
       await noRows(true); requests([]);
       await click('#refresh','Refresh'); await visibleRows(rows); requests([list]); await historyAt(root); break;
     case 'park': await browser.windowClosed; break;
-    default: throw Error('unknown action');
+    default: await nameJourney(action, {uuid, wait, observe, named, click, key, enter, type, requests, browser, check, historyAt});
   }
 }
 try {

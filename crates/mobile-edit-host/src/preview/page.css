@@ -10,3 +10,4 @@ button:disabled { opacity: .65; cursor: wait; }
 ul { padding-left: 1.5rem; }
 li { padding: .45rem; border-bottom: 1px solid #c5d6d1; overflow-wrap: anywhere; }
 [role=alert] { color: #8a331e; }
+#items button { white-space: pre-wrap; }

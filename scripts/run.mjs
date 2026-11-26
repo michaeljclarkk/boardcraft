@@ -22,6 +22,10 @@ const previewCases = ['browser_reject_correct_list_logout', 'browser_empty_unava
 const previewNavigation = { database: true, model: boardNavigation.model, target: boardNavigation.target,
   cases: boardNavigation.cases, browserCases: [...previewCases, 'browser_opens_selected_board_by_id', 'browser_revoked_membership_blocks_selection'] };
 
+const previewHistory = { ...previewNavigation,
+  cases: [...previewNavigation.cases, 'preview_document_preserves_scoped_api'],
+  browserCases: [...previewNavigation.browserCases, 'browser_history_rechecks_board_access', 'browser_direct_board_survives_sign_in'] };
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -64,9 +68,10 @@ export const packets = [
   { id: '26-browser-board-preview', ...boardNavigation, boardLink: true,
     browserCases: previewCases },
   { id: '27-browser-board-navigation', ...previewNavigation },
-  { id: '28-browser-board-history', ...previewNavigation,
-    cases: [...previewNavigation.cases, 'preview_document_preserves_scoped_api'],
-    browserCases: [...previewNavigation.browserCases, 'browser_history_rechecks_board_access', 'browser_direct_board_survives_sign_in'] },
+  { id: '28-browser-board-history', ...previewHistory },
+  { id: '29-browser-selected-name', ...previewHistory,
+    cases: [...previewHistory.cases, 'preview_selected_rename_requires_current_access'],
+    browserCases: [...previewHistory.browserCases, 'browser_member_recovers_selected_name', 'browser_demoted_viewer_cannot_rename'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

@@ -15,7 +15,7 @@ use browser::Preview;
 use stored_session::{StoredSession, assert_no_session};
 
 fn check_catalog(app: &Preview, session: &StoredSession, joined: bool) {
-    assert!(StoredSession::only(&app.f, app.viewer) == *session);
+    assert!(StoredSession::only(&app.f, app.account) == *session);
     app.catalog.check(&app.f, joined);
 }
 
@@ -30,7 +30,7 @@ fn browser_direct_board_survives_sign_in() {
         app.catalog.check(&app.f, true);
     }
     app.act("direct login");
-    let session = StoredSession::only(&app.f, app.viewer);
+    let session = StoredSession::only(&app.f, app.account);
     check_catalog(&app, &session, true);
     app.act("back");
     check_catalog(&app, &session, true);
@@ -41,7 +41,7 @@ fn browser_history_rechecks_board_access() {
     let mut app = Preview::open(false);
     assert_no_session(&app.f);
     app.act("login");
-    let session = StoredSession::only(&app.f, app.viewer);
+    let session = StoredSession::only(&app.f, app.account);
     check_catalog(&app, &session, true);
     for action in ["open last", "history back", "forward", "history back"] {
         app.act(action);
@@ -72,7 +72,7 @@ fn browser_history_rechecks_board_access() {
 fn browser_opens_selected_board_by_id() {
     let mut app = Preview::open(false);
     app.act("login");
-    let session = StoredSession::only(&app.f, app.viewer);
+    let session = StoredSession::only(&app.f, app.account);
     app.catalog.check(&app.f, true);
     for action in ["open last", "back", "open first review"] {
         app.act(action);
@@ -84,7 +84,7 @@ fn browser_opens_selected_board_by_id() {
 fn browser_revoked_membership_blocks_selection() {
     let mut app = Preview::open(false);
     app.act("login");
-    let session = StoredSession::only(&app.f, app.viewer);
+    let session = StoredSession::only(&app.f, app.account);
     app.catalog.check(&app.f, true);
     app.catalog.membership(&app.f, false);
     for action in ["denied", "retry denied", "back empty"] {
@@ -104,10 +104,10 @@ fn browser_reject_correct_list_logout() {
     app.act("reject");
     assert_no_session(&app.f);
     app.act("login");
-    StoredSession::only(&app.f, app.viewer);
+    StoredSession::only(&app.f, app.account);
     let peer = peer::Peer::sign_in(
         &app.f,
-        app.viewer,
+        app.account,
         Credentials {
             identifier: "reader".into(),
             password: app.password.clone(),
@@ -130,7 +130,7 @@ fn browser_reject_correct_list_logout() {
 fn browser_empty_unavailable_then_retry() {
     let mut app = Preview::open(false);
     app.act("login");
-    let session = StoredSession::only(&app.f, app.viewer);
+    let session = StoredSession::only(&app.f, app.account);
     app.catalog.membership(&app.f, false);
     app.act("empty");
     check_catalog(&app, &session, false);
@@ -147,4 +147,98 @@ fn browser_empty_unavailable_then_retry() {
     session.revoke(&app.f);
     app.act("expired");
     assert_no_session(&app.f);
+}
+
+fn check_name(app: &Preview, session: &StoredSession, role: &str, saved: bool) {
+    use boardcraft_mobile_edit_client::SavedItem;
+    assert!(StoredSession::only(&app.f, app.account) == *session);
+    assert_eq!(
+        app.f
+            .connect()
+            .query_one("SELECT role FROM accounts WHERE id=$1", &[&app.account])
+            .unwrap()
+            .get::<_, String>(0),
+        role
+    );
+    let mut rows = selection::selected_rows();
+    if saved {
+        rows[1].title = "Coral".into();
+        rows[1].revision = 2;
+    }
+    app.catalog.check_with_selected(&app.f, true, &rows);
+    app.f
+        .check_store(&[fixture::FIRST, fixture::SECOND].map(|id| SavedItem {
+            id,
+            title: "Review".into(),
+            revision: 1,
+        }));
+}
+
+fn member_board() -> (Preview, StoredSession) {
+    let mut app = Preview::with_role(false, "open member", boardcraft_account::Role::Member);
+    assert_no_session(&app.f);
+    app.act("login");
+    let session = StoredSession::only(&app.f, app.account);
+    check_name(&app, &session, "member", false);
+    app.act("open editable");
+    check_name(&app, &session, "member", false);
+    (app, session)
+}
+
+#[test]
+fn browser_member_recovers_selected_name() {
+    let (mut app, session) = member_board();
+    for action in [
+        "cancel name",
+        "unchanged name",
+        "blank blur",
+        "cancel rejected",
+        "retry name",
+        "dismiss name",
+        "draft coral",
+    ] {
+        app.act(action);
+        check_name(&app, &session, "member", false);
+    }
+    let mut db = app.f.connect();
+    let mut lock = db.transaction().unwrap();
+    lock.query_one(
+        "SELECT id FROM board_items WHERE board_id=$1 AND id=$2 FOR UPDATE",
+        &[&selection::SELECTED, &uuid::Uuid::from_u128(61)],
+    )
+    .unwrap();
+    app.act("pending name");
+    check_name(&app, &session, "member", false);
+    lock.rollback().unwrap();
+    for action in ["saved name", "back saved", "reopen saved"] {
+        app.act(action);
+        check_name(&app, &session, "member", true);
+    }
+}
+
+#[test]
+fn browser_demoted_viewer_cannot_rename() {
+    let (mut app, session) = member_board();
+    app.act("draft coral");
+    check_name(&app, &session, "member", false);
+    assert_eq!(
+        app.f
+            .connect()
+            .execute(
+                "UPDATE accounts SET role='viewer' WHERE id=$1",
+                &[&app.account]
+            )
+            .unwrap(),
+        1
+    );
+    check_name(&app, &session, "viewer", false);
+    for action in [
+        "denied name",
+        "back",
+        "reopen readonly",
+        "readonly attempts",
+    ] {
+        app.act(action);
+        check_name(&app, &session, "viewer", false);
+    }
 }

@@ -1,9 +1,11 @@
+import {mountNames} from './names.js';
+
 const $ = selector => document.querySelector(selector);
 const identify = $('#identify'), authenticate = $('#authenticate'), boards = $('#boards');
 const identifier = $('#identifier'), password = $('#password'), alert = $('[role=alert]');
 const refresh = $('#refresh'), resolve = $('#resolve'), list = $('#boards ul');
 const destination = $('#destination'), items = $('#items'), retry = $('#retry-destination');
-let token, active;
+let token, active, visit;
 
 function step(panel, title) {
   for (const view of [identify, authenticate, boards, destination, resolve]) view.hidden = view !== panel;
@@ -12,6 +14,8 @@ function step(panel, title) {
 }
 
 function clearNavigation() {
+  visit = undefined;
+  $('#failures').replaceChildren();
   list.replaceChildren(); $('#empty').hidden = true;
   items.replaceChildren(); retry.hidden = true; retry.onclick = null;
 }
@@ -25,6 +29,7 @@ function signInScreen() {
 
 // History traversal can start a new read while an older one is still in flight.
 async function run(operation) {
+  visit = undefined; // Invalidate editor blur and late saves before changing focus.
   const turn = active = Symbol();
   const current = () => active === turn;
   const controls = document.querySelectorAll('input, button');
@@ -43,7 +48,7 @@ async function run(operation) {
   }
 }
 
-async function request(path, options = {}) {
+async function fetchResponse(path, options = {}) {
   const response = await fetch(path, {
     mode: 'same-origin', credentials: 'omit', redirect: 'error', cache: 'no-store',
     signal: AbortSignal.timeout(15000),
@@ -51,8 +56,10 @@ async function request(path, options = {}) {
     ...options
   });
   if (!response.ok) throw response.status;
-  return response.json();
+  return response;
 }
+
+async function request(path, options) { return (await fetchResponse(path, options)).json(); }
 
 function navigate(path) {
   history.pushState(null, '', path);
@@ -99,21 +106,37 @@ async function loadBoards(current) {
   }
 }
 
-async function loadDestination(id, current) {
+async function loadDestination(id, current, notice = '') {
   clearNavigation();
   step(destination, 'Board items');
+  alert.textContent = notice;
+  const path = `/navigation/boards/${encodeURIComponent(id)}`;
+  async function read() {
+    const response = await fetchResponse(path);
+    return {rows: await response.json(), editable: response.headers.get('boardcraft-board-access') === 'edit'};
+  }
   try {
-    const rows = await request(`/navigation/boards/${encodeURIComponent(id)}`);
+    const board = await read();
     if (!current()) return;
-    items.replaceChildren(...rows.map(({id, title}) => {
-      const item = document.createElement('li');
-      item.dataset.itemId = id; item.textContent = title;
-      return item;
-    }));
+    const mounted = visit = Symbol();
+    mountNames(board, items, $('#failures'), {
+      current: () => visit === mounted,
+      read,
+      save: (item, edit) => request(`${path}/items/${encodeURIComponent(item)}/name`, {
+        method: 'PUT', body: JSON.stringify(edit)
+      }),
+      expired: signInScreen,
+      denied: () => run(next => loadDestination(id, next, 'Name change denied.')),
+      reload: message => {
+        clearNavigation();
+        alert.textContent = message;
+        retry.hidden = false; retry.onclick = () => run(loadRoute);
+      }
+    });
   } catch (error) {
     if (!current()) return;
     if (error === 401) return signInScreen();
-    alert.textContent = error === 403 || error === 404 ? 'Destination unavailable' : 'Could not load board';
+    alert.textContent = [notice, error === 403 || error === 404 ? 'Destination unavailable' : 'Could not load board'].filter(Boolean).join(' ');
     retry.onclick = () => run(loadRoute);
     retry.hidden = false;
   }

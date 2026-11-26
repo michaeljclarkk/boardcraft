@@ -21,7 +21,7 @@ pub struct Preview {
     _host: Host,
     pub catalog: Catalog,
     pub f: Fixture,
-    pub viewer: Uuid,
+    pub account: Uuid,
     pub password: String,
 }
 
@@ -31,10 +31,14 @@ impl Preview {
     }
 
     pub fn start(foreground: bool, entry: &str) -> Self {
+        Self::with_role(foreground, entry, Role::Viewer)
+    }
+
+    pub fn with_role(foreground: bool, entry: &str, role: Role) -> Self {
         let f = Fixture::with_titles(["Review", "Review"]);
         let password = Uuid::new_v4().simple().to_string();
-        let viewer = f.seed_account("reader", &password, Role::Viewer);
-        let catalog = Catalog::new(&f, viewer);
+        let account = f.seed_account("reader", &password, role);
+        let catalog = Catalog::new(&f, account);
         let host = Host::start_preview(&f.schema.config, BoardId::new(f.board).unwrap()).unwrap();
         let driver = Driver::start(host.port, foreground);
         let mut app = Self {
@@ -42,7 +46,7 @@ impl Preview {
             _host: host,
             catalog,
             f,
-            viewer,
+            account,
             password,
         };
         app.act(entry);
@@ -57,19 +61,26 @@ impl Preview {
                 | "retry"
                 | "failed logout"
                 | "back"
+                | "back saved"
                 | "refresh restored"
                 | "history back"
                 | "settled list"
         ) {
             // Read the catalog records and grant links directly, not the operation under test.
-            self.catalog.check(&self.f, true);
+            if action == "back saved" {
+                // The rename journey checks the committed rows on both sides of Back.
+                self.catalog.check_grants(&self.f, true);
+                command["action"] = json!("back");
+            } else {
+                self.catalog.check(&self.f, true);
+            }
             let rows: Vec<(Uuid, String, i32)> = self
                 .f
                 .connect()
                 .query(
                     "SELECT p.board_id, p.name, p.position FROM board_policies p
                  JOIN board_subscribers s USING(board_id) WHERE s.account_id=$1 ORDER BY p.position",
-                    &[&self.viewer],
+                    &[&self.account],
                 )
                 .unwrap()
                 .iter()

@@ -26,6 +26,8 @@ export function launch(profile, foreground) {
   const pending = new Map();
   const traffic = [];
   const selectionStatuses = [];
+  const responses = [], renameIds = [];
+  let nameCase = false;
   let seq = 0, session, buffer = '', ended = false, pageId, windowClosed;
   const tabClosed = new Promise(resolve => { windowClosed = resolve; });
   const closed = new Promise(resolve => {
@@ -49,9 +51,14 @@ export function launch(profile, foreground) {
           && msg.params.type === 'Fetch') {
         const req = msg.params.request;
         traffic.push([req.method, req.url]); // no headers or bodies
+        if (nameCase && req.method === 'PUT' && new URL(req.url).pathname ===
+            '/navigation/boards/00000000-0000-0000-0000-0000000000c9/items/00000000-0000-0000-0000-00000000003d/name') {
+          renameIds.push(msg.params.requestId);
+        }
       }
       if (msg.sessionId === session && msg.method === 'Network.responseReceived' && msg.params.type === 'Fetch') {
         const {url, status} = msg.params.response;
+        if (nameCase) responses.push([new URL(url).pathname, status, msg.params.response.headers['boardcraft-board-access'] ?? null]);
         if (new URL(url).pathname.startsWith('/navigation/boards/')) selectionStatuses.push(status);
       }
     }
@@ -71,7 +78,9 @@ export function launch(profile, foreground) {
   }
   return {
     windowClosed: Promise.race([closed, tabClosed]), traffic, selectionStatuses, send,
-    async open(url) {
+    responses, renameIds,
+    async open(url, names = false) {
+      nameCase = names;
       const {targetInfos} = await send('Target.getTargets');
       const page = targetInfos.find(p => p.type === 'page' && p.url === 'about:blank');
       if (!page) throw Error('Missing owned tab');

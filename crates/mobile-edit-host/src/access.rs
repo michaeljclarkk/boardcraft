@@ -96,6 +96,7 @@ pub(super) enum Operation {
     ScopedRead,
     ScopedRename,
     SelectedRead,
+    SelectedRename,
 }
 
 pub(super) fn authorize(
@@ -105,7 +106,11 @@ pub(super) fn authorize(
     operation: Operation,
 ) -> Result<bool, u16> {
     let can_edit = !account.role.is_read_only();
-    if matches!(operation, Operation::ScopedRename) && !can_edit {
+    if matches!(
+        operation,
+        Operation::ScopedRename | Operation::SelectedRename
+    ) && !can_edit
+    {
         return Err(403);
     }
     let board = board.as_uuid();
@@ -113,7 +118,7 @@ pub(super) fn authorize(
         log::error!("authorize board={board} unavailable");
         503u16
     };
-    let allow_legacy = !matches!(operation, Operation::SelectedRead);
+    let allow_legacy = matches!(operation, Operation::ScopedRead | Operation::ScopedRename);
     let sql = format!(
         "SELECT 1 FROM board_policies b WHERE b.board_id=$2 AND {}
         AND (($3 AND b.workspace_id IS NULL) OR EXISTS (SELECT 1 FROM workspaces w

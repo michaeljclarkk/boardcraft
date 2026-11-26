@@ -71,7 +71,7 @@ impl Host {
                     "/navigation/boards" if navigation => {
                         navigation_boards(&mut db, &req).map(|body| (body, None))
                     }
-                    _ => handle(&mut db, board, navigation, &mut req),
+                    _ => handle(&mut db, board, mode, &mut req),
                 };
                 let response = match result {
                     Ok((body, hint)) => {
@@ -172,27 +172,30 @@ fn navigation_boards(db: &mut Client, req: &Request) -> Result<Vec<u8>, u16> {
 fn handle(
     db: &mut Client,
     scoped_board: BoardId,
-    navigation: bool,
+    mode: Mode,
     req: &mut Request,
 ) -> Result<(Vec<u8>, Option<bool>), u16> {
     let path: Vec<_> = req.url().split('/').collect();
     use access::Operation::*;
     let (requested, operation, target) = match (req.method(), path.as_slice()) {
-        (Method::Get, ["", "navigation", "boards", id]) if navigation => (id, SelectedRead, None),
+        (Method::Get, ["", "navigation", "boards", id]) if mode != Mode::Scoped => {
+            (id, SelectedRead, None)
+        }
         (Method::Get, ["", "boards", id]) => (id, ScopedRead, None),
-        (Method::Put, ["", "boards", board, "items", id, "name"]) => (
-            board,
-            ScopedRename,
-            Some(
-                Uuid::parse_str(id)
-                    .ok()
-                    .and_then(ItemId::new)
-                    .ok_or(404u16)?,
-            ),
-        ),
+        (Method::Put, ["", "boards", board, "items", id, "name"]) => {
+            (board, ScopedRename, Some(id))
+        }
+        (Method::Put, ["", "navigation", "boards", board, "items", id, "name"])
+            if mode == Mode::Preview =>
+        {
+            (board, SelectedRename, Some(id))
+        }
         _ => return Err(404),
     };
     let requested = Uuid::parse_str(requested).map_err(|_| 404u16)?;
+    let target = target
+        .map(|id| Uuid::parse_str(id).ok().and_then(ItemId::new).ok_or(404u16))
+        .transpose()?;
     let token = access::bearer(req)?;
     // Buffer bounded input before acquiring database locks. Do not return draft
     // validation or board data before the caller has been authorized.
@@ -202,7 +205,7 @@ fn handle(
         503u16
     })?;
     let account = access::resolve(&mut tx, &token)?;
-    if !matches!(operation, SelectedRead) && requested != scoped_board.as_uuid() {
+    if matches!(operation, ScopedRead | ScopedRename) && requested != scoped_board.as_uuid() {
         return Err(404);
     }
     let board = BoardId::new(requested).ok_or(404u16)?;
@@ -239,7 +242,9 @@ fn handle(
         log::error!("board request commit failed board={requested}");
         500u16
     })?;
-    Ok((body, matches!(operation, ScopedRead).then_some(can_edit)))
+    let hint = matches!(operation, ScopedRead)
+        || (mode == Mode::Preview && matches!(operation, SelectedRead));
+    Ok((body, hint.then_some(can_edit)))
 }
 
 fn read_edit(req: &mut Request) -> Result<NameEdit, u16> {

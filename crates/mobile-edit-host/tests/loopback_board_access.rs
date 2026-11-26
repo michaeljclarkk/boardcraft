@@ -140,6 +140,67 @@ fn preview_document_preserves_scoped_api() {
 }
 
 #[test]
+fn preview_selected_rename_requires_current_access() {
+    use selection::{SELECTED, Selection};
+    use std::io::{Read, Write};
+    let f = Fixture::start();
+    let s = Selection::new(&f);
+    let preview = boardcraft_mobile_edit_host::Host::start_preview(
+        &f.schema.config,
+        boardcraft_board::BoardId::new(f.board).unwrap(),
+    )
+    .unwrap();
+    let selected = |board, item| format!("/navigation/boards/{board}/items/{item}/name");
+    let item = uuid::Uuid::from_u128(61);
+    let path = selected(SELECTED, item);
+    let denied = |port, path: &str, authenticated, expected, joined| {
+        let mut stream =
+            std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let body = r#"{"title":"Coral","revision":1}"#;
+        write!(stream, "PUT {path} HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n", body.len()).unwrap();
+        if authenticated {
+            write!(stream, "Authorization: Bearer {}\r\n", s.token.encoded()).unwrap();
+        }
+        write!(stream, "\r\n{body}").unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        assert_eq!(headers.split_whitespace().nth(1).unwrap(), expected);
+        assert!(body.is_empty());
+        s.check_rows(&f, joined);
+        f.check_store(&rows("Review", 1));
+    };
+    denied(preview.port, &path, false, "401", true);
+    for port in [f.host.port, s.host.port] {
+        denied(port, &path, true, "404", true);
+    }
+    denied(
+        preview.port,
+        path.strip_prefix("/navigation").unwrap(),
+        true,
+        "404",
+        true,
+    );
+    denied(preview.port, &selected(f.board, SECOND), true, "403", true);
+    denied(
+        preview.port,
+        &selected(SELECTED, uuid::Uuid::from_u128(62)),
+        true,
+        "404",
+        true,
+    );
+    s.membership(&f, false);
+    denied(preview.port, &path, true, "403", false);
+    s.check(&f, false);
+    s.membership(&f, true);
+    s.session.revoke(&f);
+    denied(preview.port, &path, true, "401", true);
+}
+
+#[test]
 fn selected_board_read_checks_current_membership() {
     use selection::*;
     let f = Fixture::start();

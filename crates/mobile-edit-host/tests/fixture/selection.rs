@@ -61,6 +61,9 @@ impl Selection {
     }
     pub fn check(&self, f: &Fixture, joined: bool) {
         assert!(StoredSession::only(f, self.catalog.member) == self.session);
+        self.check_rows(f, joined);
+    }
+    pub fn check_rows(&self, f: &Fixture, joined: bool) {
         self.catalog.check(f, joined);
     }
 }
@@ -119,6 +122,16 @@ impl Catalog {
     }
 
     pub fn check(&self, f: &Fixture, joined: bool) {
+        self.check_with_selected(f, joined, &selected_rows());
+    }
+
+    pub fn check_with_selected(&self, f: &Fixture, joined: bool, selected: &[SavedItem]) {
+        self.check_grants(f, joined);
+        f.check_board(SELECTED, selected);
+        f.check_board(SIBLING, &rows(&[(62, "Outline")]));
+    }
+
+    pub fn check_grants(&self, f: &Fixture, joined: bool) {
         let mut db = f.connect();
         assert_eq!(db.query_one("SELECT EXISTS(SELECT FROM workspace_members WHERE workspace_id=$1 AND account_id=$2)", &[&self.workspace,&self.member]).unwrap().get::<_,bool>(0),joined);
         let subscriptions: Vec<Uuid> = db
@@ -131,7 +144,5 @@ impl Catalog {
             .map(|r| r.get(0))
             .collect();
         assert_eq!(subscriptions, [SELECTED, SIBLING, QUARTZ]);
-        f.check_board(SELECTED, &selected_rows());
-        f.check_board(SIBLING, &rows(&[(62, "Outline")]));
     }
 }
