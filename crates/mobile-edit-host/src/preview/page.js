@@ -1,11 +1,12 @@
 import {mountNames} from './names.js';
+import {readBinding, changeBinding, onChange} from './binding.js';
 
 const $ = selector => document.querySelector(selector);
 const identify = $('#identify'), authenticate = $('#authenticate'), boards = $('#boards');
 const identifier = $('#identifier'), password = $('#password'), alert = $('[role=alert]');
 const refresh = $('#refresh'), resolve = $('#resolve'), list = $('#boards ul');
 const destination = $('#destination'), items = $('#items'), retry = $('#retry-destination');
-let token, active, visit;
+let binding, active, visit;
 
 function step(panel, title) {
   for (const view of [identify, authenticate, boards, destination, resolve]) view.hidden = view !== panel;
@@ -21,7 +22,7 @@ function clearNavigation() {
 }
 
 function signInScreen() {
-  token = undefined;
+  binding = undefined;
   identify.reset(); authenticate.reset();
   clearNavigation();
   step(identify, 'Sign in');
@@ -49,10 +50,10 @@ async function run(operation) {
 }
 
 async function fetchResponse(path, options = {}) {
-  const response = await fetch(path, {
-    mode: 'same-origin', credentials: 'omit', redirect: 'error', cache: 'no-store',
+  const response = await fetch('/preview/api' + path, {
+    mode: 'same-origin', credentials: 'same-origin', redirect: 'error', cache: 'no-store',
     signal: AbortSignal.timeout(15000),
-    headers: token ? { Authorization: `Bearer ${token}` } : { 'Content-Type': 'application/json' },
+    headers: {'Boardcraft-Preview': binding ?? 'login', 'Content-Type': 'application/json'},
     ...options
   });
   if (!response.ok) throw response.status;
@@ -100,7 +101,7 @@ async function loadBoards(current) {
     refresh.textContent = 'Refresh';
   } catch (error) {
     if (!current()) return;
-    if (error === 401) return signInScreen();
+    if (error === 401) return forgetSession();
     refresh.textContent = 'Retry board list';
     alert.textContent = 'Could not load boards';
   }
@@ -125,7 +126,7 @@ async function loadDestination(id, current, notice = '') {
       save: (item, edit) => request(`${path}/items/${encodeURIComponent(item)}/name`, {
         method: 'PUT', body: JSON.stringify(edit)
       }),
-      expired: signInScreen,
+      expired: forgetSession,
       denied: () => run(next => loadDestination(id, next, 'Name change denied.')),
       reload: message => {
         clearNavigation();
@@ -135,7 +136,7 @@ async function loadDestination(id, current, notice = '') {
     });
   } catch (error) {
     if (!current()) return;
-    if (error === 401) return signInScreen();
+    if (error === 401) return forgetSession();
     alert.textContent = [notice, error === 403 || error === 404 ? 'Destination unavailable' : 'Could not load board'].filter(Boolean).join(' ');
     retry.onclick = () => run(loadRoute);
     retry.hidden = false;
@@ -143,14 +144,34 @@ async function loadDestination(id, current, notice = '') {
 }
 
 async function resolveSession(current) {
-  try { await request('/session'); }
+  clearNavigation();
+  step(null, 'Checking session');
+  try {
+    const stored = await readBinding();
+    if (!current()) return;
+    binding = stored;
+    if (!binding) return signInScreen();
+    await request('/session');
+  }
   catch (error) {
-    if (error === 401) return signInScreen();
+    if (!current()) return;
+    if (error === 401) return forgetSession();
     step(resolve, 'Check connection');
     alert.textContent = 'Could not resolve session';
     return;
   }
-  await loadRoute(current);
+  if (current()) await loadRoute(current);
+}
+
+function forgetSession() {
+  const rejected = binding;
+  return run(async current => {
+    clearNavigation(); step(null, 'Checking session');
+    try {
+      const removed = await changeBinding(rejected, undefined);
+      if (current()) return removed ? signInScreen() : resolveSession(current);
+    } catch { if (current()) step(resolve, 'Check connection'); }
+  });
 }
 
 identify.onsubmit = event => {
@@ -166,14 +187,18 @@ authenticate.onsubmit = event => {
   if (active) return;
   run(async current => {
     try {
-      token = await request('/session', {method: 'POST', body: JSON.stringify({
+      const issued = await request('/session', {method: 'POST', body: JSON.stringify({
         identifier: identifier.value, password: password.value
-      })});
+       })});
+      if (!current()) return;
+      await changeBinding(undefined, issued);
     } catch (error) {
+      if (!current()) return;
       alert.textContent = error === 401 ? 'Incorrect username or password' : 'Could not sign in';
       password.value = '';
       return;
     }
+    if (!current()) return;
     authenticate.reset();
     await resolveSession(current);
   });
@@ -182,8 +207,13 @@ resolve.onclick = () => run(resolveSession);
 refresh.onclick = () => run(loadRoute);
 $('#back').onclick = () => navigate('/preview/');
 $('#logout').onclick = () => run(async current => {
-  const revoked = token;
   try { await request('/session/logout', {method: 'POST'}); }
-  catch { if (current()) alert.textContent = 'Could not log out. Choose Log out to retry.'; return; }
-  if (token === revoked) await run(signInScreen);
+  catch (error) {
+    if (current() && error === 401) return forgetSession();
+    if (current()) alert.textContent = 'Could not log out. Choose Log out to retry.'; return;
+  }
+  if (current()) await forgetSession();
 });
+onChange(() => run(resolveSession));
+window.addEventListener('pageshow', e => { if (e.persisted) run(resolveSession); });
+run(resolveSession);

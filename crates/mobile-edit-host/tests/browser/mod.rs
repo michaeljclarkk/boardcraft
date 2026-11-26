@@ -58,6 +58,8 @@ impl Preview {
         if matches!(
             action,
             "login"
+                | "peer login"
+                | "peer survives"
                 | "retry"
                 | "failed logout"
                 | "back"
@@ -100,10 +102,17 @@ impl Preview {
                     .collect::<Vec<_>>()
             );
         }
-        if matches!(action, "login" | "direct login") {
+        if matches!(action, "login" | "direct login" | "peer login") {
             command["password"] = json!(self.password);
         }
         self.driver.command(action, command);
+    }
+
+    pub fn open_peer(&mut self, port: u16) {
+        self.driver.command(
+            "peer entry",
+            json!({"action":"peer entry","otherPort":port}),
+        );
     }
 }
 

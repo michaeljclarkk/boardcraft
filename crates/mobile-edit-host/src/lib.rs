@@ -1,8 +1,10 @@
 //! Single-board host for a disposable database. No database configuration crosses HTTP.
 mod access;
+mod browser_session;
 mod preview;
 use std::{io::Read, sync::Arc, thread};
 
+use boardcraft_account::Token;
 use boardcraft_board::{
     BoardId, ItemId, RenameError,
     store::{self, SaveError, StoredItem},
@@ -11,6 +13,7 @@ use boardcraft_mobile_edit_client::{BOARD_ACCESS_HEADER, Credentials, NameEdit, 
 use postgres::{Client, Config, NoTls};
 use tiny_http::{Header, Method, Request, Response, Server};
 use uuid::Uuid;
+type ApiResult = Result<(Vec<u8>, Option<bool>), u16>;
 
 pub struct Host {
     server: Arc<Server>,
@@ -58,22 +61,48 @@ impl Host {
         let listener = server.clone();
         let config = config.clone();
         let worker = thread::spawn(move || {
+            let mut sessions = browser_session::Sessions::new(port);
             while let Ok(mut req) = listener.recv() {
+                let wrong_host = mode == Mode::Preview && !sessions.authority_matches(&req);
                 if mode == Mode::Preview
+                    && !wrong_host
                     && let Some(response) = preview::asset(&req)
                 {
                     let _ = req.respond(response);
                     continue;
                 }
-                let result = match req.url() {
-                    "/session" => session(&config, &mut db, &mut req).map(|body| (body, None)),
-                    "/session/logout" => logout(&config, &req).map(|body| (body, None)),
-                    "/navigation/boards" if navigation => {
-                        navigation_boards(&mut db, &req).map(|body| (body, None))
+                let path = req.url().to_owned();
+                let mut cookie = None;
+                let result = if wrong_host {
+                    Err(403)
+                } else if let Some(route) = path.strip_prefix(browser_session::PREFIX) {
+                    if mode != Mode::Preview {
+                        Err(404)
+                    } else {
+                        sessions.dispatch(&mut req, route, &config, &mut db, board, &mut cookie)
                     }
-                    _ => handle(&mut db, board, mode, &mut req),
+                } else if req.headers().iter().any(|h| {
+                    h.field.equiv("Boardcraft-Preview")
+                        || h.field.equiv("Origin")
+                        || h.field.equiv("Cookie")
+                        || (h.field.equiv("Sec-Fetch-Mode") && path == "/session")
+                }) {
+                    Err(403)
+                } else {
+                    match path.as_str() {
+                        "/session" => session(&config, &mut db, &mut req).map(|body| (body, None)),
+                        "/session/logout" => logout(&config, &req).map(|body| (body, None)),
+                        "/navigation/boards" if navigation => {
+                            navigation_boards(&mut db, &req, access::bearer(&req))
+                                .map(|body| (body, None))
+                        }
+                        _ => {
+                            let token = access::bearer(&req);
+                            handle(&mut db, board, mode, &mut req, &path, token)
+                        }
+                    }
                 };
-                let response = match result {
+                let mut response = match result {
                     Ok((body, hint)) => {
                         let mut response = Response::from_data(body).with_header(
                             Header::from_bytes("Content-Type", "application/json").unwrap(),
@@ -95,6 +124,9 @@ impl Host {
                     Err(status) => Response::from_data(Vec::new()).with_status_code(status),
                 }
                 .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap());
+                if let Some(header) = cookie {
+                    response.add_header(header);
+                }
                 // Losing the response does not undo a commit. The caller can read/replay.
                 let _ = req.respond(response);
             }
@@ -127,26 +159,31 @@ fn wire(row: StoredItem) -> SavedItem {
 fn session(config: &Config, db: &mut Client, req: &mut Request) -> Result<Vec<u8>, u16> {
     match req.method() {
         Method::Post => {
-            if !req.headers().iter().any(|h| {
-                h.field.equiv("Content-Type")
-                    && h.value.as_str().split(';').next() == Some("application/json")
-            }) {
-                return Err(415);
+            if browser_session::one(req, "Authorization")?.is_some() {
+                return Err(403);
             }
-            let credentials: Credentials =
-                serde_json::from_slice(&read_body(req)?).map_err(|_| 400u16)?;
-            let token =
-                boardcraft_account::sign_in(config, &credentials.identifier, &credentials.password)
-                    .map_err(access::account_status)?;
+            let token = login(config, req)?;
             Ok(serde_json::to_vec(token.encoded()).expect("serializable token"))
         }
-        Method::Get => {
-            boardcraft_account::resolve_on(db, &access::bearer(req)?)
-                .map_err(access::account_status)?;
-            Ok(b"null".to_vec())
-        }
+        Method::Get => resolve_session(db, &access::bearer(req)?),
         _ => Err(405),
     }
+}
+
+fn login(config: &Config, req: &mut Request) -> Result<Token, u16> {
+    if browser_session::one(req, "Content-Type")?.and_then(|v| v.split(';').next())
+        != Some("application/json")
+    {
+        return Err(415);
+    }
+    let credentials: Credentials = serde_json::from_slice(&read_body(req)?).map_err(|_| 400u16)?;
+    boardcraft_account::sign_in(config, &credentials.identifier, &credentials.password)
+        .map_err(access::account_status)
+}
+
+fn resolve_session(db: &mut Client, token: &Token) -> Result<Vec<u8>, u16> {
+    boardcraft_account::resolve_on(db, token).map_err(access::account_status)?;
+    Ok(b"null".to_vec())
 }
 
 fn logout(config: &Config, req: &Request) -> Result<Vec<u8>, u16> {
@@ -157,11 +194,15 @@ fn logout(config: &Config, req: &Request) -> Result<Vec<u8>, u16> {
     Ok(b"null".to_vec())
 }
 
-fn navigation_boards(db: &mut Client, req: &Request) -> Result<Vec<u8>, u16> {
+fn navigation_boards(
+    db: &mut Client,
+    req: &Request,
+    token: Result<Token, u16>,
+) -> Result<Vec<u8>, u16> {
     if req.method() != &Method::Get {
         return Err(405);
     }
-    let token = access::bearer(req)?;
+    let token = token?;
     let mut tx = db.transaction().map_err(access::navigation_unavailable)?;
     let account = access::resolve(&mut tx, &token)?;
     let summaries = access::list_visible_boards(&mut tx, account)?;
@@ -174,8 +215,10 @@ fn handle(
     scoped_board: BoardId,
     mode: Mode,
     req: &mut Request,
-) -> Result<(Vec<u8>, Option<bool>), u16> {
-    let path: Vec<_> = req.url().split('/').collect();
+    path: &str,
+    token: Result<Token, u16>,
+) -> ApiResult {
+    let path: Vec<_> = path.split('/').collect();
     use access::Operation::*;
     let (requested, operation, target) = match (req.method(), path.as_slice()) {
         (Method::Get, ["", "navigation", "boards", id]) if mode != Mode::Scoped => {
@@ -196,7 +239,7 @@ fn handle(
     let target = target
         .map(|id| Uuid::parse_str(id).ok().and_then(ItemId::new).ok_or(404u16))
         .transpose()?;
-    let token = access::bearer(req)?;
+    let token = token?;
     // Buffer bounded input before acquiring database locks. Do not return draft
     // validation or board data before the caller has been authorized.
     let rename = target.map(|item| (item, read_edit(req)));

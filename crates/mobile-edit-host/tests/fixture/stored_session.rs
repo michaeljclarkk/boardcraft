@@ -9,17 +9,27 @@ pub struct StoredSession {
 }
 
 impl StoredSession {
+    pub fn all(f: &Fixture, member: Uuid) -> Vec<Self> {
+        f.connect()
+            .query(
+                "SELECT token_digest, account_id FROM account_sessions ORDER BY token_digest",
+                &[],
+            )
+            .unwrap()
+            .iter()
+            .map(|row| {
+                assert_eq!(row.get::<_, Uuid>(1), member);
+                Self {
+                    digest: row.get(0),
+                    member,
+                }
+            })
+            .collect()
+    }
     pub fn only(f: &Fixture, member: Uuid) -> Self {
-        let row = f
-            .connect()
-            .query_one("SELECT token_digest, account_id FROM account_sessions", &[])
-            .expect("expected exactly one session");
-        let session = Self {
-            digest: row.get(0),
-            member: row.get(1),
-        };
-        assert_eq!(session.member, member);
-        session
+        let mut sessions = Self::all(f, member);
+        assert_eq!(sessions.len(), 1);
+        sessions.pop().unwrap()
     }
 
     pub fn revoke(&self, f: &Fixture) {

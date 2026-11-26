@@ -3,6 +3,8 @@ mod browser;
 mod fixture;
 #[path = "fixture/peer.rs"]
 mod peer;
+#[path = "browser/resume.rs"]
+mod resume;
 #[allow(dead_code)]
 #[path = "fixture/selection.rs"]
 mod selection;
@@ -13,6 +15,16 @@ mod stored_session;
 use boardcraft_mobile_edit_client::Credentials;
 use browser::Preview;
 use stored_session::{StoredSession, assert_no_session};
+
+#[test]
+fn browser_reload_and_independent_tab_resume() {
+    resume::two_tabs();
+}
+
+#[test]
+fn browser_unavailable_then_rejected_resume() {
+    resume::resolve_failure();
+}
 
 fn check_catalog(app: &Preview, session: &StoredSession, joined: bool) {
     assert!(StoredSession::only(&app.f, app.account) == *session);

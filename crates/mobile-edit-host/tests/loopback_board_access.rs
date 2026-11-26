@@ -1,3 +1,5 @@
+#[path = "fixture/browser_transport.rs"]
+mod browser_transport;
 #[path = "fixture/caller.rs"]
 mod caller;
 mod fixture;
@@ -9,6 +11,11 @@ mod peer;
 mod selection;
 #[path = "fixture/stored_session.rs"]
 mod stored_session;
+
+#[test]
+fn preview_browser_session_is_origin_bound() {
+    browser_transport::check();
+}
 
 use boardcraft_account::{Role, revoke};
 use boardcraft_mobile_edit_client::{Credentials, EditClient, EditError, NameEdit, SavedItem};
@@ -77,7 +84,7 @@ fn preview_document_preserves_scoped_api() {
             .unwrap();
         write!(
             stream,
-            "{method} {path} HTTP/1.0\r\nHost: localhost\r\n{metadata}\r\n"
+            "{method} {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n{metadata}\r\n"
         )
         .unwrap();
         let mut response = String::new();
@@ -160,7 +167,7 @@ fn preview_selected_rename_requires_current_access() {
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .unwrap();
         let body = r#"{"title":"Coral","revision":1}"#;
-        write!(stream, "PUT {path} HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n", body.len()).unwrap();
+        write!(stream, "PUT {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n", body.len()).unwrap();
         if authenticated {
             write!(stream, "Authorization: Bearer {}\r\n", s.token.encoded()).unwrap();
         }

@@ -4,7 +4,8 @@ import {launch} from './chromium.mjs';
 import {nameJourney} from './names.mjs';
 
 const [profile, mode, port] = process.argv.slice(2);
-const origin = `http://127.0.0.1:${port}`;
+const primary = `http://127.0.0.1:${port}`;
+let origin = primary;
 const browser = launch(profile, mode === 'foreground');
 const send = browser.send;
 const input = createInterface({input: process.stdin, terminal: false});
@@ -46,13 +47,33 @@ async function key(key, code, vk, modifiers = 0, text) {
 const enter = () => key('Enter','Enter',13,0,'\r');
 const type = text => send('Input.insertText', {text});
 function requests(expected) {
-  check(JSON.stringify(browser.traffic.splice(0)) === JSON.stringify(expected.map(([m,p]) => [m,origin+p])), 'request order');
+  check(JSON.stringify(browser.traffic.splice(0)) === JSON.stringify(expected.map(([m,p]) => [m,origin+'/preview/api'+p])), 'request order');
 }
 const login = ['POST','/session'], resolve = ['GET','/session'], list = ['GET','/navigation/boards'];
 const focus = id => `document.activeElement.id === '${id}' && !document.activeElement.disabled`;
 const root = '/preview/';
 const boardPath = n => '/boards/' + uuid(n);
 let entries, index;
+const histories = new Map();
+let tab = 'A';
+async function choose(name, url) {
+  histories.set(tab,{entries,index,origin}); tab = name;
+  if (url) {
+    entries = index = undefined; origin = new URL(url).origin;
+    await browser.newTab(name,url);
+    check(await observe('window.opener === null'), 'independent tab');
+  } else {
+    ({entries,index,origin} = histories.get(name)); browser.select(name);
+  }
+}
+async function reload() {
+  const old = await observe('performance.timeOrigin');
+  await send('Page.reload'); await wait(`performance.timeOrigin !== ${old}`, 'new document');
+}
+function statuses(...expected) {
+  check(JSON.stringify(browser.responses.splice(0).map(([p,s]) => [p,s])) ===
+    JSON.stringify(expected.map(([req,s]) => ['/preview/api'+req[1],s])), 'response order and statuses');
+}
 async function historyAt(path, movement = 'stay') {
   const actual = await send('Page.getNavigationHistory');
   const urls = actual.entries.map(({id,url}) => ({id,url}));
@@ -123,7 +144,7 @@ async function noRows(empty) {
 // Fixture UUIDs, independent of the page's labels, dataset and requests.
 const uuid = n => '00000000-0000-0000-0000-' + n.toString(16).padStart(12, '0');
 const selectedGet = n => ['GET', `/navigation/boards/${uuid(n)}`];
-async function destination(expected) {
+async function destination(expected, fresh = true) {
   const denied = !expected;
   await wait(`${focus(denied ? 'retry-destination' : 'back')} && document.querySelector('#boards').hidden
     && !document.querySelector('[data-board-id]') && !document.querySelector('#destination').hidden
@@ -140,11 +161,72 @@ async function destination(expected) {
   const visibleControls = await observe(`Array.from(document.querySelectorAll('input, textarea, button, a, [contenteditable=true]'))
     .filter(c => c.getClientRects().length).map(c => c.innerText)`);
   check(JSON.stringify(visibleControls) === JSON.stringify(denied ? ['Retry destination','Back to boards'] : ['Back to boards']), 'read only destination controls');
-  check(JSON.stringify(browser.selectionStatuses.splice(0)) === JSON.stringify([denied ? 403 : 200]), 'selected response status');
+  check(JSON.stringify(browser.selectionStatuses.splice(0)) === JSON.stringify(fresh ? [denied ? 403 : 200] : []), 'selected response status');
 }
 
-async function perform({action, password, rows}) {
+const sketch = [[73,'Sketch'],[61,'Ink']], outline = [[62,'Outline']];
+const logout = ['POST','/session/logout'];
+async function retryOnly() {
+  await wait(`document.querySelector('#resolve').getClientRects().length && !document.querySelector('#resolve').disabled
+    && !document.querySelector('li, #items input, #failures button') &&
+    [...document.querySelectorAll('button,input,a')].filter(e=>e.getClientRects().length).every(e=>e.id==='resolve')`, 'only retry connection');
+  await named('button','Retry connection');
+}
+async function resumed(n, denied = false) {
+  await destination(denied ? null : n === 201 ? sketch : outline);
+  requests([resolve,selectedGet(n)]); statuses([resolve,200],[selectedGet(n),denied ? 403 : 200]); await historyAt(boardPath(n));
+}
+async function perform({action, password, rows, otherPort}) {
   switch (action) {
+    case 'waiting sibling':
+      await choose('B',primary+boardPath(202)); await identifierScreen(); await historyAt(boardPath(202)); requests([]); statuses();
+      await choose('A'); break;
+    case 'sibling saw login':
+      await choose('B'); await resumed(202); await choose('A'); break;
+    case 'sibling saw rejection':
+      await choose('B'); await identifierScreen(); await historyAt(boardPath(202)); requests([]); statuses();
+      await choose('A'); break;
+    case 'reload demoted':
+      // The preceding editable visit is checked by the packet 29 action.
+      check(JSON.stringify(browser.selectionStatuses.splice(0))==='[200]', 'initial selected status');
+      await reload(); await resumed(201); break;
+    case 'open sibling tab':
+      await choose('B',primary+boardPath(202)); await resumed(202);
+      await choose('A'); await destination(sketch,false); await historyAt(boardPath(201)); requests([]); statuses();
+      await choose('B'); break;
+    case 'sibling denied': await reload(); await resumed(202,true); break;
+    case 'retry sibling':
+      await click('#retry-destination','Retry destination'); await destination(outline);
+      requests([selectedGet(202)]); statuses([selectedGet(202),200]); await historyAt(boardPath(202)); break;
+    case 'peer entry': {
+      const peerOrigin = `http://127.0.0.1:${otherPort}`;
+      await choose('peer',peerOrigin+'/preview/api/session');
+      check(await browser.isolatedProbe(), 'second port receives only inert cookie');
+      await send('Page.navigate',{url:peerOrigin+root}); await identifierScreen(); requests([]); break;
+    }
+    case 'peer login':
+      await passwordStep('reader'); await type(password); await enter(); await visibleRows(rows);
+      requests([login,resolve,list]); statuses([login,200],[resolve,200],[list,200]);
+      await choose('A'); break;
+    case 'failed logout status':
+      statuses([list,200],[logout,503]); await historyAt(root); await choose('B');
+      await destination(outline,false); requests([]); statuses(); break;
+    case 'sibling retained': await reload(); await resumed(202); await choose('A'); break;
+    case 'both signed out':
+      statuses([logout,200]); await historyAt(root); await choose('B');
+      await identifierScreen(); await historyAt(boardPath(202)); requests([]); statuses(); break;
+    case 'reload signed out': await reload(); await identifierScreen(); await historyAt(boardPath(202)); requests([]); statuses(); break;
+    case 'peer survives':
+      await choose('peer'); await reload(); await visibleRows(rows); requests([resolve,list]); statuses([resolve,200],[list,200]); break;
+    case 'unavailable resume':
+      statuses([login,200],[resolve,200],[list,200],[selectedGet(201),200]);
+      await reload(); await retryOnly(); requests([resolve]); statuses([resolve,503]); await historyAt(boardPath(201)); break;
+    case 'retry resume':
+      await retryOnly(); requests([]); statuses(); await click('#resolve','Retry connection'); await resumed(201); break;
+    case 'rejected resume':
+      await reload(); await identifierScreen(); requests([resolve]); statuses([resolve,401]); await historyAt(boardPath(201)); break;
+    case 'forgotten resume':
+      await reload(); await identifierScreen(); requests([]); statuses(); await historyAt(boardPath(201)); break;
     case 'open': case 'open member': case 'open direct': {
       const path = action === 'open direct' ? boardPath(202) : root;
       await browser.open(origin+path, action === 'open member'); await identifierScreen(); requests([]); await historyAt(path); break;

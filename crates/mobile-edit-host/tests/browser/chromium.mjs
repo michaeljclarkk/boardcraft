@@ -24,9 +24,8 @@ export function launch(profile, foreground) {
     'about:blank'
   ], {stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'], windowsHide: !foreground});
   const pending = new Map();
-  const traffic = [];
-  const selectionStatuses = [];
-  const responses = [], renameIds = [];
+  const tabs = new Map(), logs = new Map();
+  let context;
   let nameCase = false;
   let seq = 0, session, buffer = '', ended = false, pageId, windowClosed;
   const tabClosed = new Promise(resolve => { windowClosed = resolve; });
@@ -47,19 +46,33 @@ export function launch(profile, foreground) {
       buffer = buffer.slice(end + 1);
       if (msg.id) pending.get(msg.id)?.(msg);
       if (msg.method === 'Target.targetDestroyed' && msg.params.targetId === pageId) windowClosed();
-      if (msg.sessionId === session && msg.method === 'Network.requestWillBeSent'
+      const tab = logs.get(msg.sessionId);
+      if (tab?.probe && msg.method === 'Network.requestWillBeSentExtraInfo') {
+        const headers = msg.params.headers;
+        const get = name => Object.entries(headers).find(([k])=>k.toLowerCase()===name)?.[1];
+        const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+        const inert = !get('authorization') && !get('boardcraft-preview') &&
+          new RegExp(`^boardcraft-${uuid}=${uuid}$`).test(get('cookie') ?? '');
+        if (tab.probe.extra.size < 4) tab.probe.extra.set(msg.params.requestId,inert);
+      }
+      if (tab?.probe && msg.method === 'Network.responseReceived' && msg.params.type === 'Document' &&
+          new URL(msg.params.response.url).pathname === '/preview/api/session') {
+        tab.probe.denied = [401,403].includes(msg.params.response.status);
+        tab.probe.id = msg.params.requestId;
+      }
+      if (tab && msg.method === 'Network.requestWillBeSent'
           && msg.params.type === 'Fetch') {
         const req = msg.params.request;
-        traffic.push([req.method, req.url]); // no headers or bodies
+        tab.traffic.push([req.method, req.url]); // no headers or bodies
         if (nameCase && req.method === 'PUT' && new URL(req.url).pathname ===
-            '/navigation/boards/00000000-0000-0000-0000-0000000000c9/items/00000000-0000-0000-0000-00000000003d/name') {
-          renameIds.push(msg.params.requestId);
+            '/preview/api/navigation/boards/00000000-0000-0000-0000-0000000000c9/items/00000000-0000-0000-0000-00000000003d/name') {
+          tab.renameIds.push(msg.params.requestId);
         }
       }
-      if (msg.sessionId === session && msg.method === 'Network.responseReceived' && msg.params.type === 'Fetch') {
+      if (tab && msg.method === 'Network.responseReceived' && msg.params.type === 'Fetch') {
         const {url, status} = msg.params.response;
-        if (nameCase) responses.push([new URL(url).pathname, status, msg.params.response.headers['boardcraft-board-access'] ?? null]);
-        if (new URL(url).pathname.startsWith('/navigation/boards/')) selectionStatuses.push(status);
+        tab.responses.push([new URL(url).pathname, status, msg.params.response.headers['boardcraft-board-access'] ?? null]);
+        if (new URL(url).pathname.startsWith('/preview/api/navigation/boards/')) tab.selectionStatuses.push(status);
       }
     }
   });
@@ -73,12 +86,33 @@ export function launch(profile, foreground) {
       };
       const timer = setTimeout(done, 8000);
       pending.set(id, done);
-      child.stdio[3].write(JSON.stringify({id, method, params, sessionId}) + '\0');
+      child.stdio[3].write(JSON.stringify({id, method, params, sessionId:sessionId ?? undefined}) + '\0');
     });
   }
+  async function attach(name, targetId, url) {
+    ({sessionId: session} = await send('Target.attachToTarget', {targetId, flatten:true}, null));
+    tabs.set(name, session);
+    logs.set(session, {traffic:[], responses:[], selectionStatuses:[], renameIds:[], probe:name === 'peer' && {extra:new Map()}});
+    await send('Network.enable', {maxPostDataSize:0});
+    await send('Page.navigate', {url});
+  }
   return {
-    windowClosed: Promise.race([closed, tabClosed]), traffic, selectionStatuses, send,
-    responses, renameIds,
+    windowClosed: Promise.race([closed, tabClosed]), send,
+    get traffic() { return logs.get(session).traffic; },
+    get selectionStatuses() { return logs.get(session).selectionStatuses; },
+    get responses() { return logs.get(session).responses; },
+    get renameIds() { return logs.get(session).renameIds; },
+    async isolatedProbe() {
+      const tab = logs.get(session), p = tab.probe;
+      for (let n = 0; n < 80 && !(p.id && p.extra.has(p.id)); n++) await delay(25);
+      tab.probe = null;
+      return p.denied && p.extra.get(p.id);
+    },
+    select(name) { session = tabs.get(name); if (!session) throw Error('missing tab'); },
+    async newTab(name,url) {
+      const {targetId} = await send('Target.createTarget', {url:'about:blank',browserContextId:context,background:name !== 'A'}, null);
+      await attach(name,targetId,url);
+    },
     async open(url, names = false) {
       nameCase = names;
       const {targetInfos} = await send('Target.getTargets');
@@ -86,9 +120,11 @@ export function launch(profile, foreground) {
       if (!page) throw Error('Missing owned tab');
       pageId = page.targetId;
       if (foreground) await send('Target.setDiscoverTargets', {discover: true});
-      ({sessionId: session} = await send('Target.attachToTarget', {targetId: page.targetId, flatten: true}));
-      await send('Network.enable', {maxPostDataSize: 0});
-      await send('Page.navigate', {url});
+      if (foreground) await attach('A',pageId,url);
+      else {
+        ({browserContextId:context} = await send('Target.createBrowserContext'));
+        await this.newTab('A',url);
+      }
     },
     async close() {
       if (!ended) {

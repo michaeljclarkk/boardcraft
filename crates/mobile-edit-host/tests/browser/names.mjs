@@ -2,7 +2,7 @@
 export async function nameJourney(action, {uuid, wait, observe, named, click, key, enter, type, requests, browser, check, historyAt}) {
   const path = `/navigation/boards/${uuid(201)}`, put = `${path}/items/${uuid(61)}/name`;
   const row = id => `[data-item-id="${uuid(id)}"]`, second = row(61)+' button';
-  const response = (p, status, hint = null) => [p, status, hint];
+  const response = (p, status, hint = null) => ['/preview/api'+p, status, hint];
   const responses = (...expected) => check(JSON.stringify(browser.responses.splice(0)) === JSON.stringify(expected), 'response order and access');
   const f2 = () => key('F2','F2',113), escape = () => key('Escape','Escape',27);
   async function displayed(title = 'Ink', failed = false, editable = true) {

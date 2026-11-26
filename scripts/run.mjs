@@ -26,6 +26,9 @@ const previewHistory = { ...previewNavigation,
   cases: [...previewNavigation.cases, 'preview_document_preserves_scoped_api'],
   browserCases: [...previewNavigation.browserCases, 'browser_history_rechecks_board_access', 'browser_direct_board_survives_sign_in'] };
 
+const previewNames = { ...previewHistory, cases: [...previewHistory.cases, 'preview_selected_rename_requires_current_access'],
+  browserCases: [...previewHistory.browserCases, 'browser_member_recovers_selected_name', 'browser_demoted_viewer_cannot_rename'] };
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -69,9 +72,10 @@ export const packets = [
     browserCases: previewCases },
   { id: '27-browser-board-navigation', ...previewNavigation },
   { id: '28-browser-board-history', ...previewHistory },
-  { id: '29-browser-selected-name', ...previewHistory,
-    cases: [...previewHistory.cases, 'preview_selected_rename_requires_current_access'],
-    browserCases: [...previewHistory.browserCases, 'browser_member_recovers_selected_name', 'browser_demoted_viewer_cannot_rename'] },
+  { id: '29-browser-selected-name', ...previewNames },
+  { id: '30-browser-session-resume', ...previewNames,
+    cases: [...previewNames.cases, 'preview_browser_session_is_origin_bound'],
+    browserCases: [...previewNames.browserCases, 'browser_reload_and_independent_tab_resume', 'browser_unavailable_then_rejected_resume'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

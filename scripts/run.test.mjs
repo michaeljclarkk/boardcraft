@@ -396,3 +396,18 @@ test('29 requires selected rename recovery, stale Viewer denial and current cata
   run();
   for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
 });
+
+test('30 requires same-origin tab resume, distinct failures and an isolated browser session transport', () => {
+  const previous = packets.find(p => p.id === '29-browser-selected-name');
+  const packet = packets.find(p => p.id === '30-browser-session-resume');
+  const browser = [...previous.browserCases, 'browser_reload_and_independent_tab_resume', 'browser_unavailable_then_rejected_resume'];
+  const host = [...previous.cases, 'preview_browser_session_is_origin_bound'];
+  assert.deepEqual(packet, { ...previous, id: '30-browser-session-resume', cases: host, browserCases: browser });
+  const run = missing => verify(packet, (_bin, args) => {
+    const names = args.includes('browser_preview') ? browser : args.includes('loopback_board_access') ? host : [];
+    const present = names.filter(n => n !== missing);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  run();
+  for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
+});
