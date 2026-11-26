@@ -21,6 +21,8 @@ The target is the full existing independent product: the workflows it supports, 
 
 ## Scope and verification
 
+On Windows, read configured credentials from the process environment. Keep interactive sign-in sessions in memory; do not use Windows Credential Manager or persist desktop passwords or tokens.
+
 Translate C# business rules into Rust and React interactions into Longbridge GPUI Kit views. For example, follow a rename from the TSX draft through the C# save result so the native editor preserves focus, accepted values and recovery behavior. Do not use monday.com code or assets, including logos, icons, fonts, screenshots or templates.
 
 Use newly written boardcraft code, synthetic fixtures and a dedicated test database. Compare with approved reference behavior where available; record unknowns rather than guessing. Keep private names, paths, screenshots, records, transcripts and credentials out of public files, including skills and handoffs. Do not publish, commit, push, select a license, deploy, or change runner gates during a worker packet.

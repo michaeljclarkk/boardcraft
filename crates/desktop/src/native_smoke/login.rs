@@ -3,25 +3,53 @@ use super::*;
 
 #[derive(Clone, Copy)]
 enum Stage {
+    ObserveLaunch,
     Identifier,
     Password,
     Rejected,
     Board,
 }
 
-pub(crate) fn install(board: Uuid, w: &Window) {
-    schedule_login(Stage::Identifier, board, w);
+pub(crate) fn install(board: Uuid, observe_launch: bool, w: &Window) {
+    schedule_login(
+        if observe_launch {
+            Stage::ObserveLaunch
+        } else {
+            Stage::Identifier
+        },
+        board,
+        w,
+    );
 }
 
 fn schedule_login(stage: Stage, board: Uuid, w: &Window) {
     w.on_next_frame(move |w, cx| {
         let rows = [42, 17]
             .map(|n| w.find_all(SharedString::from(format!("title-{}", Uuid::from_u128(n)))));
-        if !matches!(stage, Stage::Board) {
+        if !matches!(stage, Stage::Board | Stage::ObserveLaunch) {
             assert!(rows.iter().all(Vec::is_empty));
         }
         let action = w.find_all("continue");
         let next = match stage {
+            Stage::ObserveLaunch if message(w, "No access to this board.") => {
+                assert!(rows.iter().all(Vec::is_empty));
+                println!("denied");
+                w.remove_window();
+                return;
+            }
+            Stage::ObserveLaunch if !w.find_all("identifier").is_empty() => {
+                assert!(rows.iter().all(Vec::is_empty) && w.find_all("password").is_empty());
+                assert_eq!(action[0].label(), Some("Next"));
+                if message(w, "Session expired. Sign in again.") {
+                    println!("expired");
+                } else if message(w, "Session configuration ignored. Sign in to continue.") {
+                    println!("ignored");
+                } else {
+                    println!("identifier");
+                }
+                w.remove_window();
+                return;
+            }
             Stage::Identifier if !action.is_empty() => {
                 assert_eq!(action[0].label(), Some("Next"));
                 assert!(w.find_all("password").is_empty());
@@ -56,7 +84,7 @@ fn schedule_login(stage: Stage, board: Uuid, w: &Window) {
                     Stage::Board
                 }
             }
-            Stage::Board if rows.iter().any(|hits| !hits.is_empty()) => {
+            Stage::Board | Stage::ObserveLaunch if rows.iter().any(|hits| !hits.is_empty()) => {
                 assert!(
                     action.is_empty()
                         && w.find_all("identifier").is_empty()

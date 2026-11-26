@@ -18,7 +18,9 @@ use uuid::Uuid;
     dead_code,
     reason = "this journey uses with_titles rather than the duplicate-title shorthand"
 )]
-mod connected_fixture;
+mod fixture;
+#[path = "../../mobile-edit-host/tests/fixture/stored_session.rs"]
+mod stored_session;
 
 // Bound startup, rendering, and shutdown even if the native event loop stalls.
 struct SmokeProcess(Child);
@@ -29,34 +31,40 @@ impl Drop for SmokeProcess {
     }
 }
 
-#[test]
-fn windows_login_reject_retry() {
+fn connected_command(port: u16, board: Uuid, mode: &str) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_boardcraft-desktop"));
+    cmd.args(["connect", &port.to_string(), &board.to_string(), mode])
+        .env_remove("RUSTDAY_TEST_DATABASE_URL")
+        .env_remove("DATABASE_URL")
+        .env_remove("BOARDCRAFT_LOCAL_ACTOR")
+        .env_remove("BOARDCRAFT_RECOVERY_DIR")
+        .env_remove("BOARDCRAFT_SESSION_TOKEN")
+        .env_remove("BOARDCRAFT_SESSION_ORIGIN")
+        .stdout(Stdio::piped());
+    cmd
+}
+
+fn connected_rows() -> [boardcraft_mobile_edit_client::SavedItem; 2] {
     use boardcraft_mobile_edit_client::SavedItem;
-    use connected_fixture::{FIRST, SECOND};
-    let f = connected_fixture::Fixture::with_titles(["Review sketch", "Ink"]);
-    let secret = Uuid::new_v4().simple().to_string();
-    let member = f.seed_account("boardmember", &secret, boardcraft_account::Role::Member);
-    f.set_creator(member);
-    let rows = [(FIRST, "Review sketch"), (SECOND, "Ink")].map(|(id, title)| SavedItem {
+    use fixture::{FIRST, SECOND};
+    [(FIRST, "Review sketch"), (SECOND, "Ink")].map(|(id, title)| SavedItem {
         id,
         title: title.into(),
         revision: 1,
-    });
+    })
+}
+
+#[test]
+fn windows_login_reject_retry() {
+    let f = fixture::Fixture::with_titles(["Review sketch", "Ink"]);
+    let secret = Uuid::new_v4().simple().to_string();
+    let member = f.seed_account("boardmember", &secret, boardcraft_account::Role::Member);
+    f.set_creator(member);
+    let rows = connected_rows();
 
     let mut child = SmokeProcess(
-        Command::new(env!("CARGO_BIN_EXE_boardcraft-desktop"))
-            .args([
-                "connect",
-                &f.host.port.to_string(),
-                &f.board.to_string(),
-                "--smoke-login",
-            ])
-            .env_remove("RUSTDAY_TEST_DATABASE_URL")
-            .env_remove("DATABASE_URL")
-            .env_remove("BOARDCRAFT_LOCAL_ACTOR")
-            .env_remove("BOARDCRAFT_RECOVERY_DIR")
+        connected_command(f.host.port, f.board, "--smoke-login")
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
             .spawn()
             .unwrap(),
     );
@@ -84,7 +92,11 @@ fn windows_login_reject_retry() {
     );
     assert_eq!(sessions(), [member]);
     f.check_store(&rows);
-    let until = Instant::now() + timeout;
+    wait_for_close(&mut child);
+}
+
+fn wait_for_close(child: &mut SmokeProcess) {
+    let until = Instant::now() + Duration::from_secs(45);
     loop {
         if let Some(exit) = child.0.try_wait().unwrap() {
             assert!(exit.success());
@@ -93,6 +105,62 @@ fn windows_login_reject_retry() {
         assert!(Instant::now() < until, "window did not close");
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+fn windows_env_session_is_origin_scoped() {
+    use std::{io::ErrorKind, net::TcpListener};
+    use stored_session::StoredSession;
+
+    let f = fixture::Fixture::with_titles(["Review sketch", "Ink"]);
+    let password = Uuid::new_v4().simple().to_string();
+    let member = f.seed_account("boardmember", &password, boardcraft_account::Role::Member);
+    let token = boardcraft_account::sign_in(&f.schema.config, "boardmember", &password).unwrap();
+    let original = StoredSession::only(&f, member);
+    let port = f.host.port;
+    let origin = format!("http://127.0.0.1:{port}");
+    let launch = |port, origin: Option<&str>, token: Option<&str>, expected: &str| {
+        let mut cmd = connected_command(port, f.board, "--smoke-session");
+        if let Some(origin) = origin {
+            cmd.env("BOARDCRAFT_SESSION_ORIGIN", origin);
+        }
+        if let Some(token) = token {
+            cmd.env("BOARDCRAFT_SESSION_TOKEN", token);
+        }
+        let mut child = SmokeProcess(cmd.stdin(Stdio::null()).spawn().unwrap());
+        let screen = lines(&mut child)
+            .recv_timeout(Duration::from_secs(45))
+            .expect("expected session screen");
+        assert!(screen == expected, "unexpected session screen");
+        wait_for_close(&mut child);
+    };
+
+    // A queued connection is observable even after the child exits. Never read its contents.
+    let other = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+    other.set_nonblocking(true).unwrap();
+    let other_port = other.local_addr().unwrap().port();
+    let other_origin = format!("http://127.0.0.1:{other_port}");
+    let bearer = Some(token.encoded());
+    launch(other_port, None, None, "identifier");
+    launch(other_port, Some(&origin), bearer, "ignored");
+    launch(other_port, Some(&other_origin), None, "ignored");
+    launch(other_port, None, bearer, "ignored");
+    launch(
+        other_port,
+        Some(&other_origin),
+        Some("malformed"),
+        "ignored",
+    );
+    assert!(matches!(other.accept(), Err(e) if e.kind() == ErrorKind::WouldBlock));
+
+    launch(port, Some(&origin), bearer, "denied");
+    f.set_creator(member);
+    launch(port, Some(&origin), bearer, &format!("opened {}", f.board));
+    assert!(StoredSession::only(&f, member) == original);
+    f.check_store(&connected_rows());
+    original.revoke(&f);
+    launch(port, Some(&origin), bearer, "expired");
+    stored_session::assert_no_session(&f);
 }
 
 fn lines(child: &mut SmokeProcess) -> mpsc::Receiver<String> {

@@ -1,6 +1,7 @@
 //! Blocking loopback client. Call from a worker when loading or saving an editor.
 use std::time::Duration;
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
@@ -61,11 +62,7 @@ impl EditClient {
 
     /// Only a resolved server-side session grants access; the client supplies no role.
     pub fn with_bearer(port: u16, encoded: &str) -> Result<Self, EditError> {
-        if encoded.len() != 43
-            || !encoded
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-        {
+        if encoded.len() != 43 || URL_SAFE_NO_PAD.decode_slice(encoded, &mut [0; 32]).is_err() {
             return Err(EditError::SessionRejected);
         }
         let mut header = ureq::http::HeaderValue::from_str(&format!("Bearer {encoded}"))

@@ -13,7 +13,23 @@ cargo run --locked -p boardcraft-desktop -- $board
 
 ### Windows inline edit acceptance
 
-To read a protected board from a running loopback host, use `boardcraft-desktop connect <loopback-port> <board-uuid>`. Enter the existing account's identifier, choose **Next**, then enter the password and choose **Sign in**. This entry needs no database URL or local actor. Closing the window drops its in-memory session; reopening requires sign-in. The single-UUID command above opens the developer editor.
+To read a protected board from a running loopback host, use `boardcraft-desktop connect <loopback-port> <board-uuid>`. With no session configured, enter the existing account's identifier, choose **Next**, then enter the password and choose **Sign in**. Closing the window drops that interactive session from memory. The single-UUID command above opens the developer editor.
+
+A Windows launcher that already holds an issued session can start the built desktop executable with a child-only environment (PowerShell 7+ below). `$sessionOrigin` is the origin associated with the token at issuance, **not** a value derived from the requested board or destination. It must match `http://127.0.0.1:<port>` exactly, without a trailing slash. Use a client process separate from the database-configured host.
+
+```powershell
+# $desktopExe is the built executable's path; the launcher holds the session pair in memory.
+$child = [System.Diagnostics.ProcessStartInfo]::new($desktopExe)
+$child.UseShellExecute = $false
+$child.ArgumentList.Add('connect')
+$child.ArgumentList.Add([string]$port)
+$child.ArgumentList.Add([string]$board)
+$child.Environment['BOARDCRAFT_SESSION_ORIGIN'] = $sessionOrigin
+$child.Environment['BOARDCRAFT_SESSION_TOKEN'] = $sessionToken
+$null = [System.Diagnostics.Process]::Start($child)
+```
+
+An incomplete, malformed or wrong-origin configuration opens interactive sign-in without contacting the host. A matching token must resolve and have access to the selected board. Revocation returns to sign-in; **Retry loading** after a connection failure uses the same session in memory. The desktop does not save credentials or update its environment.
 
 For failed-name recovery, reuse the same actor UUID, board UUID and local directory across launches. `BOARDCRAFT_LOCAL_ACTOR` is an explicit development context, not sign-in or board authorization. Without it, failure actions work only in the live window. Local files default to `%LOCALAPPDATA%\boardcraft\name-recovery`; override with `BOARDCRAFT_RECOVERY_DIR` (an absolute directory private to the local user). The graphical tests supply their own temporary directories and actors. No database configuration goes into the recovery file.
 

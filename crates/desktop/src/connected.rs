@@ -27,21 +27,52 @@ struct Connected {
     message: &'static str,
 }
 
+/// Decide locally, before constructing any request. Never interpret the supplied origin as a URL.
+#[cfg(windows)]
+fn configured_session(port: u16) -> Result<Option<EditClient>, ()> {
+    let origin = std::env::var_os("BOARDCRAFT_SESSION_ORIGIN");
+    let token = std::env::var_os("BOARDCRAFT_SESSION_TOKEN");
+    match (origin, token) {
+        (None, None) => Ok(None),
+        (Some(origin), Some(token))
+            if origin.to_str() == Some(&format!("http://127.0.0.1:{port}")) =>
+        {
+            EditClient::with_bearer(port, token.to_str().ok_or(())?)
+                .map(Some)
+                .map_err(|_| ())
+        }
+        _ => Err(()),
+    }
+}
+
 pub(super) fn open(port: u16, board: Uuid, cx: &mut App) {
     let (_window, _) = open_window(WindowOptions::default(), cx, |window, cx| {
-        cx.new(|cx| Connected {
-            port,
-            board,
-            screen: Connected::identifier(window, cx),
-            message: "",
+        cx.new(|cx| {
+            let mut view = Connected {
+                port,
+                board,
+                screen: Screen::Loading,
+                message: "",
+            };
+            #[cfg(windows)]
+            match configured_session(port) {
+                Ok(Some(client)) => {
+                    view.load(client, window, cx);
+                    return view;
+                }
+                Ok(None) => (),
+                Err(()) => view.message = "Session configuration ignored. Sign in to continue.",
+            }
+            view.screen = Connected::identifier(window, cx);
+            view
         })
     })
     .expect("open connected board window");
     cx.activate(true);
     #[cfg(all(windows, feature = "native-smoke"))]
-    if std::env::args().nth(4).as_deref() == Some("--smoke-login") {
+    if let Some(mode) = std::env::args().nth(4) {
         cx.update_window(_window, |_, w, _| {
-            super::native_smoke::login::install(board, w)
+            super::native_smoke::login::install(board, mode == "--smoke-session", w)
         })
         .unwrap();
     }

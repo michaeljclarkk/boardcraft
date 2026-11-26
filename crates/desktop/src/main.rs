@@ -513,7 +513,7 @@ fn main() {
         let board = args.next().unwrap_or_else(|| usage());
         if let Some(extra) = args.next()
             && !(cfg!(all(windows, feature = "native-smoke"))
-                && extra == "--smoke-login"
+                && matches!(extra.as_str(), "--smoke-login" | "--smoke-session")
                 && args.next().is_none())
         {
             usage();

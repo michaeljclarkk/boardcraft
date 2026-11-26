@@ -171,6 +171,12 @@ Add a connected Windows Kit entry for opening a protected board: `boardcraft-des
 
 Gate: `windows_smoke::windows_login_reject_retry`. Launch a real Windows process without any database URL or local actor context, against the shared test host on loopback. Operate actual identifier, masked password and submit controls, retry after an incorrect password, then verify ordered, ID-bound rows appear only after successful resolution and an authorized read. Independently read the disposable database: no session or board change after rejection; exactly one session for the expected account and both original rows after correction. No secrets in launch arguments, logs, snapshots, or public files. Reuse the existing fixture and behavior comparisons. No production credentials, token persistence or new test route. Exercise all five inherited Windows gestures/recovery cases and update the workflow register and handoff.
 
+### 19-windows-env-session
+
+For a connected Windows launch, accept an optional existing session from `BOARDCRAFT_SESSION_TOKEN` only with an exact `BOARDCRAFT_SESSION_ORIGIN` matching the selected loopback origin. Read process environment once, never log or persist its values. Missing config uses normal interactive login; invalid/partial or wrong-origin config must not send credentials. Resolve the token and check the board grant through the existing HTTP client before showing rows. An authoritative rejection may offer interactive login; a transport failure can retry in memory. No password auto-login, Credential Manager, registry, credential files or writes to environment. Keep the server's database URL separate from these client settings. Document a safe invocation without secret literals.
+
+Gate: `windows_smoke::windows_env_session_is_origin_scoped` plus all six earlier Windows cases. Supply a fixture session via child-process environment only. Verify authorized read without a second login on a fresh PostgreSQL connection, and that a mismatched origin sends no token. Exercise absent and revoked session behavior. Preserve owner edits; no credential inspection of the user's machine. This replaces the withdrawn Windows vault design.
+
 ## Delivery phases after the first slice
 
 Each row is a group of independently testable packets. For each area, inventory the user actions, persisted settings, contracts and supported clients **before** estimating it. Add newly identified behavior to the register even if it falls between phases. The exit scenarios below are representative gates, not the entire inventory.
