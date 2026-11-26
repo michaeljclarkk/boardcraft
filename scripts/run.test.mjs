@@ -316,3 +316,27 @@ for (const [id, addedHost, addedWindows] of [
     for (const cmd of calls.slice(-3)) assert.throws(() => run(undefined, 0, cmd), /missing device journey/);
   }
 });
+
+test('26 adds two enabled browser journeys to the unattended packet 25 gate', () => {
+  const p = packets.find(p => p.id === '26-browser-board-preview');
+  const names = ['browser_reject_correct_list_logout', 'browser_empty_unavailable_then_retry'];
+  const previous = packets.find(p => p.id === '25-windows-board-link');
+  const { browserCases, id, ...inherited } = p;
+  assert.deepEqual({ ...inherited, id: previous.id }, previous);
+  assert.deepEqual(browserCases, names);
+  const run = (present, ignored = 0) => verify(p, (bin, args, capture) => {
+    if (args.includes('browser_preview')) {
+      assert.equal(bin, 'cargo');
+      assert.deepEqual(args, ['test','--locked','-p','boardcraft-mobile-edit-host','--features','browser-smoke',
+        '--test','browser_preview','--','--test-threads=1']);
+      assert.equal(capture, true);
+      return [...present.map(n => `test ${n} ... ok`),
+        `test result: ok. ${present.length} passed; 0 failed; ${ignored} ignored`].join('\n');
+    }
+    if (args.includes('--exact')) throw Error('reached inherited board link gate');
+  });
+  for (const n of names) assert.throws(() => run(names.filter(other => n !== other)), /Missing passing browser_preview case/);
+  assert.throws(() => run([], 2), /No passing, enabled browser_preview suite/);
+  assert.throws(() => run(names, 1), /No passing, enabled browser_preview suite/);
+  assert.throws(() => run(names), /reached inherited board link gate/);
+});

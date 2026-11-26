@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Boardcraft · Local preview</title>
+<link rel="stylesheet" href="page.css">
+<script type="module" src="page.js"></script>
+<main>
+  <p class="eyebrow">Boardcraft · Local preview</p>
+  <h1 id="heading">Sign in</h1>
+  <form id="identify" autocomplete="off">
+    <label for="identifier">Username or email</label>
+    <input id="identifier" required autofocus>
+    <button>Next</button>
+  </form>
+  <form id="authenticate" autocomplete="off" hidden>
+    <label for="password">Password</label>
+    <input type="password" id="password" required>
+    <button>Sign in</button> <button type="button" id="change">Change</button>
+  </form>
+  <section id="boards" aria-label="Available boards" hidden>
+    <ul aria-label="Boards"></ul>
+    <p id="empty" hidden>No boards</p>
+    <button id="refresh">Refresh</button> <button id="logout">Log out</button>
+  </section>
+  <button id="resolve" hidden>Retry connection</button>
+  <p role="alert"></p>
+</main>
+</html>

@@ -75,6 +75,18 @@ For multi-board discovery, start `Host::start_with_navigation(config, target)` a
 
 In Windows browse, open a board and choose **Share** for its Board address. **Copy link** copies it to the clipboard. **Open in new window** reads that board independently. A recipient pastes the address into their own browse window and chooses **Open board link**. The connected origin must match and the recipient must already have access. After a denial, they can submit the same address again if access changes.
 
+### Browser board preview
+
+With the disposable `rustday_test` database active, run this **opt-in foreground** command:
+
+```powershell
+cargo run --locked -p boardcraft-mobile-edit-host --features browser-smoke --example browser_board_preview
+```
+
+It opens `/preview/` in a new, temporary Chromium profile, enters a generated Viewer's credentials through the actual form, and leaves the signed-in list visible. Close that window to release the browser, profile, host and fixture schema. No password entry or clipboard handoff is needed. Node 22+ and installed Chromium are required. On Windows the driver looks for Edge or Chrome; to select a different installation, set `BOARDCRAFT_CHROMIUM` to its executable path.
+
+The unattended check runs separately: `cargo test --locked -p boardcraft-mobile-edit-host --features browser-smoke --test browser_preview -- --test-threads=1`. Both paths use a private automation pipe. `Host::start_preview` serves the page from the API's ephemeral loopback origin. The page keeps its bearer in memory; a reload starts at sign-in. Rows display names but do not open boards.
+
 ### Android native host
 
 Kit's [v0.11.0 mobile guide](https://github.com/longbridge/gpui-kit/blob/v0.11.0/website/docs/mobile.md) describes limited Android testing of chat controls including Input. Android uses the mobile activity/surface host, not the desktop window entry point. The guide's [example build](https://github.com/longbridge/gpui-mobile/blob/0b882efdac7f524e0bb0b1d4c886b2aa752f9f20/example/build.sh) packages an arm64 Rust library via cargo-ndk and Gradle. Its documented GPUI baseline is 0.3.4; even the [mobile fork revision inspected](https://github.com/longbridge/gpui-mobile/blob/7548ebc4b24f00494af9976af8852c7163ded9ce/Cargo.toml) pins core and Android renderer to 0.3.10. boardcraft's Kit 0.11.0 locks core at **0.3.14**. There is an experimental host, but no demonstrated matching set here.

@@ -22,6 +22,15 @@ uuid = { version = "1", features = ["v4"] }
 
 [features]
 android-smoke = []
+browser-smoke = []
+
+[[test]]
+name = "browser_preview"
+required-features = ["browser-smoke"]
+
+[[example]]
+name = "browser_board_preview"
+required-features = ["browser-smoke"]
 
 [[test]]
 name = "android_emulator_edit"

@@ -57,6 +57,8 @@ export const packets = [
   { id: '23-windows-board-navigation', ...boardNavigation },
   { id: '24-android-board-navigation', ...boardNavigation, kitBrowse: true },
   { id: '25-windows-board-link', ...boardNavigation, boardLink: true },
+  { id: '26-browser-board-preview', ...boardNavigation, boardLink: true,
+    browserCases: ['browser_reject_correct_list_logout', 'browser_empty_unavailable_then_retry'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -88,8 +90,14 @@ export function requireKitEmulator(exec = command, env = process.env) {
   requireEditEmulator(exec, env.RUSTDAY_ANDROID_SERIAL ?? '');
 }
 
-export function verify({ target, buildBins, cases = [], android, kitBrowse, kitFrame, kitEdit, delivery, probeRegression, windowsCases, logout, restore, boardLink }, exec = command) {
+export function verify({ target, buildBins, cases = [], android, kitBrowse, kitFrame, kitEdit, delivery, probeRegression, windowsCases, logout, restore, boardLink, browserCases }, exec = command) {
   exec('cargo', ['fmt', '--all', '--', '--check']);
+  if (browserCases) {
+    const suite = 'browser_preview';
+    const args = ['test', '--locked', '-p', 'boardcraft-mobile-edit-host', '--features', 'browser-smoke',
+      '--test', suite, '--', '--test-threads=1'];
+    requireCases(suite, browserCases, exec('cargo', args, true));
+  }
   const windows = () => {
     const args = ['test', '--locked', '-p', 'boardcraft-desktop', '--features', 'native-smoke', '--test', 'windows_smoke'];
     if (windowsCases) requireCases('windows_smoke', windowsCases, exec('cargo', [...args, '--', '--test-threads=1'], true));

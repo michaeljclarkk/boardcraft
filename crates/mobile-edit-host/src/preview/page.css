@@ -1,0 +1,12 @@
+:root { font: 1rem/1.5 system-ui, sans-serif; color: #172c33; background: #eff4f2; }
+main { max-width: 32rem; margin: 8vh auto; padding: 2rem; background: white; border-top: .3rem solid #206c63; }
+.eyebrow { color: #47625f; margin: 0; }
+h1 { margin: .4rem 0 1.25rem; }
+label, input { display: block; }
+input, button { font: inherit; padding: .5rem .8rem; }
+input { margin: .3rem 0 1rem; max-width: 85%; }
+button { color: white; background: #235f58; border: 0; border-radius: .2rem; cursor: pointer; }
+button:disabled { opacity: .65; cursor: wait; }
+ul { padding-left: 1.5rem; }
+li { padding: .45rem; border-bottom: 1px solid #c5d6d1; overflow-wrap: anywhere; }
+[role=alert] { color: #8a331e; }

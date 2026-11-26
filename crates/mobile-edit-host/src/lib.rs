@@ -1,5 +1,6 @@
 //! Single-board host for a disposable database. No database configuration crosses HTTP.
 mod access;
+mod preview;
 use std::{io::Read, sync::Arc, thread};
 
 use boardcraft_board::{
@@ -17,17 +18,30 @@ pub struct Host {
     pub port: u16,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    Scoped,
+    Navigation,
+    Preview,
+}
+
 impl Host {
     pub fn start(config: &Config, board: BoardId) -> Result<Self, &'static str> {
-        Self::listen(config, board, false)
+        Self::listen(config, board, Mode::Scoped)
     }
 
     /// Advertise the caller's visible catalog. Item requests still target only `board`.
     pub fn start_with_navigation(config: &Config, board: BoardId) -> Result<Self, &'static str> {
-        Self::listen(config, board, true)
+        Self::listen(config, board, Mode::Navigation)
     }
 
-    fn listen(config: &Config, board: BoardId, navigation: bool) -> Result<Self, &'static str> {
+    /// Serve the browser preview on the same ephemeral loopback origin as the API.
+    pub fn start_preview(config: &Config, board: BoardId) -> Result<Self, &'static str> {
+        Self::listen(config, board, Mode::Preview)
+    }
+
+    fn listen(config: &Config, board: BoardId, mode: Mode) -> Result<Self, &'static str> {
+        let navigation = mode != Mode::Scoped;
         if config.get_dbname() != Some("rustday_test") {
             return Err("expected explicit rustday_test database");
         }
@@ -45,6 +59,12 @@ impl Host {
         let config = config.clone();
         let worker = thread::spawn(move || {
             while let Ok(mut req) = listener.recv() {
+                if mode == Mode::Preview
+                    && let Some(response) = preview::asset(&req)
+                {
+                    let _ = req.respond(response);
+                    continue;
+                }
                 let result = match req.url() {
                     "/session" => session(&config, &mut db, &mut req).map(|body| (body, None)),
                     "/session/logout" => logout(&config, &req).map(|body| (body, None)),
