@@ -108,9 +108,9 @@ The [frame gate](../scripts/android-kit-frame.mjs) checks package ID/ABI/debug f
 
 ### Android Kit edit gate
 
-Connected launches supply only the board UUID and loopback port. The driver generates a fixture password in memory, sends it to `kit_edit_fixture` on stdin before startup JSON, and enters it through the masked Kit input. The `rejected` and `signed-in` checkpoints verify zero and one sessions respectively, along with both original rows. A cold launch requires sign-in again. The no-arguments frame gate needs no credentials or host.
+Connected launches supply only the board UUID and loopback port. The driver generates a fixture password in memory, sends it to `kit_edit_fixture` on stdin before startup JSON, and enters it through the masked Kit input. The `rejected` and `signed-in` checkpoints verify zero and one sessions respectively, along with both original rows. A cold launch resolves the stored session for that port. The no-arguments frame gate needs no credentials or host.
 
-Use the frame gate's dedicated AVD and host GPU setup, with `rustday_test` active in the operator shell. Use a JDK with `javac --release 8` support. The build compiles only `GpuiInputActivity.java` from the locked mobile host checkout and packages its DEX alongside the Rust library. Its transparent input connection forwards keyboard edits to the focused GPUI handler.
+Use the frame gate's dedicated AVD and host GPU setup, with `rustday_test` active in the operator shell. Use a JDK with `javac --release 8` support. The build packages the Keystore helper and `GpuiInputActivity.java` from the locked mobile host checkout alongside the Rust library. The activity's transparent input connection forwards keyboard edits to the focused GPUI handler.
 
 ```powershell
 node scripts/android-kit-frame.mjs       # no extras: original offline fixture
@@ -124,6 +124,10 @@ The edit gate starts [`kit_edit_fixture`](../crates/mobile-edit-host/examples/ki
 ### Cross-client reopen gate
 
 Run `node scripts/cross-client-reopen.mjs` in a graphical Windows session with the Android Kit edit prerequisites above. The gate continues the live edit on the same fixture: it backgrounds and resumes the unsaved `Amber` editor, opens the Windows binary with `--smoke-delivery` and the fixture schema, then force-stops and reopens the Android package. The Windows driver reports the two visible name button labels with their bound IDs and checks that neither editor is mounted; `saved` readbacks check the committed titles and revisions separately.
+
+For packet 17, `node scripts/cross-client-reopen.mjs --restore` checks new Android processes on two device ports, the retry-only screen after disconnection, and offline cold launches after rejection and logout. The ordinary delivery journey revokes its session before testing cold reauthentication. Both use fresh PostgreSQL connections for the accepted rows; the restore checkpoints compare the session verifier in memory.
+
+For a storage fault check, use a separate disposable install on the dedicated AVD. With the process stopped, truncate only the selected origin's synthetic record in `no_backup` without displaying its contents. Relaunch: expect `Could not read stored session` and `Retry storage`, with no board or login form. An unreadable record should give the same result; removing it and tapping `Retry storage` should show identifier entry without contacting the host. Do not use this fault injection during the continuity gate.
 
 ### Disposable PostgreSQL
 

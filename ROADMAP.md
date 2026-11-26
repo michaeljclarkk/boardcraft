@@ -157,6 +157,14 @@ On a connected Android board, offer a Kit `Log out` action. The reference mobile
 
 Driver invocation: use the tracked `scripts/android-kit-edit.mjs --logout` for the logout journey rather than a new driver file. On a pre-delivery failure display `Could not log out` while keeping `Log out` available for retry.
 
+### 17-android-session-restore
+
+Cold launch must resolve the stored session for the exact selected loopback origin before showing protected content. Persist the issued bearer before resolving it, off the UI thread, using Android Keystore non-exportable AES-GCM keys, fresh provider-generated IVs, authenticated origin/version and atomic app-private no-backup storage. Never store passwords. Do not treat an unreadable record as a valid session, fall back to plaintext, or use a cached grant. Missing session → identifier; rejected session → forget that origin and show identifier; unavailable service → `Retry connection` with no protected controls and the original token retained. A board denial is distinct from session rejection. Acknowledged logout clears durable and in-memory state; failed pre-delivery logout retains both. Handle local cleanup faults without granting board access.
+
+Gate: `node scripts/cross-client-reopen.mjs --restore`. On the dedicated AVD sign in and save Coral/2, cold launch on the same origin without credentials, and compare the original session digest and ordered rows via fresh PostgreSQL connections. Cold opening a second port must show identifier with zero traffic to that listener; returning to the first must restore its session. Disconnect, fail logout, then cold reopen offline: show only retry. Reconnect and explicitly retry using the same verifier. Revoke the original session independently, then confirm identifier after connected and subsequent offline cold launches. Sign in again, explicitly log out, and prove durable removal with another offline cold launch. Preserve the inherited Windows/Android delivery journey by revoking its session before the cold reauthentication step. Do not expose tokens or digests in output.
+
+Fixture commands (after save, all require independent readback of the accepted board): `remember` records the sole session digest and account ID in memory; `same-session` checks exact equality; `revoke-original` revokes precisely that remembered session and confirms zero sessions; `no-session` confirms zero. Worker owns Android implementation, Rust fixture and handoff; coordinator owns runner and drivers.
+
 ## Delivery phases after the first slice
 
 Each row is a group of independently testable packets. For each area, inventory the user actions, persisted settings, contracts and supported clients **before** estimating it. Add newly identified behavior to the register even if it falls between phases. The exit scenarios below are representative gates, not the entire inventory.

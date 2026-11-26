@@ -88,10 +88,27 @@ impl EditClient {
     }
 
     pub fn sign_in(port: u16, credentials: Credentials) -> Result<Self, EditError> {
+        Self::sign_in_with_storage(port, credentials, |_| Ok(()))
+    }
+
+    /// Give the origin's store one opportunity to persist the validated bearer
+    /// at issuance. A client is never returned if persistence fails.
+    pub fn sign_in_with_storage<E: From<EditError>>(
+        port: u16,
+        credentials: Credentials,
+        store: impl FnOnce(&str) -> Result<(), E>,
+    ) -> Result<Self, E> {
         let client = Self::new(port);
         let url = format!("http://127.0.0.1:{port}/session");
         let bearer: String = decode(client.http.post(url).send_json(credentials))?;
-        Self::with_bearer(port, &bearer)
+        let client = Self::with_bearer(port, &bearer)?;
+        if let Err(error) = store(&bearer) {
+            // The host already committed issuance. Don't leave an unreachable
+            // session active if the host can still acknowledge revocation.
+            let _ = client.logout();
+            return Err(error);
+        }
+        Ok(client)
     }
 
     /// Resolve the issued session before opening a connected view. The board

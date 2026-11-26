@@ -1,5 +1,6 @@
 use super::*;
 use boardcraft_mobile_edit_client::Credentials;
+use session::{Open, SessionError};
 
 pub(super) enum Login {
     Identifier(Entity<InputState>),
@@ -10,7 +11,9 @@ pub(super) enum Login {
     },
     Loading,
     RetryLoad,
-    Expired,
+    RetryStorage,
+    RetryForget,
+    Denied,
 }
 
 impl Login {
@@ -34,8 +37,10 @@ impl Login {
                 ("Sign in", *pending)
             }
             Self::Loading => return column.child(Label::new("Loading…")),
-            Self::RetryLoad => ("Retry", false),
-            Self::Expired => ("Sign in", false),
+            Self::RetryLoad => ("Retry connection", false),
+            Self::RetryStorage => ("Retry storage", false),
+            Self::RetryForget => ("Retry cleanup", false),
+            Self::Denied => ("Log out", false),
         };
         column = column.child(
             Button::new("continue")
@@ -56,7 +61,6 @@ impl BoardView {
         let Some(conn) = self.connection else { return };
         self.message = "";
         match &mut self.login {
-            Some(Login::Expired) => self.login = Some(Login::identifier(window, cx)),
             Some(Login::Identifier(input)) => {
                 let identifier = input.read(cx).value().to_string();
                 if identifier.is_empty() {
@@ -83,25 +87,29 @@ impl BoardView {
                     identifier: identifier.clone(),
                     password: input.read(cx).value().to_string(),
                 };
-                let work = cx
-                    .background_executor()
-                    .spawn(async move { EditClient::sign_in(conn.port, credentials) });
+                let signed_out = Login::identifier(window, cx);
+                let work = cx.background_executor().spawn(async move {
+                    EditClient::sign_in_with_storage(conn.port, credentials, |s| {
+                        session::save(conn.port, s)
+                    })
+                });
                 cx.spawn(async move |view, cx| {
                     let result = work.await;
                     _ = view.update(cx, |view, cx| {
                         match result {
                             Ok(client) => {
-                                view.client = Some(client);
-                                view.load_after_login(cx);
+                                view.load_board(conn, Some(client), signed_out, cx);
                             }
                             Err(error) => {
                                 if let Some(Login::Password { pending, .. }) = &mut view.login {
                                     *pending = false;
                                 }
-                                view.message = if error == EditError::SessionRejected {
-                                    "Incorrect username or password"
-                                } else {
-                                    "Sign-in unavailable. Try again."
+                                view.message = match error {
+                                    SessionError::Remote(EditError::SessionRejected) => {
+                                        "Incorrect username or password"
+                                    }
+                                    SessionError::Remote(_) => "Sign-in unavailable. Try again.",
+                                    SessionError::Local => "Could not store session. Try again.",
                                 };
                             }
                         }
@@ -110,45 +118,95 @@ impl BoardView {
                 })
                 .detach();
             }
-            Some(Login::RetryLoad) => self.load_after_login(cx),
+            Some(Login::RetryLoad | Login::RetryStorage) => self.restore(conn, window, cx),
+            Some(Login::RetryForget) => {
+                let identifier = Login::identifier(window, cx);
+                self.forget_session(conn, identifier, cx);
+            }
+            Some(Login::Denied) => self.logout(window, cx),
             _ => return,
         }
         cx.notify();
     }
 
-    fn load_after_login(&mut self, cx: &mut Context<Self>) {
-        let (Some(client), Some(conn)) = (self.client.clone(), self.connection) else {
-            return;
-        };
+    pub(super) fn restore(
+        &mut self,
+        conn: Connection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let identifier = Login::identifier(window, cx);
+        self.load_board(conn, None, identifier, cx);
+    }
+
+    fn load_board(
+        &mut self,
+        conn: Connection,
+        issued: Option<EditClient>,
+        identifier: Login,
+        cx: &mut Context<Self>,
+    ) {
         self.login = Some(Login::Loading);
-        let work = cx.background_executor().spawn(async move {
-            client.resolve()?;
-            client.read(conn.board)
-        });
+        let work = cx
+            .background_executor()
+            .spawn(async move { session::open(conn, issued) });
         cx.spawn(async move |view, cx| {
             let result = work.await;
             _ = view.update(cx, |view, cx| {
                 match result {
-                    Ok(rows) => {
+                    Open::Missing => view.login = Some(identifier),
+                    Open::Unreadable => {
+                        view.login = Some(Login::RetryStorage);
+                        view.message = "Could not read stored session.";
+                    }
+                    Open::Board(client, rows) => {
+                        view.client = Some(client);
                         view.board.items = rows.into_iter().map(Item::from).collect();
                         view.login = None;
                         view.message = "";
                     }
-                    Err(EditError::SessionRejected) => {
-                        view.client = None;
-                        view.login = Some(Login::Expired);
-                        view.message = "Session expired";
+                    Open::Rejected => {
+                        view.forget_session(conn, identifier, cx);
                     }
-                    Err(EditError::PermissionDenied) => {
-                        view.client = None;
-                        view.login = Some(Login::Expired);
+                    Open::Denied(client) => {
+                        view.client = Some(client);
+                        view.login = Some(Login::Denied);
                         view.message = "No access to this board.";
                     }
-                    Err(_) => {
+                    Open::Unavailable => {
                         view.login = Some(Login::RetryLoad);
-                        view.message = "Could not load board.";
+                        view.message = "";
                     }
                 }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn forget_session(
+        &mut self,
+        conn: Connection,
+        identifier: Login,
+        cx: &mut Context<Self>,
+    ) {
+        self.client = None;
+        self.editor = None;
+        self.board.items.clear();
+        self.message = "";
+        self.login = Some(Login::Loading);
+        let work = cx
+            .background_executor()
+            .spawn(async move { session::forget(conn.port) });
+        cx.spawn(async move |view, cx| {
+            let result = work.await;
+            _ = view.update(cx, |view, cx| {
+                view.login = Some(if result.is_ok() {
+                    identifier
+                } else {
+                    view.message = "Could not remove stored session.";
+                    Login::RetryForget
+                });
                 cx.notify();
             });
         })

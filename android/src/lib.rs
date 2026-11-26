@@ -1,5 +1,6 @@
 mod connection;
 mod login;
+mod session;
 
 use boardcraft_mobile_edit_client::{EditClient, EditError, NameEdit, SavedItem};
 use connection::{Connection, launch_connection};
@@ -82,7 +83,7 @@ impl BoardView {
             Err(_) => view.message = "Invalid board connection",
             Ok(Some(conn)) => {
                 view.connection = Some(conn);
-                view.login = Some(Login::identifier(window, cx));
+                view.restore(conn, window, cx);
             }
         }
         view
@@ -117,7 +118,7 @@ impl BoardView {
         }
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) {
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(conn), Some(client), Some(editor)) =
             (self.connection, self.client.clone(), self.editor.as_mut())
         else {
@@ -137,6 +138,7 @@ impl BoardView {
         let blank = request.title.trim().is_empty();
         editor.pending = true;
         editor.error = None;
+        let identifier = Login::identifier(window, cx);
         let work = cx
             .background_executor()
             .spawn(async move { client.rename(conn.board, id, &request) });
@@ -157,15 +159,13 @@ impl BoardView {
                         view.editor = None;
                     }
                     Err(error @ (EditError::SessionRejected | EditError::PermissionDenied)) => {
-                        view.message = if error == EditError::SessionRejected {
-                            view.client = None;
-                            view.login = Some(Login::Expired);
-                            "Sign in again to edit."
+                        if error == EditError::SessionRejected {
+                            view.forget_session(conn, identifier, cx);
                         } else {
-                            "No permission to edit this board."
-                        };
-                        view.editor = None;
-                        view.board.items.clear();
+                            view.message = "No permission to edit this board.";
+                            view.editor = None;
+                            view.board.items.clear();
+                        }
                     }
                     result => {
                         editor.error = Some(match result {
@@ -190,13 +190,13 @@ impl BoardView {
     fn logout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Serialize board operations: a save must settle before revocation, and
         // no new edit or save can start while the logout request is in flight.
-        if self.login.is_some()
+        if (self.login.is_some() && !matches!(self.login, Some(Login::Denied)))
             || self.logging_out
             || self.editor.as_ref().is_some_and(|e| e.pending)
         {
             return;
         }
-        let Some(client) = self.client.clone() else {
+        let (Some(client), Some(conn)) = (self.client.clone(), self.connection) else {
             return;
         };
         self.logging_out = true;
@@ -210,10 +210,7 @@ impl BoardView {
             _ = view.update(cx, |view, cx| {
                 view.logging_out = false;
                 if result.is_ok() {
-                    view.client = None;
-                    view.editor = None;
-                    view.board.items.clear();
-                    view.login = Some(identifier);
+                    view.forget_session(conn, identifier, cx);
                 } else {
                     view.message = "Could not log out";
                 }
@@ -248,7 +245,7 @@ impl Render for BoardView {
                             .large()
                             .disabled(editor.pending || self.logging_out)
                             .label(if editor.pending { "Saving…" } else { "Save" })
-                            .on_click(cx.listener(|view, _, _, cx| view.save(cx))),
+                            .on_click(cx.listener(|view, _, window, cx| view.save(window, cx))),
                     );
                     if let Some(error) = editor.error {
                         column = column.child(Label::new(error));

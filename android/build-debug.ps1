@@ -49,7 +49,7 @@ try {
     Copy-Item -LiteralPath $so -Destination $lib
     $classes = [IO.Directory]::CreateDirectory((Join-Path $work 'classes')).FullName
     $javac = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin/javac.exe' } else { 'javac.exe' }
-    Invoke-Checked $javac --release 8 -classpath $platform -encoding UTF-8 -d $classes $proxy
+    Invoke-Checked $javac --release 8 -classpath $platform -encoding UTF-8 -d $classes $proxy (Join-Path $PSScriptRoot 'java/SessionStore.java')
     $bytecode = @(Get-ChildItem -LiteralPath $classes -Filter '*.class' -Recurse | ForEach-Object FullName)
     Invoke-Checked (Join-Path $tools 'd8.bat') --min-api 28 --lib $platform --output $payload @bytecode
     Invoke-Checked (Join-Path $tools 'aapt.exe') package -M (Join-Path $PSScriptRoot 'AndroidManifest.xml') -I $platform -F $unsigned '-0' so $payload

@@ -3,6 +3,8 @@ mod caller;
 mod fixture;
 #[path = "fixture/peer.rs"]
 mod peer;
+#[path = "fixture/stored_session.rs"]
+mod stored_session;
 
 use boardcraft_account::{Role, revoke};
 use boardcraft_mobile_edit_client::{Credentials, EditClient, EditError, NameEdit, SavedItem};
@@ -44,6 +46,51 @@ fn denied(client: &EditClient, f: &Fixture, error: EditError, expected: &[SavedI
         error
     );
     f.check_store(expected);
+}
+
+#[test]
+fn stored_bearer_reopens_only_while_authorized() {
+    use stored_session::{StoredSession, assert_no_session};
+    let f = Fixture::start();
+    let password = uuid::Uuid::new_v4().simple().to_string();
+    let member = f.seed_account("boardmember", &password, Role::Member);
+    f.set_creator(member);
+    let credentials = || Credentials {
+        identifier: "boardmember".into(),
+        password: password.clone(),
+    };
+    let port = f.host.port;
+    assert!(matches!(
+        EditClient::sign_in_with_storage(port, credentials(), |_| Err(EditError::HostFault)),
+        Err(EditError::HostFault)
+    ));
+    assert_no_session(&f);
+    let mut stored = String::new();
+    let client = EditClient::sign_in_with_storage(port, credentials(), |s| {
+        stored = s.to_owned();
+        Ok::<_, EditError>(())
+    })
+    .unwrap();
+    rename(&client, &f, 1).unwrap();
+    drop(client);
+    let original = StoredSession::only(&f, member);
+    let reopened = EditClient::with_bearer(port, &stored).unwrap();
+    reopened.resolve().unwrap();
+    let saved = rows("Coral", 2);
+    assert_eq!(reopened.read(f.board).unwrap(), saved);
+    f.check_store(&saved);
+    f.connect()
+        .execute(
+            "DELETE FROM open_workspace_private_boards WHERE board_id=$1",
+            &[&f.board],
+        )
+        .unwrap();
+    reopened.resolve().unwrap();
+    denied(&reopened, &f, EditError::PermissionDenied, &saved);
+    assert!(StoredSession::only(&f, member) == original);
+    original.revoke(&f);
+    assert_eq!(reopened.resolve(), Err(EditError::SessionRejected));
+    f.check_store(&saved);
 }
 
 #[test]

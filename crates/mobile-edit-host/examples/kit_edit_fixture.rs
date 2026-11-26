@@ -2,11 +2,14 @@
 mod fixture;
 #[path = "../tests/fixture/peer.rs"]
 mod peer;
+#[path = "../tests/fixture/stored_session.rs"]
+mod stored_session;
 
 use boardcraft_account::Role;
 use boardcraft_mobile_edit_client::{Credentials, SavedItem};
 use fixture::{FIRST, Fixture, SECOND};
 use std::io::{self, BufRead, Read, Write};
+use stored_session::{StoredSession, assert_no_session};
 
 fn main() -> io::Result<()> {
     let mut input = io::stdin().lock();
@@ -32,6 +35,7 @@ fn main() -> io::Result<()> {
     f.set_creator(member);
     let mut credentials = Some(login);
     let mut peer = None;
+    let mut remembered: Option<StoredSession> = None;
     let mut output = io::stdout().lock();
     writeln!(
         output,
@@ -53,6 +57,34 @@ fn main() -> io::Result<()> {
                 ("Ink", 1)
             }
             "saved" => ("Coral", 2),
+            "remember" => {
+                let current = StoredSession::only(&f, member);
+                assert!(
+                    remembered.as_ref() != Some(&current),
+                    "expected a new session"
+                );
+                remembered = Some(current);
+                ("Coral", 2)
+            }
+            "same-session" => {
+                let current = StoredSession::only(&f, member);
+                assert!(
+                    remembered.as_ref() == Some(&current),
+                    "original session changed"
+                );
+                ("Coral", 2)
+            }
+            "revoke-original" => {
+                remembered
+                    .as_ref()
+                    .expect("remember the session first")
+                    .revoke(&f);
+                ("Coral", 2)
+            }
+            "no-session" => {
+                assert_no_session(&f);
+                ("Coral", 2)
+            }
             "peer" => {
                 peer = Some(peer::Peer::sign_in(
                     &f,

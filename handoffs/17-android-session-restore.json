@@ -1,0 +1,12 @@
+{
+  "status": "ready",
+  "summary": "On the dedicated Android emulator, a fresh process restored the original session for its selected loopback origin and loaded the protected board. Offline retry retained that session; revocation and acknowledged logout cleared it across restart.",
+  "evidence": [
+    "The reference comparison recorded at registration observed identifier entry without a request when empty, the same session on explicit retry, removal after rejection or acknowledged logout, and retention after failed logout. This was a component comparison, not a mobile process or Keystore run.",
+    "cargo test --locked --workspace --test loopback_board_access: 5 passed. The new stored_bearer_reopens_only_while_authorized case exercised failed persistence, then reconstructed a fresh client from a successful issuance. Fresh PostgreSQL reads confirmed the original session/account and ordered Review/1 and Coral/2 rows. Removing board access denied the read without invalidating the session; revoking that exact session left zero and rejected resolution.",
+    "The kit_edit_fixture example built with --locked. Its remember, same-session, revoke-original and no-session commands share the ordered board readback; verifier comparisons do not print their operands.",
+    "The locked Android x86_64 Rust library linked. Both Cargo formatting checks, workspace Clippy with warnings denied, and git diff --check passed. cargo test --locked --workspace passed 18 tests; the five Windows native smoke cases also passed serially.",
+    "Runner: node scripts/cross-client-reopen.mjs --restore passed. A new process displayed the accepted board; fresh PostgreSQL connections matched the original account and session verifier. Switching to a different loopback port showed login with zero connections to that listener. After a disconnected cold launch, Retry connection restored the original session. After either server revocation or explicit logout, a subsequent offline cold launch showed identifier entry. The runner completed the inherited gates and marked 17 verified. The separate device check for corrupt local storage was not part of this run."
+  ],
+  "next": "Port connected sign-in and protected board readback to the Windows window."
+}

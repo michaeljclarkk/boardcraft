@@ -171,6 +171,14 @@ test('16 requires session isolation before its graphical logout gate', () => {
   assert.throws(() => run('explicit_logout_isolates_sessions'), /logout UI gate reached/);
 });
 
+test('17 cannot pass on an ordinary cold sign-in without the session restoration journey', () => {
+  const p = packets.find(p => p.id === '17-android-session-restore');
+  assert.ok(p.probeRegression && p.logout && p.delivery && p.kitEdit && p.kitFrame);
+  assert.throws(() => verify(p, (_bin,args) => {
+    if (args.includes('scripts/cross-client-reopen.mjs') && args.includes('--restore')) throw Error('restore verification failed');
+  }), /restore verification failed/);
+});
+
 test('ordered OCR frames distinguish an editor from a stale, blank or unrelated screen', () => {
   const frame = ['Sample board', 'Review sketch', 'Editing name', 'Review artwork'].map((text, i) => ({ text, x: 64, y: 80 + 80*i }));
   const board = frame.filter(l => l.text !== 'Editing name');
