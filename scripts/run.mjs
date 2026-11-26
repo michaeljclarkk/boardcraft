@@ -26,6 +26,8 @@ export const packets = [
     cases: ['rejected_credentials_then_sign_in', 'resolve_retry_and_revoke'] },
   { id: '14-loopback-board-access', target: 'loopback_board_access', database: true, model: 'openai/gpt-6.2-astra#high',
     cases: ['viewer_reads_but_cannot_rename', 'member_edits_within_scope'] },
+  { id: '15-android-kit-sign-in', database: true, kitFrame: true, kitEdit: true, delivery: true,
+    probeRegression: true, model: 'openai/gpt-6.2-astra#high' },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -57,7 +59,7 @@ export function requireKitEmulator(exec = command, env = process.env) {
   requireEditEmulator(exec, env.RUSTDAY_ANDROID_SERIAL ?? '');
 }
 
-export function verify({ target, buildBins, cases = [], android, kitFrame, kitEdit, delivery, windowsCases }, exec = command) {
+export function verify({ target, buildBins, cases = [], android, kitFrame, kitEdit, delivery, probeRegression, windowsCases }, exec = command) {
   exec('cargo', ['fmt', '--all', '--', '--check']);
   const windows = () => {
     const args = ['test', '--locked', '-p', 'boardcraft-desktop', '--features', 'native-smoke', '--test', 'windows_smoke'];
@@ -71,6 +73,7 @@ export function verify({ target, buildBins, cases = [], android, kitFrame, kitEd
     return;
   }
   if (kitFrame) {
+    if (probeRegression) runDeviceProbe(packets.find(p => p.id === '05-android-emulator-edit'), exec);
     exec('cargo', ['fmt', '--manifest-path', 'android/Cargo.toml', '--', '--check']);
     exec('node', ['scripts/android-kit-frame.mjs']);
     if (kitEdit) {
@@ -83,16 +86,16 @@ export function verify({ target, buildBins, cases = [], android, kitFrame, kitEd
     if (buildBins) exec('cargo', ['build', '--locked', '--workspace', '--bins']);
     return;
   }
-  if (android) {
-    requireEditEmulator(exec);
-    exec('cargo', ['build', '--locked', '-p', 'boardcraft-mobile-edit-client', '--bin', 'android-edit-probe', '--target', 'x86_64-linux-android']);
-  }
-  const output = android
-    ? exec('cargo', ['test', '--locked', '-p', 'boardcraft-mobile-edit-host', '--features', 'android-smoke', '--test', target, '--', '--test-threads=1'], true, 10 * 60_000)
-    : exec('cargo', ['test', '--locked', '--workspace', '--test', target], true);
-  requireCases(target, cases, output);
+  if (android) runDeviceProbe({ target, cases }, exec);
+  else requireCases(target, cases, exec('cargo', ['test', '--locked', '--workspace', '--test', target], true));
   exec('cargo', ['test', '--locked', '--workspace']);
   if (buildBins) exec('cargo', ['build', '--locked', '--workspace', '--bins']);
+}
+
+function runDeviceProbe({ target, cases }, exec) {
+  requireEditEmulator(exec);
+  exec('cargo', ['build', '--locked', '-p', 'boardcraft-mobile-edit-client', '--bin', 'android-edit-probe', '--target', 'x86_64-linux-android']);
+  requireCases(target, cases, exec('cargo', ['test', '--locked', '-p', 'boardcraft-mobile-edit-host', '--features', 'android-smoke', '--test', target, '--', '--test-threads=1'], true, 600_000));
 }
 
 function requireCases(target, cases, output) {

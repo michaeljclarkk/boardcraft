@@ -30,6 +30,15 @@ pub enum EditError {
     Transport,
 }
 
+/// Wire credentials have no Debug implementation, and are sent only in the POST body.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Credentials {
+    pub identifier: String,
+    pub password: String,
+}
+
+#[derive(Clone)]
 pub struct EditClient {
     port: u16,
     http: ureq::Agent,
@@ -76,6 +85,20 @@ impl EditClient {
 
     fn board_url(&self, board: Uuid) -> String {
         format!("http://127.0.0.1:{}/boards/{board}", self.port)
+    }
+
+    pub fn sign_in(port: u16, credentials: Credentials) -> Result<Self, EditError> {
+        let client = Self::new(port);
+        let url = format!("http://127.0.0.1:{port}/session");
+        let bearer: String = decode(client.http.post(url).send_json(credentials))?;
+        Self::with_bearer(port, &bearer)
+    }
+
+    /// Resolve the issued session before opening a connected view. The board
+    /// routes still independently check the current session and board grant.
+    pub fn resolve(&self) -> Result<(), EditError> {
+        let url = format!("http://127.0.0.1:{}/session", self.port);
+        decode(self.authorize(self.http.get(url)).call())
     }
 
     pub fn read(&self, board: Uuid) -> Result<Vec<SavedItem>, EditError> {

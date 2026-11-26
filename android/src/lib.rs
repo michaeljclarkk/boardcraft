@@ -1,4 +1,5 @@
 mod connection;
+mod login;
 
 use boardcraft_mobile_edit_client::{EditClient, EditError, NameEdit, SavedItem};
 use connection::{Connection, launch_connection};
@@ -10,6 +11,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::*;
 use gpui_mobile::android::{host, jni};
+use login::Login;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -40,6 +42,8 @@ struct Board {
 struct BoardView {
     board: Board,
     connection: Option<Connection>,
+    client: Option<EditClient>,
+    login: Option<Login>,
     message: &'static str,
     editor: Option<Editor>,
 }
@@ -54,13 +58,15 @@ struct Editor {
 }
 
 impl BoardView {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut view = Self {
             board: Board {
                 title: "Sample board".into(),
                 items: Vec::new(),
             },
             connection: None,
+            client: None,
+            login: None,
             message: "",
             editor: None,
         };
@@ -74,33 +80,7 @@ impl BoardView {
             Err(_) => view.message = "Invalid board connection",
             Ok(Some(conn)) => {
                 view.connection = Some(conn);
-                view.message = "Loading…";
-                let work = cx
-                    .background_executor()
-                    .spawn(async move { EditClient::new(conn.port).read(conn.board) });
-                cx.spawn(async move |view, cx| {
-                    let rows = work.await;
-                    _ = view.update(cx, |view, cx| {
-                        match rows {
-                            Ok(rows) => {
-                                view.board.items = rows.into_iter().map(Item::from).collect();
-                                view.message = "";
-                            }
-                            Err(EditError::SessionRejected) => {
-                                view.message = "Sign in to open this board."
-                            }
-                            Err(EditError::PermissionDenied) => {
-                                view.message = "No access to this board."
-                            }
-                            Err(EditError::AccessUnavailable) => {
-                                view.message = "Access check unavailable. Reopen to retry."
-                            }
-                            Err(_) => view.message = "Could not load board. Reopen to retry.",
-                        }
-                        cx.notify();
-                    });
-                })
-                .detach();
+                view.login = Some(Login::identifier(window, cx));
             }
         }
         view
@@ -133,7 +113,9 @@ impl BoardView {
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
-        let (Some(conn), Some(editor)) = (self.connection, self.editor.as_mut()) else {
+        let (Some(conn), Some(client), Some(editor)) =
+            (self.connection, self.client.clone(), self.editor.as_mut())
+        else {
             return;
         };
         let Some(revision) = editor.revision else {
@@ -152,7 +134,7 @@ impl BoardView {
         editor.error = None;
         let work = cx
             .background_executor()
-            .spawn(async move { EditClient::new(conn.port).rename(conn.board, id, &request) });
+            .spawn(async move { client.rename(conn.board, id, &request) });
         cx.spawn(async move |view, cx| {
             let result = work.await;
             _ = view.update(cx, |view, cx| {
@@ -171,6 +153,8 @@ impl BoardView {
                     }
                     Err(error @ (EditError::SessionRejected | EditError::PermissionDenied)) => {
                         view.message = if error == EditError::SessionRejected {
+                            view.client = None;
+                            view.login = Some(Login::Expired);
                             "Sign in again to edit."
                         } else {
                             "No permission to edit this board."
@@ -201,13 +185,11 @@ impl BoardView {
 
 impl Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut column = div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .p_8()
-            .gap_6()
-            .child(Label::new(self.board.title.clone()).text_xl());
+        let mut column = div().flex().flex_col().size_full().p_8().gap_6();
+        if let Some(login) = &self.login {
+            return login.form(column, self.message, cx);
+        }
+        column = column.child(Label::new(self.board.title.clone()).text_xl());
         if !self.message.is_empty() {
             column = column.child(Label::new(self.message));
         }
@@ -254,7 +236,7 @@ fn android_main(app: android_activity::AndroidApp) {
         gpui_kit::init(cx);
         Theme::change(ThemeMode::Light, None, cx);
         cx.open_window(WindowOptions::default(), |window, cx| {
-            let view = cx.new(BoardView::new);
+            let view = cx.new(|cx| BoardView::new(window, cx));
             cx.new(|cx| Root::new(view, window, cx))
         })
         .expect("open board fixture window");

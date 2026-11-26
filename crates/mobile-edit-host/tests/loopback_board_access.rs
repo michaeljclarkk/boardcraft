@@ -3,7 +3,7 @@ mod caller;
 mod fixture;
 
 use boardcraft_account::{Role, revoke};
-use boardcraft_mobile_edit_client::{EditClient, EditError, NameEdit, SavedItem};
+use boardcraft_mobile_edit_client::{Credentials, EditClient, EditError, NameEdit, SavedItem};
 use caller::Caller;
 use fixture::{FIRST, Fixture, SECOND};
 
@@ -42,6 +42,54 @@ fn denied(client: &EditClient, f: &Fixture, error: EditError, expected: &[SavedI
         error
     );
     f.check_store(expected);
+}
+
+#[test]
+fn connected_member_sign_in_reject_then_correct() {
+    let f = Fixture::with_titles(["Review sketch", "Ink"]);
+    let password = uuid::Uuid::new_v4().simple().to_string();
+    let id = f.seed_account("boardmember", &password, Role::Member);
+    f.set_creator(id);
+    let login = |password: String| {
+        EditClient::sign_in(
+            f.host.port,
+            Credentials {
+                identifier: "boardmember".into(),
+                password,
+            },
+        )
+    };
+    let sessions = || {
+        f.connect()
+            .query("SELECT account_id FROM account_sessions", &[])
+            .unwrap()
+            .into_iter()
+            .map(|r| r.get::<_, uuid::Uuid>(0))
+            .collect::<Vec<_>>()
+    };
+    let mut original = rows("Ink", 1);
+    original[0].title = "Review sketch".into();
+    assert!(matches!(
+        login(format!("{password}x")),
+        Err(EditError::SessionRejected)
+    ));
+    assert!(sessions().is_empty());
+    f.check_store(&original);
+    let client = login(password).unwrap();
+    client.resolve().unwrap();
+    assert_eq!(sessions(), [id]);
+    assert_eq!(client.read(f.board).unwrap(), original);
+    f.check_store(&original);
+    let mut saved = original;
+    saved[1].title = "Coral".into();
+    saved[1].revision = 2;
+    assert_eq!(rename(&client, &f, 1).unwrap(), saved[1]);
+    f.check_store(&saved);
+    f.connect()
+        .execute("DELETE FROM account_sessions WHERE account_id=$1", &[&id])
+        .unwrap();
+    assert_eq!(client.resolve(), Err(EditError::SessionRejected));
+    denied(&client, &f, EditError::SessionRejected, &saved);
 }
 
 #[test]

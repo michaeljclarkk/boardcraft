@@ -6,7 +6,7 @@ use boardcraft_board::{
     BoardId, ItemId, RenameError,
     store::{self, SaveError, StoredItem},
 };
-use boardcraft_mobile_edit_client::{NameEdit, SavedItem};
+use boardcraft_mobile_edit_client::{Credentials, NameEdit, SavedItem};
 use postgres::{Client, Config, NoTls};
 use tiny_http::{Header, Method, Request, Response, Server};
 use uuid::Uuid;
@@ -34,9 +34,15 @@ impl Host {
         );
         let port = server.server_addr().to_ip().expect("TCP listener").port();
         let listener = server.clone();
+        let config = config.clone();
         let worker = thread::spawn(move || {
             while let Ok(mut req) = listener.recv() {
-                let response = match handle(&mut db, board, &mut req) {
+                let result = if req.url() == "/session" {
+                    session(&config, &mut db, &mut req)
+                } else {
+                    handle(&mut db, board, &mut req)
+                };
+                let response = match result {
                     Ok(body) => Response::from_data(body).with_header(
                         Header::from_bytes("Content-Type", "application/json").unwrap(),
                     ),
@@ -44,7 +50,8 @@ impl Host {
                         .with_status_code(401)
                         .with_header(Header::from_bytes("WWW-Authenticate", "Bearer").unwrap()),
                     Err(status) => Response::from_data(Vec::new()).with_status_code(status),
-                };
+                }
+                .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap());
                 // Losing the response does not undo a commit. The caller can read/replay.
                 let _ = req.respond(response);
             }
@@ -71,6 +78,31 @@ fn wire(row: StoredItem) -> SavedItem {
         id: row.id.as_uuid(),
         title: row.title,
         revision: row.revision,
+    }
+}
+
+fn session(config: &Config, db: &mut Client, req: &mut Request) -> Result<Vec<u8>, u16> {
+    match req.method() {
+        Method::Post => {
+            if !req.headers().iter().any(|h| {
+                h.field.equiv("Content-Type")
+                    && h.value.as_str().split(';').next() == Some("application/json")
+            }) {
+                return Err(415);
+            }
+            let credentials: Credentials =
+                serde_json::from_slice(&read_body(req)?).map_err(|_| 400u16)?;
+            let token =
+                boardcraft_account::sign_in(config, &credentials.identifier, &credentials.password)
+                    .map_err(access::account_status)?;
+            Ok(serde_json::to_vec(token.encoded()).expect("serializable token"))
+        }
+        Method::Get => {
+            boardcraft_account::resolve_on(db, &access::bearer(req)?)
+                .map_err(access::account_status)?;
+            Ok(b"null".to_vec())
+        }
+        _ => Err(405),
     }
 }
 
@@ -139,6 +171,10 @@ fn handle(db: &mut Client, board: BoardId, req: &mut Request) -> Result<Vec<u8>,
 }
 
 fn read_edit(req: &mut Request) -> Result<NameEdit, u16> {
+    serde_json::from_slice(&read_body(req)?).map_err(|_| 400)
+}
+
+fn read_body(req: &mut Request) -> Result<Vec<u8>, u16> {
     const MAX_BODY: u64 = 64 * 1024;
     let mut body = Vec::new();
     req.as_reader()
@@ -148,5 +184,5 @@ fn read_edit(req: &mut Request) -> Result<NameEdit, u16> {
     if body.len() as u64 > MAX_BODY {
         return Err(413);
     }
-    serde_json::from_slice(&body).map_err(|_| 400)
+    Ok(body)
 }

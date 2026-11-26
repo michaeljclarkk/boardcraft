@@ -48,7 +48,7 @@ function desktop(board, schema) {
   checkWindow(output, board);
 }
 
-async function journey({board, port, schema, check, adb, start, screen, tap, input, ime, foreground}) {
+async function journey({board, port, schema, check, adb, start, screen, tap, input, ime, foreground, signIn}) {
   const display = label => screen(label, ['Coral'], ['Ink','Amber','Editing name','Save']);
   const draft = label => screen(label, ['Editing name','Amber','Save'], ['Ink','Coral']);
   const activity = () => instance(adb('shell','dumpsys','activity',pkg));
@@ -79,6 +79,7 @@ async function journey({board, port, schema, check, adb, start, screen, tap, inp
     return lines[0]?.join(' ') === 'PID NAME' && lines.some(r => r[0] === '1') && !lines.some(r => r[1] === pkg);
   });
   start('--es','board',board,'--ei','port',String(port));
+  await signIn(false);
   await display('cold reopened accepted board');
   const after = activity();
   assert.ok(after?.resumed && !after.stopped && after.pid !== before.pid, 'expected recreated activity in new process');

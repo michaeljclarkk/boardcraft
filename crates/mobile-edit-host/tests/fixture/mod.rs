@@ -1,3 +1,4 @@
+mod account;
 use boardcraft_board::{Board, BoardId, ItemId, store};
 use boardcraft_mobile_edit_client::SavedItem;
 use boardcraft_mobile_edit_host::Host;

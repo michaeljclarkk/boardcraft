@@ -20,10 +20,14 @@ pub(super) fn bearer(req: &Request) -> Result<Token, u16> {
 }
 
 pub(super) fn resolve(tx: &mut Transaction<'_>, token: &Token) -> Result<Account, u16> {
-    boardcraft_account::resolve_on(tx, token).map_err(|e| match e {
+    boardcraft_account::resolve_on(tx, token).map_err(account_status)
+}
+
+pub(super) fn account_status(e: Error) -> u16 {
+    match e {
         Error::Rejected => 401,
         Error::Unavailable => 503,
-    })
+    }
 }
 
 pub(super) fn authorize(

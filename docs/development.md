@@ -108,7 +108,7 @@ The [frame gate](../scripts/android-kit-frame.mjs) checks package ID/ABI/debug f
 
 ### Android Kit edit gate
 
-**Protected-host adoption:** the 07 and 08 connected launch recipes below supply no session. They cannot pass against the packet 14 host until the activity has an authenticated in-memory client. Keep their assertions; do not put a session in an intent extra or fall back to the offline board on denial. The no-arguments frame gate needs no credentials or host.
+Connected launches supply only the board UUID and loopback port. The driver generates a fixture password in memory, sends it to `kit_edit_fixture` on stdin before startup JSON, and enters it through the masked Kit input. The `rejected` and `signed-in` checkpoints verify zero and one sessions respectively, along with both original rows. A cold launch requires sign-in again. The no-arguments frame gate needs no credentials or host.
 
 Use the frame gate's dedicated AVD and host GPU setup, with `rustday_test` active in the operator shell. Use a JDK with `javac --release 8` support. The build compiles only `GpuiInputActivity.java` from the locked mobile host checkout and packages its DEX alongside the Rust library. Its transparent input connection forwards keyboard edits to the focused GPUI handler.
 

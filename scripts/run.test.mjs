@@ -197,6 +197,21 @@ test('08 requires actual delivery and Windows regression; missing activity or wr
   assert.throws(() => checkWindow('row board 00000000-0000-0000-0000-000000000011 Review sketch\nrow board 00000000-0000-0000-0000-00000000002a Coral','board'));
 });
 
+test('15 stops before delivery if either real authenticated probe case is missing', t => {
+  const p = packets.find(p => p.id === '15-android-kit-sign-in');
+  const old = process.env.RUSTDAY_ANDROID_SERIAL;
+  process.env.RUSTDAY_ANDROID_SERIAL = 'emulator-5682';
+  t.after(() => { if (old === undefined) delete process.env.RUSTDAY_ANDROID_SERIAL; else process.env.RUSTDAY_ANDROID_SERIAL = old; });
+  const seen = [];
+  const adb = ['Rustday_Edit_X64\nOK', '1', 'x86_64'];
+  assert.throws(() => verify(p, (bin, args) => {
+    seen.push(...args);
+    if (bin === 'adb') return adb.shift();
+    if (args.includes('android_emulator_edit')) return 'test emulator_rename_then_reopen ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored';
+  }), /Missing passing/);
+  assert.ok(!seen.includes('scripts/cross-client-reopen.mjs'));
+});
+
 test('09 requires both enabled Windows journeys and inherits the real Android/Windows delivery gate', () => {
   const packet = packets.find(p => p.id === '09-windows-name-cell');
   const cases = ['rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter'];
