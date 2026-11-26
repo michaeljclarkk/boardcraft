@@ -11,6 +11,9 @@ const connectedLogout = { ...connectedName,
   cases: [...connectedName.cases, 'explicit_logout_isolates_sessions'],
   windowsCases: [...connectedName.windowsCases, 'configured_logout_failure_then_retry', 'interactive_viewer_logs_out'] };
 
+const visibleBoardList = { ...connectedLogout,
+  cases: [...connectedLogout.cases, 'list_visible_boards_in_navigation_order', 'workspace_membership_changes_refresh_list_and_access'] };
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -46,8 +49,10 @@ export const packets = [
     windowsCases: ['windows_env_session_is_origin_scoped', 'windows_login_reject_retry', 'rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] },
   { id: '20-windows-connected-name', ...connectedName },
   { id: '21-windows-connected-logout', ...connectedLogout },
-  { id: '22-visible-board-list', ...connectedLogout,
-    cases: [...connectedLogout.cases, 'list_visible_boards_in_navigation_order', 'workspace_membership_changes_refresh_list_and_access'] },
+  { id: '22-visible-board-list', ...visibleBoardList },
+  { id: '23-windows-board-navigation', ...visibleBoardList,
+    cases: [...visibleBoardList.cases, 'selected_board_read_checks_current_membership'],
+    windowsCases: [...visibleBoardList.windowsCases, 'opens_selected_board_by_id', 'revoked_membership_blocks_board_selection'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

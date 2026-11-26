@@ -4,6 +4,7 @@ use gpui_kit::test::{ElementSnapshot, TestEventExt, TestWindowExt};
 pub(super) mod login;
 pub(super) mod logout;
 pub(super) mod name;
+pub(super) mod navigation;
 
 #[derive(Debug, Copy, Clone)]
 enum Journey {

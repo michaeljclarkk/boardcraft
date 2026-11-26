@@ -506,45 +506,57 @@ impl Render for Workbench {
 
 fn main() {
     fn usage() -> ! {
-        eprintln!("Usage: boardcraft-desktop <board-uuid> | connect <loopback-port> <board-uuid>");
+        eprintln!(
+            "Usage: boardcraft-desktop <board-uuid> | connect <loopback-port> <board-uuid> | browse <loopback-port>"
+        );
         std::process::exit(2);
     }
     let mut args = std::env::args().skip(1);
     let first = args.next().unwrap_or_else(|| usage());
-    let (port, board) = if first == "connect" {
+    let parse_board = |s: String| {
+        s.parse::<Uuid>()
+            .ok()
+            .and_then(BoardId::new)
+            .unwrap_or_else(|| usage())
+    };
+    enum Launch {
+        Local(BoardId),
+        Connected(u16, Option<BoardId>),
+    }
+    let launch = if first == "connect" || first == "browse" {
         let port = args
             .next()
             .and_then(|s| s.parse::<u16>().ok())
             .filter(|n| *n != 0)
             .unwrap_or_else(|| usage());
-        let board = args.next().unwrap_or_else(|| usage());
+        let board =
+            (first == "connect").then(|| parse_board(args.next().unwrap_or_else(|| usage())));
         if let Some(extra) = args.next()
             && !(cfg!(all(windows, feature = "native-smoke"))
-                && matches!(
-                    extra.as_str(),
-                    "--smoke-login"
-                        | "--smoke-session"
-                        | "--name-member"
-                        | "--name-reopen"
-                        | "--name-demote"
-                        | "--name-viewer"
-                        | "--logout-member"
-                        | "--logout-viewer"
-                        | "--logout-reopen"
-                )
+                && (if board.is_none() {
+                    matches!(extra.as_str(), "--browse-open" | "--browse-revoked")
+                } else {
+                    matches!(
+                        extra.as_str(),
+                        "--smoke-login"
+                            | "--smoke-session"
+                            | "--name-member"
+                            | "--name-reopen"
+                            | "--name-demote"
+                            | "--name-viewer"
+                            | "--logout-member"
+                            | "--logout-viewer"
+                            | "--logout-reopen"
+                    )
+                })
                 && args.next().is_none())
         {
             usage();
         }
-        (Some(port), board)
+        Launch::Connected(port, board)
     } else {
-        (None, first)
+        Launch::Local(parse_board(first))
     };
-    let board = board
-        .parse::<Uuid>()
-        .ok()
-        .and_then(BoardId::new)
-        .unwrap_or_else(|| usage());
     application().with_assets(assets::Assets).run(move |cx| {
         init(cx);
         cx.on_window_closed(|cx, _| {
@@ -553,10 +565,13 @@ fn main() {
             }
         })
         .detach();
-        if let Some(port) = port {
-            connected::open(port, board.as_uuid(), cx);
-            return;
-        }
+        let board = match launch {
+            Launch::Connected(port, board) => {
+                connected::open(port, board.map(|id| id.as_uuid()), cx);
+                return;
+            }
+            Launch::Local(board) => board,
+        };
         let (_window, _board_view) = open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 let mut view = Workbench {

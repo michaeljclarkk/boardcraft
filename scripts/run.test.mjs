@@ -283,6 +283,7 @@ for (const [id, addedHost, addedWindows] of [
   ['20-windows-connected-name', [], []],
   ['21-windows-connected-logout', ['explicit_logout_isolates_sessions'], ['configured_logout_failure_then_retry', 'interactive_viewer_logs_out']],
   ['22-visible-board-list', ['explicit_logout_isolates_sessions', 'list_visible_boards_in_navigation_order', 'workspace_membership_changes_refresh_list_and_access'], ['configured_logout_failure_then_retry', 'interactive_viewer_logs_out']],
+  ['23-windows-board-navigation', ['explicit_logout_isolates_sessions', 'list_visible_boards_in_navigation_order', 'workspace_membership_changes_refresh_list_and_access', 'selected_board_read_checks_current_membership'], ['configured_logout_failure_then_retry', 'interactive_viewer_logs_out', 'opens_selected_board_by_id', 'revoked_membership_blocks_board_selection']],
 ]) test(`${id} requires every named host and Windows journey and the locked workspace checks`, () => {
   const p = packets.find(p => p.id === id);
   assert.equal(p.database, true);

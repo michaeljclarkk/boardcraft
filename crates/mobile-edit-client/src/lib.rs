@@ -147,6 +147,11 @@ impl EditClient {
         self.read_with_access(board).map(|read| read.rows)
     }
 
+    pub fn read_selected_board(&self, board: Uuid) -> Result<Vec<SavedItem>, EditError> {
+        let url = format!("http://127.0.0.1:{}/navigation/boards/{board}", self.port);
+        decode(self.authorize(self.http.get(url)).call())
+    }
+
     pub fn read_with_access(&self, board: Uuid) -> Result<BoardRead, EditError> {
         let mut response = self
             .authorize(self.http.get(self.board_url(board)))

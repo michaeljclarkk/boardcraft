@@ -17,8 +17,12 @@ use uuid::Uuid;
 mod fixture;
 #[path = "windows/logout.rs"]
 mod logout;
+#[path = "windows/navigation.rs"]
+mod navigation;
 #[path = "../../mobile-edit-host/tests/fixture/peer.rs"]
 mod peer;
+#[path = "../../mobile-edit-host/tests/fixture/selection.rs"]
+mod selection;
 #[path = "../../mobile-edit-host/tests/fixture/stored_session.rs"]
 mod stored_session;
 
@@ -32,6 +36,16 @@ fn interactive_viewer_logs_out() {
     logout::interactive();
 }
 
+#[test]
+fn opens_selected_board_by_id() {
+    navigation::run(false);
+}
+
+#[test]
+fn revoked_membership_blocks_board_selection() {
+    navigation::run(true);
+}
+
 // Bound startup, rendering, and shutdown even if the native event loop stalls.
 struct SmokeProcess(Child);
 impl Drop for SmokeProcess {
@@ -42,9 +56,14 @@ impl Drop for SmokeProcess {
 }
 
 fn connected_command(port: u16, board: Uuid, mode: &str) -> Command {
+    let mut cmd = http_window_command();
+    cmd.args(["connect", &port.to_string(), &board.to_string(), mode]);
+    cmd
+}
+
+fn http_window_command() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_boardcraft-desktop"));
-    cmd.args(["connect", &port.to_string(), &board.to_string(), mode])
-        .env_remove("RUSTDAY_TEST_DATABASE_URL")
+    cmd.env_remove("RUSTDAY_TEST_DATABASE_URL")
         .env_remove("DATABASE_URL")
         .env_remove("BOARDCRAFT_LOCAL_ACTOR")
         .env_remove("BOARDCRAFT_RECOVERY_DIR")
@@ -52,6 +71,29 @@ fn connected_command(port: u16, board: Uuid, mode: &str) -> Command {
         .env_remove("BOARDCRAFT_SESSION_ORIGIN")
         .stdout(Stdio::piped());
     cmd
+}
+
+struct Window(SmokeProcess, mpsc::Receiver<String>);
+impl Window {
+    fn launch(mut cmd: Command) -> Self {
+        let mut child = SmokeProcess(cmd.stdin(Stdio::piped()).spawn().unwrap());
+        let rx = lines(&mut child);
+        Self(child, rx)
+    }
+    fn expect(&self, name: &str) {
+        let line = self
+            .1
+            .recv_timeout(Duration::from_secs(45))
+            .unwrap_or_else(|error| panic!("waiting for {name}: {error}"));
+        assert!(line == format!("check {name}"), "expected {name}");
+    }
+    fn reply(&mut self, reply: &str) {
+        writeln!(self.0.0.stdin.as_mut().unwrap(), "{reply}").unwrap();
+    }
+    fn finish(mut self) {
+        self.reply("ok");
+        wait_for_close(&mut self.0);
+    }
 }
 
 fn connected_rows() -> [boardcraft_mobile_edit_client::SavedItem; 2] {

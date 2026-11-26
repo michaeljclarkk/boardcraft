@@ -5,6 +5,8 @@ mod fixture;
 mod navigation;
 #[path = "fixture/peer.rs"]
 mod peer;
+#[path = "fixture/selection.rs"]
+mod selection;
 #[path = "fixture/stored_session.rs"]
 mod stored_session;
 
@@ -59,6 +61,70 @@ fn list_visible_boards_in_navigation_order() {
     );
     catalog.check_state(&f, "member", false, true);
     catalog.check_limits(&f, &viewer);
+}
+
+#[test]
+fn selected_board_read_checks_current_membership() {
+    use selection::*;
+    let f = Fixture::start();
+    let s = Selection::new(&f);
+    let client = EditClient::with_bearer(s.host.port, s.token.encoded()).unwrap();
+    let ordinary = EditClient::with_bearer(f.host.port, s.token.encoded()).unwrap();
+    assert_eq!(
+        ordinary.read_selected_board(SELECTED),
+        Err(EditError::Missing)
+    );
+    for c in [&ordinary, &client] {
+        assert_eq!(c.read(SELECTED), Err(EditError::Missing));
+        assert_eq!(
+            c.rename(
+                SELECTED,
+                selected_rows()[0].id,
+                &NameEdit {
+                    title: "New".into(),
+                    revision: 1
+                }
+            ),
+            Err(EditError::Missing)
+        );
+    }
+    assert_eq!(
+        client.read_selected_board(SELECTED).unwrap(),
+        selected_rows()
+    );
+    assert_eq!(
+        client.read_selected_board(HIDDEN),
+        Err(EditError::PermissionDenied)
+    );
+    assert_eq!(
+        client.read_selected_board(f.board),
+        Err(EditError::PermissionDenied)
+    );
+    s.check(&f, true);
+    s.membership(&f, false);
+    assert_eq!(
+        client.read_selected_board(SELECTED),
+        Err(EditError::PermissionDenied)
+    );
+    // Check the denied response body too, independently of the client's error mapping.
+    use std::io::{Read, Write};
+    let mut stream =
+        std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, s.host.port)).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    write!(stream,"GET /navigation/boards/{SELECTED} HTTP/1.0\r\nHost: localhost\r\nAuthorization: Bearer {}\r\n\r\n",s.token.encoded()).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+    assert!(headers.lines().next().unwrap().contains(" 403 ") && body.is_empty());
+    client.resolve().unwrap();
+    s.check(&f, false);
+    s.session.revoke(&f);
+    assert_eq!(
+        client.read_selected_board(SELECTED),
+        Err(EditError::SessionRejected)
+    );
 }
 
 #[test]

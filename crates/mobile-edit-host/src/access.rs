@@ -91,14 +91,21 @@ pub(super) fn list_visible_boards(
         .collect())
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum Operation {
+    ScopedRead,
+    ScopedRename,
+    SelectedRead,
+}
+
 pub(super) fn authorize(
     tx: &mut Transaction<'_>,
     account: Account,
     board: BoardId,
-    write: bool,
+    operation: Operation,
 ) -> Result<bool, u16> {
     let can_edit = !account.role.is_read_only();
-    if write && !can_edit {
+    if matches!(operation, Operation::ScopedRename) && !can_edit {
         return Err(403);
     }
     let board = board.as_uuid();
@@ -106,14 +113,15 @@ pub(super) fn authorize(
         log::error!("authorize board={board} unavailable");
         503u16
     };
+    let allow_legacy = !matches!(operation, Operation::SelectedRead);
     let sql = format!(
         "SELECT 1 FROM board_policies b WHERE b.board_id=$2 AND {}
-        AND (b.workspace_id IS NULL OR EXISTS (SELECT 1 FROM workspaces w
+        AND (($3 AND b.workspace_id IS NULL) OR EXISTS (SELECT 1 FROM workspaces w
              WHERE w.id=b.workspace_id AND {} FOR SHARE)) FOR SHARE",
         board_visible("FOR SHARE"),
         workspace_visible("FOR SHARE")
     );
-    tx.query_opt(&sql, &[&account.id, &board])
+    tx.query_opt(&sql, &[&account.id, &board, &allow_legacy])
         .map_err(unavailable)?
         .ok_or(403u16)?;
     Ok(can_edit)

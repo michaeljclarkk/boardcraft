@@ -11,12 +11,15 @@ use gpui_kit::component::{
 };
 use gpui_kit::*;
 use uuid::Uuid;
+mod navigation;
+use navigation::Navigation;
 
 enum Screen {
     Identifier(Entity<InputState>),
     Password(String, Entity<InputState>),
     Loading,
     Retry(EditClient),
+    Navigation(Navigation),
     Board {
         session: EditClient,
         logging_out: bool,
@@ -27,7 +30,8 @@ enum Screen {
 
 pub(super) struct Connected {
     port: u16,
-    board: Uuid,
+    direct_board: Option<Uuid>,
+    navigation_request: u64,
     screen: Screen,
     message: &'static str,
     #[cfg(all(windows, feature = "native-smoke"))]
@@ -54,12 +58,13 @@ fn configured_session(port: u16) -> Result<Option<EditClient>, ()> {
     }
 }
 
-pub(super) fn open(port: u16, board: Uuid, cx: &mut App) {
+pub(super) fn open(port: u16, board: Option<Uuid>, cx: &mut App) {
     let (_window, _view) = open_window(WindowOptions::default(), cx, |window, cx| {
         cx.new(|cx| {
             let mut view = Connected {
                 port,
-                board,
+                direct_board: board,
+                navigation_request: 0,
                 screen: Screen::Loading,
                 message: "",
                 #[cfg(all(windows, feature = "native-smoke"))]
@@ -83,14 +88,16 @@ pub(super) fn open(port: u16, board: Uuid, cx: &mut App) {
     .expect("open connected board window");
     cx.activate(true);
     #[cfg(all(windows, feature = "native-smoke"))]
-    if let Some(mode) = std::env::args().nth(4) {
+    if let Some(mode) = std::env::args().nth(if board.is_some() { 4 } else { 3 }) {
         cx.update_window(_window, |_, w, _| {
             if mode.starts_with("--name-") {
                 super::native_smoke::name::install(_view, &mode, w);
             } else if mode.starts_with("--logout-") {
                 super::native_smoke::logout::install(_view, &mode, w);
-            } else {
+            } else if let Some(board) = board {
                 super::native_smoke::login::install(board, mode == "--smoke-session", w);
+            } else {
+                super::native_smoke::navigation::install(mode == "--browse-revoked", w);
             }
         })
         .unwrap();
@@ -161,12 +168,15 @@ impl Connected {
         w: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(board) = self.direct_board else {
+            self.navigate(client, None, w, cx);
+            return;
+        };
         self.screen = Screen::Loading;
         #[cfg(all(windows, feature = "native-smoke"))]
         {
             self.loads += 1;
         }
-        let board = self.board;
         let work = cx.background_executor().spawn(async move {
             let rows = client
                 .resolve()
@@ -366,6 +376,7 @@ impl Render for Connected {
                 "Sign in"
             }
             Screen::Loading => return column.child(Label::new("Loading…")),
+            Screen::Navigation(nav) => return column.child(nav.render(cx)),
             Screen::Retry(_) => "Retry loading",
             Screen::Board {
                 rows,

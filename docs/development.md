@@ -69,7 +69,7 @@ Run `cargo test --locked --workspace --test loopback_board_access` for the prote
 
 The GET response header `boardcraft-board-access` describes access at read time: only a single `edit` value enables Windows name editing. `read`, a missing header or an unknown value leaves the board read-only. The PUT does not take a permission hint.
 
-For multi-board discovery, explicitly use `Host::start_with_navigation(config, target)`. `EditClient::list_boards` calls `GET /navigation/boards` with the current session and returns `{id, workspace_id, name}` summaries in global board order. An empty list is a successful read. Session rejection requires sign-in; an unavailable access store can be retried with the same session. Ordinary `Host::start` leaves the list route disabled. Both host modes serve item reads and writes only for `target`.
+For multi-board discovery, start `Host::start_with_navigation(config, target)` and launch `boardcraft-desktop browse <loopback-port>`. Use the same exact-origin session configuration or interactive sign-in as `connect`. `EditClient::list_boards` calls `GET /navigation/boards` and returns `{id, workspace_id, name}` summaries in global board order. Click a board to read its items through `GET /navigation/boards/{id}`. This view is read-only. **Back to boards** loads the list again. After **Destination unavailable**, return to the list; after **No boards**, use **Refresh** to check for newly visible boards. A service fault offers **Retry board list**; session rejection requires sign-in. Ordinary `Host::start` serves neither navigation route. In both modes the direct `/boards/{id}` GET/PUT routes remain restricted to `target`.
 
 ### Android native host
 

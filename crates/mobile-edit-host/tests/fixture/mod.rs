@@ -84,8 +84,12 @@ impl Fixture {
     }
 
     pub fn check_store(&self, expected: &[SavedItem]) {
+        self.check_board(self.board, expected);
+    }
+
+    pub fn check_board(&self, board: Uuid, expected: &[SavedItem]) {
         let mut db = self.connect();
-        let id = BoardId::new(self.board).unwrap();
+        let id = BoardId::new(board).unwrap();
         let desktop = store::load_board(&mut db, id).unwrap().unwrap();
         assert_eq!(desktop.id(), id);
         assert_eq!(desktop.items().len(), expected.len());

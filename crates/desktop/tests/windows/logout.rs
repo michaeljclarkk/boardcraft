@@ -1,45 +1,14 @@
 use super::{
-    SmokeProcess, connected_command,
+    Window, connected_command,
     fixture::{FIRST, Fixture, SECOND},
-    lines,
     peer::Peer,
     stored_session::assert_no_session,
-    wait_for_close,
 };
 use boardcraft_account::Role;
 use boardcraft_mobile_edit_client::{Credentials, EditClient, EditError, NameEdit, SavedItem};
-use std::{
-    io::Write,
-    process::{Command, Stdio},
-    sync::{atomic::Ordering::SeqCst, mpsc::Receiver},
-    time::Duration,
-};
+use std::sync::atomic::Ordering::SeqCst;
 use uuid::Uuid;
 mod relay;
-
-struct Window(SmokeProcess, Receiver<String>);
-
-impl Window {
-    fn launch(mut cmd: Command) -> Self {
-        let mut child = SmokeProcess(cmd.stdin(Stdio::piped()).spawn().unwrap());
-        let rx = lines(&mut child);
-        Self(child, rx)
-    }
-    fn expect(&self, name: &str) {
-        let line = self
-            .1
-            .recv_timeout(Duration::from_secs(45))
-            .unwrap_or_else(|error| panic!("waiting for {name}: {error}"));
-        assert!(line == format!("check {name}"), "expected {name}");
-    }
-    fn reply(&mut self, reply: &str) {
-        writeln!(self.0.0.stdin.as_mut().unwrap(), "{reply}").unwrap();
-    }
-    fn finish(mut self) {
-        self.reply("ok");
-        wait_for_close(&mut self.0);
-    }
-}
 
 fn rows(saved: bool) -> [SavedItem; 2] {
     [
