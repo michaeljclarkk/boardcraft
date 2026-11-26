@@ -3,6 +3,9 @@ use postgres::{Client, Error};
 
 use crate::{Board, BoardId, Item, ItemId, RenameError, interactive_title};
 
+mod reorder;
+pub use reorder::{Reorder, ReorderError, reorder_group_item};
+
 /// Apply each schema change and record its version in the same transaction.
 pub fn migrate(client: &mut Client) -> Result<(), Error> {
     let mut tx = client.transaction()?;
@@ -60,6 +63,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
         tx.batch_execute(include_str!("../migrations/0005_item_group_move.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (5)", &[])?;
     }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version=6",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0006_group_reorder.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (6)", &[])?;
+    }
     tx.commit()
 }
 
@@ -110,6 +123,13 @@ pub struct GroupItem {
     pub item: StoredItem,
 }
 
+// Compatible for appends and group moves, exclusive against a reorder. Always
+// take this before any group/item lock; these writers do not advance the board revision.
+fn lock_structure_writer(tx: &mut postgres::Transaction<'_>, board: BoardId) -> Result<(), Error> {
+    tx.query_opt("SELECT id FROM boards WHERE id=$1 FOR SHARE", &[&board.0])?;
+    Ok(())
+}
+
 fn group_item(row: postgres::Row, id: ItemId) -> GroupItem {
     GroupItem {
         group_id: row.get("group_id"),
@@ -132,6 +152,7 @@ pub fn create_group_item(
     draft: &str,
 ) -> Result<GroupItem, CreateError> {
     use CreateError::*;
+    lock_structure_writer(tx, board).map_err(Database)?;
     if tx
         .query_opt(
             "SELECT id FROM board_groups WHERE board_id=$1 AND id=$2 AND active FOR UPDATE",
@@ -171,6 +192,7 @@ pub fn move_group_item(
     expected: i64,
 ) -> Result<GroupItem, MoveError> {
     use MoveError::*;
+    lock_structure_writer(tx, board).map_err(Database)?;
     let mut row = tx.query_opt("SELECT i.group_id,i.title,i.revision,i.group_revision FROM board_items i JOIN board_groups g ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.board_id=$1 AND i.id=$2 AND g.active FOR UPDATE OF i FOR SHARE OF g", &[&board.0,&item.0]).map_err(Database)?.ok_or(MissingItem)?;
     tx.query_opt(
         "SELECT id FROM board_groups WHERE board_id=$1 AND id=$2 AND active FOR SHARE",
@@ -234,9 +256,16 @@ pub fn load_groups(
     client: &mut impl postgres::GenericClient,
     board: BoardId,
 ) -> Result<Vec<ItemGroup>, GroupReadError> {
+    load_group_snapshot(client, board).map(|(_, groups)| groups)
+}
+
+pub fn load_group_snapshot(
+    client: &mut impl postgres::GenericClient,
+    board: BoardId,
+) -> Result<(i64, Vec<ItemGroup>), GroupReadError> {
     let rows = client
         .query(
-            "SELECT g.id, g.name, i.id, i.title, i.revision FROM boards b
+            "SELECT g.id, g.name, i.id, i.title, i.revision, b.revision FROM boards b
          LEFT JOIN board_groups g ON g.board_id=b.id AND g.active
          LEFT JOIN board_items i ON (i.board_id,i.group_id)=(g.board_id,g.id)
          WHERE b.id=$1 ORDER BY g.position,g.id,i.position,i.created_at NULLS FIRST,i.id LIMIT $2",
@@ -250,6 +279,7 @@ pub fn load_groups(
         return Err(GroupReadError::TooLarge);
     }
     let mut groups: Vec<ItemGroup> = Vec::new();
+    let revision = rows[0].get(5);
     for row in rows {
         let Some(id) = row.get::<_, Option<String>>(0) else {
             continue;
@@ -269,7 +299,7 @@ pub fn load_groups(
             });
         }
     }
-    Ok(groups)
+    Ok((revision, groups))
 }
 
 #[derive(Debug)]

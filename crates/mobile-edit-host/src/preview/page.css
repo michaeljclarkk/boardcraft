@@ -17,5 +17,9 @@ li { padding: .45rem; border-bottom: 1px solid #c5d6d1; overflow-wrap: anywhere;
 .add-item input { margin: 0; min-width: 0; }
 .row-menu { float: right; }
 #items li { display: flow-root; }
+.reorder-grip { display: inline-block; padding: .35rem .45rem; cursor: grab; user-select: none; }
+.reorder-grip:active { cursor: grabbing; }
+[data-drop-edge="before"] { box-shadow: inset 0 3px #206c63; }
+[data-drop-edge="after"] { box-shadow: inset 0 -3px #206c63; }
 dialog select { display: block; margin: .4rem 0 1rem; font: inherit; }
 dialog button { margin-right: .4rem; }

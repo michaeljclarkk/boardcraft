@@ -5,6 +5,8 @@ mod fixture;
 mod move_state;
 #[path = "fixture/peer.rs"]
 mod peer;
+#[path = "fixture/reorder_state.rs"]
+mod reorder_state;
 #[path = "browser/resume.rs"]
 mod resume;
 #[allow(dead_code)]
@@ -52,6 +54,96 @@ struct MoveBoard {
     app: Preview,
     session: StoredSession,
     state: move_state::MoveState,
+}
+
+struct ReorderBoard {
+    app: Preview,
+    session: StoredSession,
+    state: reorder_state::Snapshot,
+}
+impl ReorderBoard {
+    fn open() -> Self {
+        let (mut app, session) = grouped_board(boardcraft_account::Role::Member);
+        reorder_state::seed(&app.f, app.account);
+        let state = reorder_state::Snapshot::read(&app.f);
+        app.act("reorder open");
+        Self {
+            app,
+            session,
+            state,
+        }
+    }
+    fn checkpoint(&mut self, action: &str, drops: usize, role: &str) {
+        self.app.act(action);
+        self.state.check(&self.app.f, self.app.account, drops);
+        self.app.catalog.check_grants(&self.app.f, true);
+        assert!(StoredSession::only(&self.app.f, self.app.account) == self.session);
+        assert_eq!(
+            self.app
+                .f
+                .connect()
+                .query_one(
+                    "SELECT role FROM accounts WHERE id=$1",
+                    &[&self.app.account]
+                )
+                .unwrap()
+                .get::<_, String>(0),
+            role
+        );
+    }
+}
+
+#[test]
+fn browser_reorders_duplicate_rows_by_pointer() {
+    let mut c = ReorderBoard::open();
+    c.checkpoint("reorder cancel", 0, "member");
+    c.checkpoint("reorder mark", 0, "member");
+    let mut db = c.app.f.connect();
+    let mut lock = db.transaction().unwrap();
+    lock.query_one(
+        "SELECT revision FROM boards WHERE id=$1 FOR UPDATE",
+        &[&selection::SELECTED],
+    )
+    .unwrap();
+    c.checkpoint("reorder pending", 0, "member");
+    lock.rollback().unwrap();
+    for (action, n) in [
+        ("reorder committed", 1),
+        ("reorder before reload", 1),
+        ("reorder after", 2),
+        ("reorder after reload", 2),
+    ] {
+        c.checkpoint(action, n, "member");
+    }
+}
+#[test]
+fn browser_demoted_viewer_cannot_reorder() {
+    let mut c = ReorderBoard::open();
+    c.checkpoint("reorder mark", 0, "member");
+    c.app
+        .f
+        .connect()
+        .execute(
+            "UPDATE accounts SET role='viewer' WHERE id=$1",
+            &[&c.app.account],
+        )
+        .unwrap();
+    for a in ["reorder denied", "reorder viewer reload"] {
+        c.checkpoint(a, 0, "viewer");
+    }
+}
+#[test]
+fn browser_failed_reorder_rolls_back_then_redrags() {
+    let mut c = ReorderBoard::open();
+    let mut db = c.app.f.connect();
+    db.batch_execute("CREATE FUNCTION fail_receipt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture commit fault'; END $$; CREATE CONSTRAINT TRIGGER fail_receipt AFTER INSERT ON group_reorder_receipts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fail_receipt()").unwrap();
+    c.checkpoint("reorder mark", 0, "member");
+    c.checkpoint("reorder failed", 0, "member");
+    db.batch_execute("DROP TRIGGER fail_receipt ON group_reorder_receipts")
+        .unwrap();
+    c.checkpoint("reorder initial reload", 0, "member");
+    c.checkpoint("reorder before", 1, "member");
+    c.checkpoint("reorder before reload", 1, "member");
 }
 impl MoveBoard {
     fn open() -> Self {

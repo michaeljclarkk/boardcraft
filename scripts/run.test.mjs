@@ -456,3 +456,18 @@ test('33 requires the row move, denied and failed dialogs, group access and fiel
   run();
   for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
 });
+
+test('34 requires relative pointer drops, denied and rolled back ordering, and replay-safe revisions', () => {
+  const previous = packets.find(p => p.id === '33-browser-group-item-move');
+  const packet = packets.find(p => p.id === '34-browser-group-item-reorder');
+  const browser = [...previous.browserCases, 'browser_reorders_duplicate_rows_by_pointer', 'browser_demoted_viewer_cannot_reorder', 'browser_failed_reorder_rolls_back_then_redrags'];
+  const host = [...previous.cases, 'preview_reorder_requires_current_access_and_anchor', 'preview_reorder_checks_revisions_and_replay'];
+  assert.deepEqual(packet, { ...previous, id: '34-browser-group-item-reorder', cases: host, browserCases: browser });
+  const run = missing => verify(packet, (_bin, args) => {
+    const names = args.includes('browser_preview') ? browser : args.includes('loopback_board_access') ? host : [];
+    const present = names.filter(n => n !== missing);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  run();
+  for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
+});

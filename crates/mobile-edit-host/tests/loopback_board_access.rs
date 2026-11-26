@@ -8,6 +8,20 @@ mod create;
 mod move_checks;
 #[path = "fixture/move_state.rs"]
 mod move_state;
+#[path = "fixture/reorder_checks.rs"]
+mod reorder_checks;
+#[path = "fixture/reorder_state.rs"]
+mod reorder_state;
+
+#[test]
+fn preview_reorder_requires_current_access_and_anchor() {
+    reorder_checks::access();
+}
+#[test]
+fn preview_reorder_checks_revisions_and_replay() {
+    reorder_checks::revision_and_replay();
+    reorder_checks::migration();
+}
 
 #[test]
 fn preview_move_requires_current_group_access() {

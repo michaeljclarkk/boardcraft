@@ -115,7 +115,8 @@ async function loadDestination(id, current, notice = '') {
   async function read() {
     const response = await fetchResponse(path);
     const groups = await response.json();
-    return {id, groups, rows: groups.flatMap(g => g.items), editable: response.headers.get('boardcraft-board-access') === 'edit'};
+    const revision = Number(response.headers.get('boardcraft-board-revision'));
+    return {id, revision, groups, rows: groups.flatMap(g => g.items), editable: response.headers.get('boardcraft-board-access') === 'edit'};
   }
   try {
     const board = await read();
@@ -124,6 +125,9 @@ async function loadDestination(id, current, notice = '') {
     mountNames(board, items, $('#failures'), {
       current: () => visit === mounted,
       read,
+      reorder: (item, draft) => request(`${path}/items/${encodeURIComponent(item)}/reorder`, {
+        method: 'POST', body: JSON.stringify(draft)
+      }),
       move: (item, group_id, expected_revision) => request(`${path}/items/${encodeURIComponent(item)}/group`, {
         method: 'PUT', body: JSON.stringify({group_id, expected_revision})
       }),

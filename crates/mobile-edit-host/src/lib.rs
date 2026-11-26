@@ -13,7 +13,11 @@ use boardcraft_mobile_edit_client::{BOARD_ACCESS_HEADER, Credentials, NameEdit, 
 use postgres::{Client, Config, NoTls};
 use tiny_http::{Header, Method, Request, Response, Server};
 use uuid::Uuid;
-type ApiResult = Result<(Vec<u8>, Option<bool>), u16>;
+struct ReadMetadata {
+    can_edit: bool,
+    revision: Option<i64>,
+}
+type ApiResult = Result<(Vec<u8>, Option<ReadMetadata>), u16>;
 
 pub struct Host {
     server: Arc<Server>,
@@ -115,7 +119,16 @@ impl Host {
                         let mut response = Response::from_data(body).with_header(
                             Header::from_bytes("Content-Type", "application/json").unwrap(),
                         );
-                        if let Some(can_edit) = hint {
+                        if let Some(ReadMetadata { can_edit, revision }) = hint {
+                            if let Some(revision) = revision {
+                                response.add_header(
+                                    Header::from_bytes(
+                                        "Boardcraft-Board-Revision",
+                                        revision.to_string(),
+                                    )
+                                    .unwrap(),
+                                );
+                            }
                             response.add_header(
                                 Header::from_bytes(
                                     BOARD_ACCESS_HEADER,
@@ -223,8 +236,8 @@ enum ReadShape {
     Grouped,
 }
 
-fn grouped_body(tx: &mut postgres::Transaction<'_>, board: BoardId) -> Result<Vec<u8>, u16> {
-    let groups = store::load_groups(tx, board).map_err(|err| match err {
+fn grouped_body(tx: &mut postgres::Transaction<'_>, board: BoardId) -> Result<(i64, Vec<u8>), u16> {
+    let (revision, groups) = store::load_group_snapshot(tx, board).map_err(|err| match err {
         store::GroupReadError::Missing => 404u16,
         store::GroupReadError::TooLarge => 413,
         store::GroupReadError::Database(error) => {
@@ -239,7 +252,10 @@ fn grouped_body(tx: &mut postgres::Transaction<'_>, board: BoardId) -> Result<Ve
     let groups: Vec<_> = groups.into_iter().map(|group| serde_json::json!({
         "id": group.id, "name": group.name, "items": group.items.into_iter().map(wire).collect::<Vec<_>>()
     })).collect();
-    Ok(serde_json::to_vec(&groups).expect("serializable groups"))
+    Ok((
+        revision,
+        serde_json::to_vec(&groups).expect("serializable groups"),
+    ))
 }
 
 fn handle(
@@ -276,6 +292,11 @@ fn handle(
         {
             (board, SelectedWrite, Some(id))
         }
+        (Method::Post, ["", "navigation", "boards", board, "items", id, "reorder"])
+            if matches!(shape, ReadShape::Grouped) =>
+        {
+            (board, SelectedWrite, Some(id))
+        }
         _ => return Err(404),
     };
     let requested = Uuid::parse_str(requested).map_err(|_| 404u16)?;
@@ -290,8 +311,10 @@ fn handle(
         Rename(ItemId, Result<NameEdit, u16>),
         Create(Result<CreateDraft, u16>),
         Move(ItemId, Result<MoveDraft, u16>),
+        Reorder(ItemId, Result<ReorderDraft, u16>),
     }
     let action = match target {
+        Some(item) if path.last() == Some(&"reorder") => Action::Reorder(item, read_json(req)),
         Some(item) if path.last() == Some(&"group") => Action::Move(item, read_json(req)),
         Some(item) => Action::Rename(item, read_edit(req)),
         None if req.method() == &Method::Post => Action::Create(read_json(req)),
@@ -307,7 +330,36 @@ fn handle(
     }
     let board = BoardId::new(requested).ok_or(404u16)?;
     let can_edit = access::authorize(&mut tx, &account, board, operation)?;
+    let mut revision = None;
     let body = match action {
+        Action::Reorder(item, draft) => {
+            let draft = draft?;
+            let command = store::Reorder {
+                operation: draft.operation_id,
+                group: &draft.group_id,
+                anchor: draft.anchor_id,
+                after: matches!(draft.side, Side::After),
+                board_revision: draft.board_revision,
+                item_revision: draft.item_revision,
+            };
+            store::reorder_group_item(&mut tx, account.id, board, item, &command).map_err(
+                |err| match err {
+                    store::ReorderError::Conflict => 409u16,
+                    store::ReorderError::Invalid => 422,
+                    store::ReorderError::Missing => 404,
+                    store::ReorderError::TooLarge => 413,
+                    store::ReorderError::Database(e) => {
+                        log::error!(
+                            "reorder_group_item board={requested} item={} sqlstate={:?}",
+                            item.as_uuid(),
+                            e.code()
+                        );
+                        500
+                    }
+                },
+            )?;
+            serde_json::to_vec(&serde_json::json!({"operation_id":draft.operation_id,"board_id":requested,"item_id":item.as_uuid()})).unwrap()
+        }
         Action::Create(draft) => {
             let draft = draft?;
             let item = ItemId::new(draft.id).ok_or(422u16)?;
@@ -358,7 +410,9 @@ fn handle(
             group_item_body(saved)
         }
         Action::Read if matches!((operation, shape), (SelectedRead, ReadShape::Grouped)) => {
-            grouped_body(&mut tx, board)?
+            let (version, body) = grouped_body(&mut tx, board)?;
+            revision = Some(version);
+            body
         }
         Action::Read => {
             let rows = store::load_items(&mut tx, board)
@@ -393,7 +447,25 @@ fn handle(
     })?;
     let hint = matches!(operation, ScopedRead)
         || (mode == Mode::Preview && matches!(operation, SelectedRead));
-    Ok((body, hint.then_some(can_edit)))
+    Ok((body, hint.then_some(ReadMetadata { can_edit, revision })))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Side {
+    Before,
+    After,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReorderDraft {
+    operation_id: Uuid,
+    group_id: String,
+    anchor_id: Uuid,
+    side: Side,
+    board_revision: i64,
+    item_revision: i64,
 }
 
 fn read_edit(req: &mut Request) -> Result<NameEdit, u16> {

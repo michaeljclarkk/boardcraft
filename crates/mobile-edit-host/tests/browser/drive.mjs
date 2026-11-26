@@ -4,6 +4,7 @@ import {launch} from './chromium.mjs';
 import {nameJourney} from './names.mjs';
 import {createJourney} from './create.mjs';
 import {moveJourney} from './moves.mjs';
+import {reorderJourney} from './reorder.mjs';
 
 const [profile, mode, port] = process.argv.slice(2);
 const primary = `http://127.0.0.1:${port}`;
@@ -205,6 +206,7 @@ async function resumed(n, denied = false) {
   requests([resolve,selectedGet(n)]); statuses([resolve,200],[selectedGet(n),denied ? 403 : 200]); await historyAt(boardPath(n));
 }
 async function perform({action, password, rows, otherPort}) {
+  if (action.startsWith('reorder ')) return reorderJourney(action, {uuid, send, click, key, wait, requests, statuses, reload, historyAt, selectedGet, boardPath, resolve, observe});
   if (action.startsWith('move ')) return moveJourney(action, {browser, uuid, click, key, wait, check, grouped, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe});
   if (action.startsWith('create ')) return createJourney(action, {browser,click,enter,type,key,wait,check,grouped,
     requests,statuses,reload,historyAt,boardPath,selectedGet,resolve,observe});

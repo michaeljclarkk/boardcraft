@@ -40,6 +40,10 @@ const previewCreate = { ...previewGroups,
   cases: [...previewGroups.cases, 'preview_create_requires_current_group_access', 'preview_create_is_atomic_and_replay_safe'],
   browserCases: [...previewGroups.browserCases, 'browser_creates_item_in_selected_group', 'browser_demoted_viewer_cannot_create_item'] };
 
+const previewMove = { ...previewCreate,
+  cases: [...previewCreate.cases, 'preview_move_requires_current_group_access', 'preview_move_checks_group_revision_and_order'],
+  browserCases: [...previewCreate.browserCases, 'browser_moves_item_by_group_id', 'browser_demoted_viewer_cannot_move_item', 'browser_reviews_failed_group_move'] };
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -87,9 +91,10 @@ export const packets = [
   { id: '30-browser-session-resume', ...previewResume },
   { id: '31-browser-board-groups', ...previewGroups },
   { id: '32-browser-group-item-create', ...previewCreate },
-  { id: '33-browser-group-item-move', ...previewCreate,
-    cases: [...previewCreate.cases, 'preview_move_requires_current_group_access', 'preview_move_checks_group_revision_and_order'],
-    browserCases: [...previewCreate.browserCases, 'browser_moves_item_by_group_id', 'browser_demoted_viewer_cannot_move_item', 'browser_reviews_failed_group_move'] },
+  { id: '33-browser-group-item-move', ...previewMove },
+  { id: '34-browser-group-item-reorder', ...previewMove,
+    cases: [...previewMove.cases, 'preview_reorder_requires_current_access_and_anchor', 'preview_reorder_checks_revisions_and_replay'],
+    browserCases: [...previewMove.browserCases, 'browser_reorders_duplicate_rows_by_pointer', 'browser_demoted_viewer_cannot_reorder', 'browser_failed_reorder_rolls_back_then_redrags'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

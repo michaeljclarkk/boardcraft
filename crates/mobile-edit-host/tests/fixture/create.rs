@@ -16,7 +16,7 @@ pub(super) struct BrowserPair {
     binding: String,
 }
 
-fn login(port: u16, identifier: &str, password: &str) -> BrowserPair {
+pub(super) fn login(port: u16, identifier: &str, password: &str) -> BrowserPair {
     let authority = format!("127.0.0.1:{port}");
     let reply = send(
         port,
@@ -41,7 +41,7 @@ pub(super) struct Case {
     pub f: Fixture,
     pub member: Uuid,
     pub catalog: Catalog,
-    password: String,
+    pub password: String,
     pub session: StoredSession,
     pub pair: BrowserPair,
 }
@@ -74,7 +74,17 @@ impl Case {
         path: &str,
         body: &Value,
     ) -> Reply {
-        let authority = format!("127.0.0.1:{}", self.host.port);
+        Self::request_at(self.host.port, pair, method, path, body)
+    }
+
+    pub fn request_at(
+        port: u16,
+        pair: Option<&BrowserPair>,
+        method: &str,
+        path: &str,
+        body: &Value,
+    ) -> Reply {
+        let authority = format!("127.0.0.1:{port}");
         let origin = format!("http://{authority}");
         let mut fields = vec![("Origin", origin.as_str())];
         if let Some(p) = pair {
@@ -83,14 +93,7 @@ impl Case {
                 ("Cookie", p.cookie.as_str()),
             ]);
         }
-        send(
-            self.host.port,
-            method,
-            path,
-            &authority,
-            &fields,
-            &body.to_string(),
-        )
+        send(port, method, path, &authority, &fields, &body.to_string())
     }
 
     fn create(&self, body: &Value) -> Reply {

@@ -1,19 +1,23 @@
 // State belongs to one mounted board visit. Requests close over that visit's path;
 // only its accepted rows supply editor baselines. A projection never changes them.
 import {mountMoves} from './moves.js';
+import {mountReorder} from './reorder.js';
 
 export function mountNames(board, list, failureArea, api) {
   const failures = document.createElement('div'), moveFailures = document.createElement('div');
-  failureArea.replaceChildren(failures, moveFailures);
+  const reorderStatus = document.createElement('div');
+  reorderStatus.setAttribute('aria-live', 'polite');
+  failureArea.replaceChildren(reorderStatus, failures, moveFailures);
   const rejected = new Map();
   const drafts = new Map(); // Group IDs are local to this board visit.
   let busy = false;
-  const moves = mountMoves({api, list, failures: moveFailures, button, setBusy, busy: () => busy,
-    board: () => board, refresh: next => {
+  const controls = {api, button, setBusy, busy: () => busy, board: () => board, refresh: next => {
       board = next;
       if (!board.editable) { drafts.clear(); rejected.clear(); }
       render(); showFailures();
-    }});
+    }};
+  const moves = mountMoves({...controls, list, failures: moveFailures});
+  const grip = mountReorder({...controls, status: reorderStatus});
 
   function setBusy(value) {
     busy = value;
@@ -120,6 +124,7 @@ export function mountNames(board, list, failureArea, api) {
       };
       display.replaceWith(input); input.focus(); input.select();
     }
+    if (Number.isSafeInteger(board.revision) && board.revision > 0) li.append(grip(row, group));
     li.append(display, menu); return li;
   }
   function addEntry(group) {
