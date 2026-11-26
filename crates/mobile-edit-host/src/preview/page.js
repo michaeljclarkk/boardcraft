@@ -1,23 +1,29 @@
 const $ = selector => document.querySelector(selector);
 const identify = $('#identify'), authenticate = $('#authenticate'), boards = $('#boards');
 const identifier = $('#identifier'), password = $('#password'), alert = $('[role=alert]');
-const refresh = $('#refresh'), resolve = $('#resolve'), list = $('ul');
+const refresh = $('#refresh'), resolve = $('#resolve'), list = $('#boards ul');
+const destination = $('#destination'), items = $('#items'), retry = $('#retry-destination');
 let token, busy = false;
 
 function step(panel, title) {
-  for (const view of [identify, authenticate, boards, resolve]) view.hidden = view !== panel;
+  for (const view of [identify, authenticate, boards, destination, resolve]) view.hidden = view !== panel;
   $('#heading').textContent = title;
   alert.textContent = '';
+}
+
+function clearNavigation() {
+  list.replaceChildren(); $('#empty').hidden = true;
+  items.replaceChildren(); retry.hidden = true; retry.onclick = null;
 }
 
 function signInScreen() {
   token = undefined;
   identify.reset(); authenticate.reset();
-  list.replaceChildren(); $('#empty').hidden = true;
+  clearNavigation();
   step(identify, 'Sign in');
 }
 
-// Keep the submit guard across login -> resolve -> list, including keyboard submits.
+// Serialize transitions through their final render; a late response cannot replace a newer view.
 async function run(operation) {
   if (busy) return;
   busy = true;
@@ -30,6 +36,8 @@ async function run(operation) {
     for (const control of controls) control.disabled = false;
     if (!identify.hidden) identifier.focus();
     else if (!authenticate.hidden) password.focus();
+    else if (!destination.hidden) (retry.hidden ? $('#back') : retry).focus();
+    else if (!boards.hidden) (list.querySelector('button') ?? refresh).focus();
   }
 }
 
@@ -45,13 +53,16 @@ async function request(path, options = {}) {
 }
 
 async function loadBoards() {
-  list.replaceChildren(); $('#empty').hidden = true;
+  clearNavigation();
   step(boards, 'Available boards');
   try {
     const rows = await request('/navigation/boards');
     const items = rows.map(({id, name}) => {
       const item = document.createElement('li');
-      item.dataset.boardId = id; item.textContent = name;
+      const button = document.createElement('button');
+      button.dataset.boardId = id; button.textContent = name;
+      button.onclick = () => run(() => loadDestination(id));
+      item.append(button);
       return item;
     });
     list.replaceChildren(...items);
@@ -61,6 +72,24 @@ async function loadBoards() {
     if (error === 401) return signInScreen();
     refresh.textContent = 'Retry board list';
     alert.textContent = 'Could not load boards';
+  }
+}
+
+async function loadDestination(id) {
+  clearNavigation();
+  step(destination, 'Board items');
+  try {
+    const rows = await request(`/navigation/boards/${encodeURIComponent(id)}`);
+    items.replaceChildren(...rows.map(({id, title}) => {
+      const item = document.createElement('li');
+      item.dataset.itemId = id; item.textContent = title;
+      return item;
+    }));
+  } catch (error) {
+    if (error === 401) return signInScreen();
+    alert.textContent = error === 403 || error === 404 ? 'Destination unavailable' : 'Could not load board';
+    retry.onclick = () => run(() => loadDestination(id));
+    retry.hidden = false;
   }
 }
 
@@ -101,6 +130,7 @@ authenticate.onsubmit = event => {
 };
 resolve.onclick = () => run(resolveSession);
 refresh.onclick = () => run(loadBoards);
+$('#back').onclick = () => run(loadBoards);
 $('#logout').onclick = () => run(async () => {
   try { await request('/session/logout', {method: 'POST'}); }
   catch { alert.textContent = 'Could not log out. Choose Log out to retry.'; return; }

@@ -47,7 +47,10 @@ impl Preview {
 
     pub fn act(&mut self, action: &str) {
         let mut command = json!({"action": action});
-        if matches!(action, "login" | "retry" | "failed logout") {
+        if matches!(
+            action,
+            "login" | "retry" | "failed logout" | "back" | "refresh restored"
+        ) {
             // Read the catalog records and grant links directly, not the operation under test.
             self.catalog.check(&self.f, true);
             let rows: Vec<(Uuid, String, i32)> = self

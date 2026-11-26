@@ -340,3 +340,28 @@ test('26 adds two enabled browser journeys to the unattended packet 25 gate', ()
   assert.throws(() => run(names, 1), /No passing, enabled browser_preview suite/);
   assert.throws(() => run(names), /reached inherited board link gate/);
 });
+
+test('27 requires both browser selection outcomes, previous browser cases and scoped access without foreground windows', () => {
+  const p = packets.find(p => p.id === '27-browser-board-navigation');
+  const prev = packets.find(p => p.id === '26-browser-board-preview');
+  const names = [...prev.browserCases, 'browser_opens_selected_board_by_id', 'browser_revoked_membership_blocks_selection'];
+  assert.equal(p.database, true);
+  assert.deepEqual(p.cases, prev.cases);
+  const output = (names, ignored) => [...names.map(n => `test ${n} ... ok`),
+    `test result: ok. ${names.length} passed; 0 failed; ${ignored} ignored`].join('\n');
+  const calls = [];
+  const run = (present, ignored = 0) => verify(p, (bin, args, capture) => {
+    calls.push([bin, ...args].join(' '));
+    if (args.includes('browser_preview') || args.includes('loopback_board_access')) {
+      assert.equal(capture, true);
+      return args.includes('browser_preview') ? output(present, ignored) : output(prev.cases, 0);
+    }
+  });
+  for (const n of names) assert.throws(() => run(names.filter(x => x !== n)), /Missing passing browser_preview case/);
+  assert.throws(() => run(names, 1), /No passing, enabled browser_preview suite/);
+  calls.length = 0;
+  run(names);
+  assert.deepEqual(calls, ['cargo fmt --all -- --check',
+    'cargo test --locked -p boardcraft-mobile-edit-host --features browser-smoke --test browser_preview -- --test-threads=1',
+    'node --test scripts/run.test.mjs', 'cargo test --locked --workspace --test loopback_board_access', 'cargo test --locked --workspace']);
+});

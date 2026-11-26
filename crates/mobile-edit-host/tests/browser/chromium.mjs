@@ -25,6 +25,7 @@ export function launch(profile, foreground) {
   ], {stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'], windowsHide: !foreground});
   const pending = new Map();
   const traffic = [];
+  const selectionStatuses = [];
   let seq = 0, session, buffer = '', ended = false, pageId, windowClosed;
   const tabClosed = new Promise(resolve => { windowClosed = resolve; });
   const closed = new Promise(resolve => {
@@ -49,6 +50,10 @@ export function launch(profile, foreground) {
         const req = msg.params.request;
         traffic.push([req.method, req.url]); // no headers or bodies
       }
+      if (msg.sessionId === session && msg.method === 'Network.responseReceived' && msg.params.type === 'Fetch') {
+        const {url, status} = msg.params.response;
+        if (new URL(url).pathname.startsWith('/navigation/boards/')) selectionStatuses.push(status);
+      }
     }
   });
   function send(method, params = {}, sessionId = session) {
@@ -65,7 +70,7 @@ export function launch(profile, foreground) {
     });
   }
   return {
-    windowClosed: Promise.race([closed, tabClosed]), traffic, send,
+    windowClosed: Promise.race([closed, tabClosed]), traffic, selectionStatuses, send,
     async open(url) {
       const {targetInfos} = await send('Target.getTargets');
       const page = targetInfos.find(p => p.type === 'page' && p.url === 'about:blank');

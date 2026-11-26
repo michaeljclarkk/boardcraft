@@ -52,6 +52,7 @@ const focus = id => `document.activeElement.id === '${id}' && !document.activeEl
 async function identifierScreen() {
   await wait(`${focus('identifier')} && document.activeElement.value === '' && !document.querySelector('li')
     && !document.querySelector('#boards').getBoundingClientRect().height
+    && !document.querySelector('#destination').getBoundingClientRect().height
     && !document.querySelector('#authenticate').getBoundingClientRect().height`, 'clean identifier');
   await named('textbox','Username or email'); await named('button','Next');
 }
@@ -71,23 +72,54 @@ async function visibleRows(expected, alert = '') {
   await wait(`document.querySelector('li') && !document.querySelector('#refresh').disabled`, 'board list');
   await named('list','Boards'); await named('button','Refresh'); await named('button','Log out');
   const rows = await observe(`Array.from(document.querySelectorAll('ul > li'), li => {
-    const r = li.getBoundingClientRect();
-    return [li.dataset.boardId, li.innerText, r.top, r.bottom, r.width, r.bottom <= innerHeight && r.top >= 0];
+    const b = li.querySelector(':scope > button:only-child');
+    const r = b.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.x + r.width/2, r.y + r.height/2);
+    return [b.dataset.boardId, b.innerText, r.top, r.bottom, r.width, !b.disabled && hit === b && r.bottom <= innerHeight && r.top >= 0];
   })`);
   check(rows.length === expected.length && rows.every(([id,name,top,bottom,width,visible],i) =>
     id === expected[i][0] && name === expected[i][1] && width > 0 && visible && bottom > top
     && (!i || top >= rows[i-1][3])), 'ordered visible IDs and names');
-  check(await observe(`!document.querySelector('li a, li button, #boards input, #boards textarea, [contenteditable=true]')
+  const {nodes} = await send('Accessibility.getFullAXTree');
+  const names = nodes.filter(n => !n.ignored && n.role?.value === 'button').map(n => n.name.value);
+  for (const [,name] of expected) {
+    check(names.filter(label => label === name).length === expected.filter(r => r[1] === name).length, 'accessible board buttons');
+  }
+  check(await observe(`!document.querySelector('li a, #boards input, #boards textarea, [contenteditable=true]') && document.querySelector('#destination').hidden
     && document.querySelector('#empty').hidden && document.querySelector('[role=alert]').innerText === ${JSON.stringify(alert)}`), 'list presentation');
 }
 async function noRows(empty) {
   const label = empty ? 'Refresh' : 'Retry board list';
   await wait(`!document.querySelector('li') && !document.querySelector('#refresh').disabled
+    && !document.querySelector('#boards').hidden && document.querySelector('#destination').hidden
     && document.querySelector('#refresh').innerText === '${label}'
     && (document.querySelector('#empty').getBoundingClientRect().height > 0) === ${empty}
     && document.querySelector('#empty').textContent === 'No boards'
     && document.querySelector('[role=alert]').innerText === '${empty ? '' : 'Could not load boards'}'`, label);
   await named('button', label);
+}
+
+// Fixture UUIDs, independent of the page's labels, dataset and requests.
+const uuid = n => '00000000-0000-0000-0000-' + n.toString(16).padStart(12, '0');
+const selectedGet = n => ['GET', `/navigation/boards/${uuid(n)}`];
+async function destination(expected) {
+  const denied = !expected;
+  await wait(`${focus(denied ? 'retry-destination' : 'back')} && document.querySelector('#boards').hidden
+    && !document.querySelector('[data-board-id]') && !document.querySelector('#destination').hidden
+    && document.querySelector('[role=alert]').innerText === '${denied ? 'Destination unavailable' : ''}'`, 'destination result');
+  await named('button', 'Back to boards');
+  if (denied) await named('button', 'Retry destination');
+  else await named('list', 'Board items');
+  const rows = await observe(`Array.from(document.querySelectorAll('li'), li => {
+    const r = li.getBoundingClientRect();
+    return [li.dataset.itemId, li.innerText, r.top, r.bottom, document.elementFromPoint(r.x+r.width/2, r.y+r.height/2) === li];
+  })`);
+  check(rows.length === (expected?.length ?? 0) && rows.every(([id,title,top,bottom,hit], i) =>
+    id === uuid(expected[i][0]) && title === expected[i][1] && hit && bottom > top && (!i || top >= rows[i-1][3])), 'ordered destination items');
+  const visibleControls = await observe(`Array.from(document.querySelectorAll('input, textarea, button, a, [contenteditable=true]'))
+    .filter(c => c.getClientRects().length).map(c => c.innerText)`);
+  check(JSON.stringify(visibleControls) === JSON.stringify(denied ? ['Retry destination','Back to boards'] : ['Back to boards']), 'read only destination controls');
+  check(JSON.stringify(browser.selectionStatuses.splice(0)) === JSON.stringify([denied ? 403 : 200]), 'selected response status');
 }
 
 async function perform({action, password, rows}) {
@@ -118,6 +150,22 @@ async function perform({action, password, rows}) {
     }
     case 'expired':
       await click('#refresh','Refresh'); await identifierScreen(); requests([list]); break;
+    case 'open last': case 'denied': case 'retry denied':
+      if (action === 'retry denied') await click('#retry-destination','Retry destination');
+      else await click('#boards li:last-child button','Review');
+      await destination(action === 'open last' ? [[73,'Sketch'],[61,'Ink']] : null);
+      requests([selectedGet(201)]); break;
+    case 'open first review':
+      await key('Tab','Tab',9);
+      check(await observe(`document.activeElement.dataset.boardId === '${uuid(202)}'`), 'focused first Review');
+      await enter(); await destination([[62,'Outline']]); requests([selectedGet(202)]); break;
+    case 'back': case 'back empty':
+      await click('#back','Back to boards');
+      if (action === 'back') await visibleRows(rows); else await noRows(true);
+      requests([list]); break;
+    case 'refresh restored':
+      await noRows(true); requests([]);
+      await click('#refresh','Refresh'); await visibleRows(rows); requests([list]); break;
     case 'park': await browser.windowClosed; break;
     default: throw Error('unknown action');
   }

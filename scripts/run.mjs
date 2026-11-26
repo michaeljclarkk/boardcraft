@@ -18,6 +18,8 @@ const boardNavigation = { ...visibleBoardList,
     cases: [...visibleBoardList.cases, 'selected_board_read_checks_current_membership'],
     windowsCases: [...visibleBoardList.windowsCases, 'opens_selected_board_by_id', 'revoked_membership_blocks_board_selection'] };
 
+const previewCases = ['browser_reject_correct_list_logout', 'browser_empty_unavailable_then_retry'];
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -58,7 +60,10 @@ export const packets = [
   { id: '24-android-board-navigation', ...boardNavigation, kitBrowse: true },
   { id: '25-windows-board-link', ...boardNavigation, boardLink: true },
   { id: '26-browser-board-preview', ...boardNavigation, boardLink: true,
-    browserCases: ['browser_reject_correct_list_logout', 'browser_empty_unavailable_then_retry'] },
+    browserCases: previewCases },
+  { id: '27-browser-board-navigation', database: true, model: boardNavigation.model,
+    target: boardNavigation.target, cases: boardNavigation.cases,
+    browserCases: [...previewCases, 'browser_opens_selected_board_by_id', 'browser_revoked_membership_blocks_selection'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -97,6 +102,7 @@ export function verify({ target, buildBins, cases = [], android, kitBrowse, kitF
     const args = ['test', '--locked', '-p', 'boardcraft-mobile-edit-host', '--features', 'browser-smoke',
       '--test', suite, '--', '--test-threads=1'];
     requireCases(suite, browserCases, exec('cargo', args, true));
+    if (!windowsCases) exec('node', ['--test', 'scripts/run.test.mjs']);
   }
   const windows = () => {
     const args = ['test', '--locked', '-p', 'boardcraft-desktop', '--features', 'native-smoke', '--test', 'windows_smoke'];

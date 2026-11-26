@@ -85,7 +85,9 @@ cargo run --locked -p boardcraft-mobile-edit-host --features browser-smoke --exa
 
 It opens `/preview/` in a new, temporary Chromium profile, enters a generated Viewer's credentials through the actual form, and leaves the signed-in list visible. Close that window to release the browser, profile, host and fixture schema. No password entry or clipboard handoff is needed. Node 22+ and installed Chromium are required. On Windows the driver looks for Edge or Chrome; to select a different installation, set `BOARDCRAFT_CHROMIUM` to its executable path.
 
-The unattended check runs separately: `cargo test --locked -p boardcraft-mobile-edit-host --features browser-smoke --test browser_preview -- --test-threads=1`. Both paths use a private automation pipe. `Host::start_preview` serves the page from the API's ephemeral loopback origin. The page keeps its bearer in memory; a reload starts at sign-in. Rows display names but do not open boards.
+The unattended check runs separately: `cargo test --locked -p boardcraft-mobile-edit-host --features browser-smoke --test browser_preview -- --test-threads=1`. If a foreground preview is already running on Windows, use a separate process-local `CARGO_TARGET_DIR` for builds and tests. Both paths use a private automation pipe. `Host::start_preview` serves the page from the API's ephemeral loopback origin. The page keeps its bearer in memory; a reload starts at sign-in.
+
+Click a board or focus its button and press Enter to read its items. **Back to boards** requests the current list. If access has changed, **Destination unavailable** offers **Retry destination** for that same board. Returning to an empty list shows **No boards**; use **Refresh** after access is restored.
 
 ### Android native host
 
