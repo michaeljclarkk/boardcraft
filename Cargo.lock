@@ -706,6 +706,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "boardcraft-account"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "log",
+ "postgres",
+ "ring",
+ "uuid",
+]
+
+[[package]]
 name = "boardcraft-board"
 version = "0.1.0"
 dependencies = [

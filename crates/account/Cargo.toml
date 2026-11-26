@@ -1,0 +1,15 @@
+[package]
+name = "boardcraft-account"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+base64 = "0.22"
+log = "0.4"
+postgres = { version = "0.19", features = ["with-uuid-1"] }
+ring = "0.17"
+uuid = "1"
+
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }

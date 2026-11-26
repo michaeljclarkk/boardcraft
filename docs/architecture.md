@@ -2,6 +2,8 @@
 
 | Boundary | Owner | Responsibility |
 |---|---|---|
+| Account sessions | [`sign_in`, `resolve`, `revoke`](../crates/account/src/lib.rs) and [schema](../crates/account/migrations/0001_account_session.sql) | Verify an existing active account under a row lock. Commit a digest linked to its UUID before returning a bearer. Resolve the current role from that link; logout deletes only that digest. |
+| Nonvisual sign-in | [`PasswordStep` and `SessionClient`](../crates/account/src/client.rs) | Advance locally, submit credentials, then resolve before exposing a ready account. Reopen takes only a token; an unavailable store leaves it in memory for retry. The desktop development actor remains a separate recovery setting. |
 | Board items | [`Board::rename_item` and `interactive_title`](../crates/board/src/lib.rs) | Own non-nil UUID identities, item order and the shared interactive title rule. |
 | Durable boards | [`store`](../crates/board/src/store.rs) and [schema](../crates/board/migrations/0001_boards.sql) | Migrate the schema, round-trip ordered boards, and return a board-scoped rename result after commit. |
 | Item revisions | [Revision migration](../crates/board/migrations/0002_item_revision.sql) and [`store::save_title`](../crates/board/src/store.rs) | Start at 1. Under the item lock, check the caller's condition and advance the revision only for a changed title. |

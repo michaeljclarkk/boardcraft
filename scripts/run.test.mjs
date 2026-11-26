@@ -78,6 +78,22 @@ test('the mobile service gate requires both cases, an enabled suite and workspac
   assert.deepEqual(calls, ['cargo fmt --all -- --check', 'cargo test --locked --workspace --test mobile_edit_service', 'cargo test --locked --workspace']);
 });
 
+test('13 requires both account journeys against the disposable database', () => {
+  const packet = packets.find(p => p.id === '13-account-session');
+  assert.equal(packet.database, true);
+  assert.equal(packet.model, 'openai/gpt-6.2-astra#high');
+  const cases = ['rejected_credentials_then_sign_in', 'resolve_retry_and_revoke'];
+  const calls = [];
+  const run = names => verify(packet, (bin, args) => {
+    calls.push([bin, ...args].join(' '));
+    return [...names.map(n => `test ${n} ... ok`), `test result: ok. ${names.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  for (const one of cases) assert.throws(() => run([one]), /Missing passing account_session case/);
+  calls.length = 0;
+  run(cases);
+  assert.deepEqual(calls, ['cargo fmt --all -- --check', 'cargo test --locked --workspace --test account_session', 'cargo test --locked --workspace']);
+});
+
 test('emulator preflight fails closed before any device mutation', () => {
   for (const serial of ['', '192.0.2.1:5555', 'usb-phone', 'emulator-1 extra']) {
     assert.throws(() => requireEditEmulator(() => assert.fail('unexpected adb'), serial), /dedicated emulator serial/);

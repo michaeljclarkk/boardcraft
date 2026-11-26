@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/board", "crates/desktop", "crates/mobile-edit-client", "crates/mobile-edit-host"]
+members = ["crates/account", "crates/board", "crates/desktop", "crates/mobile-edit-client", "crates/mobile-edit-host"]
 resolver = "3"
 
 [profile.dev]

@@ -22,6 +22,8 @@ export const packets = [
     windowsCases: ['rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board'] },
   { id: '12-windows-name-draft', database: true, model: 'openai/gpt-6.2-astra#high',
     windowsCases: ['rejected_edit_then_save_close_and_reopen', 'display_edit_cancel_blur_and_enter', 'parent_failure_retry_dismiss_and_commit', 'failed_name_reopens_only_for_actor_and_board', 'unsubmitted_name_reopens_with_entry_baseline'] },
+  { id: '13-account-session', target: 'account_session', database: true, model: 'openai/gpt-6.2-astra#high',
+    cases: ['rejected_credentials_then_sign_in', 'resolve_retry_and_revoke'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
