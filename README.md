@@ -1,6 +1,6 @@
 # boardcraft
 
-boardcraft is a native workspace for organizing work on boards. boardcraft is inspired by monday dot com, but does not, and will not ever use any of it's code, branding or assets.
+boardcraft is a native workspace for organizing work on boards. boardcraft is inspired by monday work management, and an internal tool I developed some time ago at work. 
 
 **First workflow:** Two items on a board are both called “Review”. Rename the second one to “Review artwork”, close the app, then reopen the board. The first row should still say “Review”; the second should keep its new name. The edit targets the item's ID, so matching titles never decide which row changes.
 
