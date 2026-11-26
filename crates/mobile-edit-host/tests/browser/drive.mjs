@@ -5,6 +5,7 @@ import {nameJourney} from './names.mjs';
 import {createJourney} from './create.mjs';
 import {moveJourney} from './moves.mjs';
 import {reorderJourney} from './reorder.mjs';
+import {selectionJourney} from './selection.mjs';
 
 const [profile, mode, port] = process.argv.slice(2);
 const primary = `http://127.0.0.1:${port}`;
@@ -31,16 +32,16 @@ async function named(role, name) {
   const {nodes} = await send('Accessibility.getFullAXTree');
   check(nodes.some(n => !n.ignored && n.role?.value === role && n.name?.value === name), 'accessible control');
 }
-async function click(selector, name, role = 'button', count = 1) {
+async function click(selector, name, role = 'button', count = 1, modifiers = 0, expectDisabled = false) {
   if (role) await named(role, name);
   const point = await observe(`(() => {
     const b = document.querySelector(${JSON.stringify(selector)}), r = b.getBoundingClientRect();
     const x = r.x + r.width/2, y = r.y + r.height/2;
-    return !b.disabled && document.elementFromPoint(x,y) === b && {x,y};
+    return Boolean(b.disabled) === ${expectDisabled} && document.elementFromPoint(x,y) === b && {x,y};
   })()`);
   check(point, 'control hit target');
   for (let i = 1; i <= count; i++) for (const type of ['mousePressed', 'mouseReleased']) {
-    await send('Input.dispatchMouseEvent', {type, ...point, button:'left', clickCount:i});
+    await send('Input.dispatchMouseEvent', {type, ...point, button:'left', clickCount:i, modifiers});
   }
 }
 async function key(key, code, vk, modifiers = 0, text) {
@@ -168,7 +169,7 @@ async function grouped(board, editable, saved = false, appended, moved = false, 
       return [s.dataset.groupId,visible(h) && h.innerText,[...s.querySelectorAll('li')].map(r =>
         [r.dataset.itemId,visible(r) && r.querySelector('.item-name')?.innerText,!!r.querySelector('button.item-name:enabled')])];
     });
-    return JSON.stringify(actual)===${JSON.stringify(JSON.stringify(shape))} && !document.querySelector('#items li input') && (${recovering} || !document.querySelector('#failures button'));
+    return JSON.stringify(actual)===${JSON.stringify(JSON.stringify(shape))} && !document.querySelector('#items li input:not([type=checkbox])') && (${recovering} || !document.querySelector('#failures button'));
   })()`, 'visible grouped board');
   for (const [,heading] of expected) { await named('region',heading); await named('heading',heading); }
 }
@@ -187,9 +188,9 @@ async function destination(expected, fresh = true) {
   check(rows.length === (expected?.length ?? 0) && rows.every(([id,title,top,bottom,hit], i) =>
     id === uuid(expected[i][0]) && title === expected[i][1] && hit && bottom > top && (!i || top >= rows[i-1][3])), 'ordered destination items');
   const visibleControls = await observe(`Array.from(document.querySelectorAll('input, textarea, button, a, [contenteditable=true]'))
-    .filter(c => c.getClientRects().length && !c.matches('.row-menu [aria-expanded=false]')).map(c => c.innerText)`);
+    .filter(c => c.getClientRects().length && !c.matches('.row-menu [aria-expanded=false],input[type=checkbox]')).map(c => c.innerText)`);
   check(JSON.stringify(visibleControls) === JSON.stringify(denied ? ['Retry destination','Back to boards'] : ['', '+ Add item', 'Back to boards']) &&
-    await observe(`!document.querySelector('#items input:enabled, #items button:enabled:not([aria-expanded])')`), 'read only destination controls');
+    await observe(`!document.querySelector('#items input:enabled:not([type=checkbox]), #items button:enabled:not([aria-expanded])')`), 'read only destination controls');
   check(JSON.stringify(browser.selectionStatuses.splice(0)) === JSON.stringify(fresh ? [denied ? 403 : 200] : []), 'selected response status');
 }
 
@@ -206,6 +207,7 @@ async function resumed(n, denied = false) {
   requests([resolve,selectedGet(n)]); statuses([resolve,200],[selectedGet(n),denied ? 403 : 200]); await historyAt(boardPath(n));
 }
 async function perform({action, password, rows, otherPort}) {
+  if (action.startsWith('select ')) return selectionJourney(action, {uuid, send, click, key, wait, requests, statuses, reload, historyAt, selectedGet, boardPath, resolve, observe, named});
   if (action.startsWith('reorder ')) return reorderJourney(action, {uuid, send, click, key, wait, requests, statuses, reload, historyAt, selectedGet, boardPath, resolve, observe});
   if (action.startsWith('move ')) return moveJourney(action, {browser, uuid, click, key, wait, check, grouped, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe});
   if (action.startsWith('create ')) return createJourney(action, {browser,click,enter,type,key,wait,check,grouped,

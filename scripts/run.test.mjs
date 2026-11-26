@@ -471,3 +471,17 @@ test('34 requires relative pointer drops, denied and rolled back ordering, and r
   run();
   for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
 });
+
+test('35 requires the duplicate checkbox and shift-range journeys and all previous board gates', () => {
+  const previous = packets.find(p => p.id === '34-browser-group-item-reorder');
+  const packet = packets.find(p => p.id === '35-browser-item-selection');
+  const browser = [...previous.browserCases, 'browser_selects_duplicate_rows_and_groups', 'browser_shift_selects_roots_across_groups'];
+  assert.deepEqual(packet, { ...previous, id: '35-browser-item-selection', browserCases: browser });
+  const run = missing => verify(packet, (_bin, args) => {
+    const names = args.includes('browser_preview') ? browser : args.includes('loopback_board_access') ? previous.cases : [];
+    const present = names.filter(n => n !== missing);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  run();
+  for (const n of [...browser, ...previous.cases]) assert.throws(() => run(n), /Missing passing/);
+});

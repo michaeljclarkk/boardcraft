@@ -1,6 +1,6 @@
 // Pointer capture keeps the release (including its click) on the grip. Hit-test
 // the actual pointer coordinates for the anchor; never rearrange DOM rows locally.
-export function mountReorder({api, board, refresh, busy, setBusy, status, button}) {
+export function mountReorder({api, board, refresh, busy, setBusy, status, button, multiDrag}) {
   function unavailable(error) {
     if (error === 401) api.expired();
     else if (error === 403) api.denied('Item reorder denied.');
@@ -41,13 +41,13 @@ export function mountReorder({api, board, refresh, busy, setBusy, status, button
     grip.onpointerdown = e => {
       if (e.button !== 0 || !e.isPrimary || e.pointerType === 'touch' || busy() || !api.current()) return;
       grip.focus(); // Blur can start a pending name save.
-      if (busy()) return;
+      if (busy() || multiDrag(row.id)) return;
       e.preventDefault(); grip.setPointerCapture(e.pointerId);
       start = {x:e.clientX, y:e.clientY, pointer:e.pointerId, board:board().revision, item:row.revision};
     };
     function mark(e) {
       clear();
-      if (!start || busy() || !api.current()) return;
+      if (!start || busy() || multiDrag(row.id) || !api.current()) return;
       dragging ||= Math.hypot(e.clientX-start.x, e.clientY-start.y) >= 6;
       if (!dragging) return;
       const li = document.elementFromPoint(e.clientX,e.clientY)?.closest('li[data-item-id]');

@@ -63,10 +63,13 @@ struct ReorderBoard {
 }
 impl ReorderBoard {
     fn open() -> Self {
-        let (mut app, session) = grouped_board(boardcraft_account::Role::Member);
+        Self::open_as(boardcraft_account::Role::Member, "reorder open")
+    }
+    fn open_as(role: boardcraft_account::Role, entry: &str) -> Self {
+        let (mut app, session) = grouped_board(role);
         reorder_state::seed(&app.f, app.account);
         let state = reorder_state::Snapshot::read(&app.f);
-        app.act("reorder open");
+        app.act(entry);
         Self {
             app,
             session,
@@ -91,6 +94,27 @@ impl ReorderBoard {
             role
         );
     }
+}
+
+#[test]
+fn browser_selects_duplicate_rows_and_groups() {
+    let mut c = ReorderBoard::open_as(boardcraft_account::Role::Member, "select member");
+    c.checkpoint("select duplicates", 0, "member");
+}
+
+#[test]
+fn browser_shift_selects_roots_across_groups() {
+    let mut c = ReorderBoard::open_as(boardcraft_account::Role::Viewer, "select viewer");
+    c.checkpoint("select reverse", 0, "viewer");
+    c.checkpoint("select reload", 0, "viewer");
+    let mut db = c.app.f.connect();
+    let mut lock = db.transaction().unwrap();
+    // Blocks the authorized read's FOR SHARE, but permits independent readbacks.
+    lock.batch_execute("LOCK TABLE account_sessions IN EXCLUSIVE MODE")
+        .unwrap();
+    c.checkpoint("select failed", 0, "viewer");
+    lock.rollback().unwrap();
+    c.checkpoint("select retry", 0, "viewer");
 }
 
 #[test]

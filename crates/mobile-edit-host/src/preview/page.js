@@ -136,6 +136,7 @@ async function loadDestination(id, current, notice = '') {
         method: 'PUT', body: JSON.stringify(edit)
       }),
       expired: forgetSession,
+      reopen: () => run(loadRoute),
       denied: (message = 'Name change denied.') => run(next => loadDestination(id, next, message)),
       reload: message => {
         clearNavigation();

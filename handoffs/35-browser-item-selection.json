@@ -1,0 +1,13 @@
+{
+  "status": "ready",
+  "summary": "Members and Viewers can select individual roots, whole groups and inclusive Shift ranges in the browser's grouped board. The mounted table owns the checked IDs and anchor. An uncached group or range uses the existing authorized grouped GET; a failed read leaves the previous selection intact.",
+  "evidence": [
+    "The previous handoff records an operator run of the full serial browser_preview suite: 22 passed, 0 failed, 0 ignored. This includes the 20 inherited journeys and both selection journeys. No implementation or test files changed during this review.",
+    "browser_selects_duplicate_rows_and_groups distinguished Ink 67 from 61 with pointer and Space, checked the mixed first Work group once, then unchecked it while retaining 59 in the other Work group. Empty Reserve was disabled. Clear removed the checks, row marks and toolbar. Dragging checked 67 with 59 also selected sent no reorder request.",
+    "browser_shift_selects_roots_across_groups retained anchor 59 through group toggles and Clear: reverse Shift clicks produced [67,77,59] then [67]. Reload cleared selection and anchor at the same history entry. As Viewer, the failed grouped GET (503) left [73,67] checked; a deliberate retry (200) selected [73,67,77,59]. A cached Shift removal left [73], then Clear removed the toolbar. The journeys checked request methods, paths, statuses and counts; selection sent no mutation.",
+    "Fresh fixture connections before retry and at the end of each journey checked grouped and flat order and compared stored items, boards and groups, including the direct target. Revisions, stamps, provenance, receipts, grants, role and matched session stayed unchanged.",
+    "This review: cargo test --locked --workspace -- --test-threads=1 passed all 34 tests, including all 19 loopback_board_access cases, using target-browser-packets. cargo fmt --all -- --check and git diff --check passed.",
+    "The worker shell denied node --test scripts/run.test.mjs before execution. Runner regressions remain unverified here."
+  ],
+  "next": "Run coordinator verification for packet 35, including the Node runner regressions."
+}

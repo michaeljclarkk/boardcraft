@@ -2,6 +2,7 @@
 // only its accepted rows supply editor baselines. A projection never changes them.
 import {mountMoves} from './moves.js';
 import {mountReorder} from './reorder.js';
+import {mountSelection} from './selection.js';
 
 export function mountNames(board, list, failureArea, api) {
   const failures = document.createElement('div'), moveFailures = document.createElement('div');
@@ -17,7 +18,8 @@ export function mountNames(board, list, failureArea, api) {
       render(); showFailures();
     }};
   const moves = mountMoves({...controls, list, failures: moveFailures});
-  const grip = mountReorder({...controls, status: reorderStatus});
+  const selection = mountSelection(controls, failureArea);
+  const grip = mountReorder({...controls, status: reorderStatus, multiDrag: selection.multiDrag});
 
   function setBusy(value) {
     busy = value;
@@ -84,6 +86,7 @@ export function mountNames(board, list, failureArea, api) {
       }
       Object.assign(accepted, saved);
       display.textContent = accepted.title;
+      display.parentNode.querySelector('[type=checkbox]').setAttribute('aria-label', `Select ${accepted.title}`);
       display.parentNode.querySelector('.row-menu button').setAttribute('aria-label', `More options for ${accepted.title}`);
     } catch (error) {
       if (!api.current()) return;
@@ -97,6 +100,7 @@ export function mountNames(board, list, failureArea, api) {
   function cell(row, group) {
     const li = document.createElement('li');
     li.dataset.itemId = row.id;
+    li.append(selection.checkbox(group, row));
     const menu = moves.menu(row, group);
     if (!board.editable) {
       const name = document.createElement('span'); name.className = 'item-name'; name.textContent = row.title;
@@ -195,9 +199,12 @@ export function mountNames(board, list, failureArea, api) {
     const rows = document.createElement('ul');
     rows.setAttribute('aria-label', 'Board items');
     rows.append(...group.items.map(row => cell(row, group)));
-    region.append(heading, rows, addEntry(group));
+    region.append(selection.checkbox(group), heading, rows, addEntry(group));
     return region;
   }
-  function render() { list.replaceChildren(...board.groups.map(section)); moves.showFailures(); }
+  function render() {
+    selection.resetSnapshot(); list.replaceChildren(...board.groups.map(section));
+    selection.paint(); moves.showFailures();
+  }
   render();
 }

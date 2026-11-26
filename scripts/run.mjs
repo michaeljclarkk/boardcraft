@@ -44,6 +44,10 @@ const previewMove = { ...previewCreate,
   cases: [...previewCreate.cases, 'preview_move_requires_current_group_access', 'preview_move_checks_group_revision_and_order'],
   browserCases: [...previewCreate.browserCases, 'browser_moves_item_by_group_id', 'browser_demoted_viewer_cannot_move_item', 'browser_reviews_failed_group_move'] };
 
+const previewReorder = { ...previewMove,
+  cases: [...previewMove.cases, 'preview_reorder_requires_current_access_and_anchor', 'preview_reorder_checks_revisions_and_replay'],
+  browserCases: [...previewMove.browserCases, 'browser_reorders_duplicate_rows_by_pointer', 'browser_demoted_viewer_cannot_reorder', 'browser_failed_reorder_rolls_back_then_redrags'] };
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -92,9 +96,9 @@ export const packets = [
   { id: '31-browser-board-groups', ...previewGroups },
   { id: '32-browser-group-item-create', ...previewCreate },
   { id: '33-browser-group-item-move', ...previewMove },
-  { id: '34-browser-group-item-reorder', ...previewMove,
-    cases: [...previewMove.cases, 'preview_reorder_requires_current_access_and_anchor', 'preview_reorder_checks_revisions_and_replay'],
-    browserCases: [...previewMove.browserCases, 'browser_reorders_duplicate_rows_by_pointer', 'browser_demoted_viewer_cannot_reorder', 'browser_failed_reorder_rolls_back_then_redrags'] },
+  { id: '34-browser-group-item-reorder', ...previewReorder },
+  { id: '35-browser-item-selection', ...previewReorder,
+    browserCases: [...previewReorder.browserCases, 'browser_selects_duplicate_rows_and_groups', 'browser_shift_selects_roots_across_groups'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

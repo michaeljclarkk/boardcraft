@@ -103,6 +103,8 @@ To move an existing row on that board, open **More options** beside its name, ch
 
 To reorder within a group, drag a row by its grip. After six pixels of travel, the upper or lower half of another row marks where to drop. Escape cancels. A drop keeps the saved order visible until the host commits and the preview reads the group again. If the order cannot be confirmed, **Reload board** reads the current order. Drag again only if a change is still needed.
 
+Members and Viewers can check individual rows, check a group, or Shift-click to extend a selection across groups. **Clear item selection** clears every check but keeps the last ordinary row toggle as the range anchor. Reload clears both. If a selection read fails, the previous checks stay in place; repeat the gesture to retry, or choose **Reload board** if the displayed rows have changed.
+
 ### Android native host
 
 Kit's [v0.11.0 mobile guide](https://github.com/longbridge/gpui-kit/blob/v0.11.0/website/docs/mobile.md) describes limited Android testing of chat controls including Input. Android uses the mobile activity/surface host, not the desktop window entry point. The guide's [example build](https://github.com/longbridge/gpui-mobile/blob/0b882efdac7f524e0bb0b1d4c886b2aa752f9f20/example/build.sh) packages an arm64 Rust library via cargo-ndk and Gradle. Its documented GPUI baseline is 0.3.4; even the [mobile fork revision inspected](https://github.com/longbridge/gpui-mobile/blob/7548ebc4b24f00494af9976af8852c7163ded9ce/Cargo.toml) pins core and Android renderer to 0.3.10. boardcraft's Kit 0.11.0 locks core at **0.3.14**. There is an experimental host, but no demonstrated matching set here.
