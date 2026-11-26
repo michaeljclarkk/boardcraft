@@ -24,7 +24,7 @@ pub fn seed(f: &Fixture, actor: Uuid) {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
     items: Vec<Value>,
     boards: Vec<Value>,
@@ -32,6 +32,87 @@ pub struct Snapshot {
     receipts: Vec<Value>,
 }
 impl Snapshot {
+    // Build the expected committed records from the pre-attempt snapshot, then
+    // verify the two public read shapes independently of the POST acknowledgment.
+    pub fn batch(
+        &self,
+        f: &Fixture,
+        actor: Uuid,
+        group: &str,
+        destination: &[u128],
+        selected: &[u128],
+    ) -> Self {
+        let now = Self::read(f);
+        let mut expected = self.clone();
+        let id = |n| json!(Uuid::from_u128(n));
+        let base = expected
+            .boards
+            .iter_mut()
+            .find(|r| r["id"] == json!(SELECTED))
+            .unwrap();
+        let rev = base["revision"].as_i64().unwrap();
+        base["revision"] = json!(rev + 1);
+        let revisions: Vec<_> = selected
+            .iter()
+            .map(|n| self.items.iter().find(|r| r["id"] == id(*n)).unwrap()["revision"].clone())
+            .collect();
+        for (pos, n) in destination.iter().enumerate() {
+            let row = expected
+                .items
+                .iter_mut()
+                .find(|r| r["id"] == id(*n))
+                .unwrap();
+            row["position"] = json!(pos);
+            if selected.contains(n) {
+                row["group_id"] = json!(group);
+                let version = row["revision"].as_i64().unwrap() + 1;
+                for field in ["revision", "position_revision", "group_revision"] {
+                    row[field] = json!(version);
+                }
+            }
+        }
+        let receipt = now.receipts.last().unwrap();
+        let op = Uuid::parse_str(receipt["operation_id"].as_str().unwrap()).unwrap();
+        assert!(!op.is_nil());
+        let mut affected: Vec<Uuid> =
+            serde_json::from_value(receipt["affected_ids"].clone()).unwrap();
+        affected.sort();
+        let ids: Vec<_> = selected.iter().copied().map(Uuid::from_u128).collect();
+        let mut sorted = ids.clone();
+        sorted.sort();
+        assert_eq!(affected, sorted);
+        expected.receipts.push(json!({"operation_id":op,"actor_id":actor,"board_id":SELECTED,"board_revision":rev,"group_id":group,"selected_ids":ids,"selected_revisions":revisions,"affected_ids":receipt["affected_ids"]}));
+        assert_eq!(now, expected);
+        let board = BoardId::new(SELECTED).unwrap();
+        let (_, groups) = store::load_group_snapshot(&mut f.connect(), board)
+            .ok()
+            .unwrap();
+        assert_eq!(
+            groups
+                .iter()
+                .find(|g| g.id == group)
+                .unwrap()
+                .items
+                .iter()
+                .map(|r| r.id.as_uuid().as_u128())
+                .collect::<Vec<_>>(),
+            destination
+        );
+        let flat: Vec<_> = store::load_items(&mut f.connect(), board)
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(
+            flat,
+            groups
+                .into_iter()
+                .flat_map(|g| g.items.into_iter().map(|r| r.id))
+                .collect::<Vec<_>>()
+        );
+        now
+    }
     pub fn read(f: &Fixture) -> Self {
         let mut db = f.connect();
         let mut rows = |sql| {
@@ -46,7 +127,7 @@ impl Snapshot {
             boards: rows("SELECT row_to_json(b)::text FROM boards b ORDER BY id"),
             groups: rows("SELECT row_to_json(g)::text FROM board_groups g ORDER BY board_id,id"),
             receipts: rows(
-                "SELECT row_to_json(r)::text FROM group_reorder_receipts r ORDER BY board_revision",
+                "SELECT jsonb_strip_nulls(to_jsonb(r))::text FROM group_reorder_receipts r ORDER BY board_revision",
             ),
         }
     }

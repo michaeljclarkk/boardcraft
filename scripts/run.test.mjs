@@ -485,3 +485,18 @@ test('35 requires the duplicate checkbox and shift-range journeys and all previo
   run();
   for (const n of [...browser, ...previous.cases]) assert.throws(() => run(n), /Missing passing/);
 });
+
+test('36 requires selection move order, review, denial, whole-command replay and all earlier board gates', () => {
+  const previous = packets.find(p => p.id === '35-browser-item-selection');
+  const packet = packets.find(p => p.id === '36-browser-selection-group-move');
+  const browser = [...previous.browserCases, 'browser_moves_toolbar_selection_in_request_order', 'browser_reviews_conflicting_selection_move', 'browser_demoted_viewer_cannot_move_selection'];
+  const host = [...previous.cases, 'preview_selection_move_requires_current_access_and_valid_roots', 'preview_selection_move_is_atomic_and_replay_safe'];
+  assert.deepEqual(packet, { ...previous, id: '36-browser-selection-group-move', cases: host, browserCases: browser });
+  const run = missing => verify(packet, (_bin, args) => {
+    const names = args.includes('browser_preview') ? browser : args.includes('loopback_board_access') ? host : [];
+    const present = names.filter(n => n !== missing);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  run();
+  for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
+});

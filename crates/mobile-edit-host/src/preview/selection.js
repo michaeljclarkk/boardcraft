@@ -1,5 +1,8 @@
 // One complete, bounded physical grid. Never infer group membership from controls.
-export function mountSelection({api, board, busy, setBusy, button}, area) {
+import {openSelectionMove} from './selection-move.js';
+
+export function mountSelection(controls, area) {
+  const {api, board, busy, setBusy, button} = controls;
   const checked = new Set(), rowControls = new Map(), headers = new Map();
   let anchor, resolved;
   const toolbar = document.createElement('div'), count = document.createElement('span');
@@ -9,8 +12,11 @@ export function mountSelection({api, board, busy, setBusy, button}, area) {
   toolbar.append(count, ' ', button('Clear item selection', () => {
     if (!busy() && api.current()) { checked.clear(); notice.replaceChildren(); paint(); }
   }));
+  const move = button('Move to', () => openSelectionMove(controls, area, checked));
+  toolbar.append(move);
 
   function paint() {
+    move.disabled = !board().editable;
     for (const [id, box] of rowControls) {
       box.checked = checked.has(id);
       box.closest('li').classList.toggle('selected-item', box.checked);
@@ -25,7 +31,7 @@ export function mountSelection({api, board, busy, setBusy, button}, area) {
   }
 
   function apply(ids, add) {
-    for (const id of ids) { if (add) checked.add(id); else checked.delete(id); }
+    for (const id of ids) { checked.delete(id); if (add) checked.add(id); }
     paint();
   }
   const layout = groups => groups.map(g => [g.id, g.items.map(r => r.id)]);

@@ -6,6 +6,7 @@ import {createJourney} from './create.mjs';
 import {moveJourney} from './moves.mjs';
 import {reorderJourney} from './reorder.mjs';
 import {selectionJourney} from './selection.mjs';
+import {batchJourney} from './selection-move.mjs';
 
 const [profile, mode, port] = process.argv.slice(2);
 const primary = `http://127.0.0.1:${port}`;
@@ -207,6 +208,7 @@ async function resumed(n, denied = false) {
   requests([resolve,selectedGet(n)]); statuses([resolve,200],[selectedGet(n),denied ? 403 : 200]); await historyAt(boardPath(n));
 }
 async function perform({action, password, rows, otherPort}) {
+  if (action.startsWith('batch ')) return batchJourney(action, {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe, named});
   if (action.startsWith('select ')) return selectionJourney(action, {uuid, send, click, key, wait, requests, statuses, reload, historyAt, selectedGet, boardPath, resolve, observe, named});
   if (action.startsWith('reorder ')) return reorderJourney(action, {uuid, send, click, key, wait, requests, statuses, reload, historyAt, selectedGet, boardPath, resolve, observe});
   if (action.startsWith('move ')) return moveJourney(action, {browser, uuid, click, key, wait, check, grouped, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe});

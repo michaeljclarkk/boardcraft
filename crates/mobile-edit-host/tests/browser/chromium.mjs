@@ -64,6 +64,9 @@ export function launch(profile, foreground) {
           && msg.params.type === 'Fetch') {
         const req = msg.params.request;
         tab.traffic.push([req.method, req.url]); // no headers or bodies
+        if (req.method === 'POST' && new URL(req.url).pathname === '/preview/api/navigation/boards/00000000-0000-0000-0000-0000000000c9/items/move-selection') {
+          tab.batchIds.push(msg.params.requestId);
+        }
         if (req.method === 'POST' && new URL(req.url).pathname ===
             '/preview/api/navigation/boards/00000000-0000-0000-0000-0000000000c9/items') {
           tab.createIds.push(msg.params.requestId);
@@ -100,7 +103,7 @@ export function launch(profile, foreground) {
   async function attach(name, targetId, url) {
     ({sessionId: session} = await send('Target.attachToTarget', {targetId, flatten:true}, null));
     tabs.set(name, session);
-    logs.set(session, {traffic:[], responses:[], selectionStatuses:[], renameIds:[], createIds:[], moveIds:[], probe:name === 'peer' && {extra:new Map()}});
+    logs.set(session, {traffic:[], responses:[], selectionStatuses:[], renameIds:[], createIds:[], moveIds:[], batchIds:[], probe:name === 'peer' && {extra:new Map()}});
     await send('Network.enable', {maxPostDataSize:0});
     await send('Page.navigate', {url});
   }
@@ -112,6 +115,7 @@ export function launch(profile, foreground) {
     get renameIds() { return logs.get(session).renameIds; },
     get createIds() { return logs.get(session).createIds; },
     get moveIds() { return logs.get(session).moveIds; },
+    get batchIds() { return logs.get(session).batchIds; },
     async isolatedProbe() {
       const tab = logs.get(session), p = tab.probe;
       for (let n = 0; n < 80 && !(p.id && p.extra.has(p.id)); n++) await delay(25);

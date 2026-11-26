@@ -12,6 +12,18 @@ mod move_state;
 mod reorder_checks;
 #[path = "fixture/reorder_state.rs"]
 mod reorder_state;
+#[path = "fixture/selection_move_checks.rs"]
+mod selection_move_checks;
+
+#[test]
+fn preview_selection_move_requires_current_access_and_valid_roots() {
+    selection_move_checks::access();
+}
+#[test]
+fn preview_selection_move_is_atomic_and_replay_safe() {
+    selection_move_checks::replay();
+    selection_move_checks::migration();
+}
 
 #[test]
 fn preview_reorder_requires_current_access_and_anchor() {

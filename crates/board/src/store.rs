@@ -4,7 +4,9 @@ use postgres::{Client, Error};
 use crate::{Board, BoardId, Item, ItemId, RenameError, interactive_title};
 
 mod reorder;
+mod selection_move;
 pub use reorder::{Reorder, ReorderError, reorder_group_item};
+pub use selection_move::{SelectionMove, move_selected_items};
 
 /// Apply each schema change and record its version in the same transaction.
 pub fn migrate(client: &mut Client) -> Result<(), Error> {
@@ -72,6 +74,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
     {
         tx.batch_execute(include_str!("../migrations/0006_group_reorder.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (6)", &[])?;
+    }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version=7",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0007_selection_move.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (7)", &[])?;
     }
     tx.commit()
 }

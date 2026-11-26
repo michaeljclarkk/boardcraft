@@ -197,7 +197,8 @@ fn login(config: &Config, req: &mut Request) -> Result<Token, u16> {
     {
         return Err(415);
     }
-    let credentials: Credentials = serde_json::from_slice(&read_body(req)?).map_err(|_| 400u16)?;
+    let credentials: Credentials =
+        serde_json::from_slice(&read_body(req, 64 * 1024)?).map_err(|_| 400u16)?;
     boardcraft_account::sign_in(config, &credentials.identifier, &credentials.password)
         .map_err(access::account_status)
 }
@@ -283,6 +284,7 @@ fn handle(
             (board, SelectedWrite, Some(id))
         }
         (Method::Post, ["", "navigation", "boards", board, "items"])
+        | (Method::Post, ["", "navigation", "boards", board, "items", "move-selection"])
             if matches!(shape, ReadShape::Grouped) =>
         {
             (board, SelectedWrite, None)
@@ -310,6 +312,7 @@ fn handle(
         Read,
         Rename(ItemId, Result<NameEdit, u16>),
         Create(Result<CreateDraft, u16>),
+        SelectionMove(Result<SelectionMoveDraft, u16>),
         Move(ItemId, Result<MoveDraft, u16>),
         Reorder(ItemId, Result<ReorderDraft, u16>),
     }
@@ -317,6 +320,9 @@ fn handle(
         Some(item) if path.last() == Some(&"reorder") => Action::Reorder(item, read_json(req)),
         Some(item) if path.last() == Some(&"group") => Action::Move(item, read_json(req)),
         Some(item) => Action::Rename(item, read_edit(req)),
+        None if path.last() == Some(&"move-selection") => {
+            Action::SelectionMove(read_json_limit(req, 1024 * 1024))
+        }
         None if req.method() == &Method::Post => Action::Create(read_json(req)),
         None => Action::Read,
     };
@@ -332,6 +338,23 @@ fn handle(
     let can_edit = access::authorize(&mut tx, &account, board, operation)?;
     let mut revision = None;
     let body = match action {
+        Action::SelectionMove(draft) => {
+            let d = draft?;
+            let items: Vec<_> = d.items.into_iter().map(|r| (r.id, r.revision)).collect();
+            let affected = store::move_selected_items(
+                &mut tx,
+                account.id,
+                board,
+                &store::SelectionMove {
+                    operation: d.operation_id,
+                    group: &d.group_id,
+                    board_revision: d.board_revision,
+                    items: &items,
+                },
+            )
+            .map_err(|err| order_error(err, requested, "move_selected_items"))?;
+            serde_json::to_vec(&serde_json::json!({"board_id":requested,"operation_id":d.operation_id,"affected_ids":affected})).unwrap()
+        }
         Action::Reorder(item, draft) => {
             let draft = draft?;
             let command = store::Reorder {
@@ -342,22 +365,8 @@ fn handle(
                 board_revision: draft.board_revision,
                 item_revision: draft.item_revision,
             };
-            store::reorder_group_item(&mut tx, account.id, board, item, &command).map_err(
-                |err| match err {
-                    store::ReorderError::Conflict => 409u16,
-                    store::ReorderError::Invalid => 422,
-                    store::ReorderError::Missing => 404,
-                    store::ReorderError::TooLarge => 413,
-                    store::ReorderError::Database(e) => {
-                        log::error!(
-                            "reorder_group_item board={requested} item={} sqlstate={:?}",
-                            item.as_uuid(),
-                            e.code()
-                        );
-                        500
-                    }
-                },
-            )?;
+            store::reorder_group_item(&mut tx, account.id, board, item, &command)
+                .map_err(|err| order_error(err, requested, "reorder_group_item"))?;
             serde_json::to_vec(&serde_json::json!({"operation_id":draft.operation_id,"board_id":requested,"item_id":item.as_uuid()})).unwrap()
         }
         Action::Create(draft) => {
@@ -457,6 +466,35 @@ enum Side {
     After,
 }
 
+fn order_error(err: store::ReorderError, board: Uuid, op: &str) -> u16 {
+    match err {
+        store::ReorderError::Conflict => 409,
+        store::ReorderError::Invalid => 422,
+        store::ReorderError::Missing => 404,
+        store::ReorderError::TooLarge => 413,
+        store::ReorderError::Database(e) => {
+            log::error!("{op} board={board} sqlstate={:?}", e.code());
+            500
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelectionMoveDraft {
+    operation_id: Uuid,
+    group_id: String,
+    board_revision: i64,
+    items: Vec<SelectedRoot>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelectedRoot {
+    id: Uuid,
+    revision: i64,
+}
+
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReorderDraft {
@@ -469,7 +507,7 @@ struct ReorderDraft {
 }
 
 fn read_edit(req: &mut Request) -> Result<NameEdit, u16> {
-    serde_json::from_slice(&read_body(req)?).map_err(|_| 400)
+    serde_json::from_slice(&read_body(req, 64 * 1024)?).map_err(|_| 400)
 }
 
 #[derive(serde::Deserialize)]
@@ -492,22 +530,28 @@ struct MoveDraft {
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(req: &mut Request) -> Result<T, u16> {
+    read_json_limit(req, 64 * 1024)
+}
+
+fn read_json_limit<T: serde::de::DeserializeOwned>(
+    req: &mut Request,
+    limit: u64,
+) -> Result<T, u16> {
     if browser_session::one(req, "Content-Type")?.and_then(|v| v.split(';').next())
         != Some("application/json")
     {
         return Err(415);
     }
-    serde_json::from_slice(&read_body(req)?).map_err(|_| 400)
+    serde_json::from_slice(&read_body(req, limit)?).map_err(|_| 400)
 }
 
-fn read_body(req: &mut Request) -> Result<Vec<u8>, u16> {
-    const MAX_BODY: u64 = 64 * 1024;
+fn read_body(req: &mut Request, limit: u64) -> Result<Vec<u8>, u16> {
     let mut body = Vec::new();
     req.as_reader()
-        .take(MAX_BODY + 1)
+        .take(limit + 1)
         .read_to_end(&mut body)
         .map_err(|_| 400u16)?;
-    if body.len() as u64 > MAX_BODY {
+    if body.len() as u64 > limit {
         return Err(413);
     }
     Ok(body)

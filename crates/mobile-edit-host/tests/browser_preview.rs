@@ -62,6 +62,16 @@ struct ReorderBoard {
     state: reorder_state::Snapshot,
 }
 impl ReorderBoard {
+    fn batch_dialog() -> Self {
+        let mut c = Self::open_as(boardcraft_account::Role::Member, "select member");
+        c.checkpoint("batch open", 0, "member");
+        c
+    }
+    fn batch_unchanged(&mut self, action: &str, role: &str) {
+        self.app.act(action);
+        assert_eq!(reorder_state::Snapshot::read(&self.app.f), self.state);
+        self.access_checkpoint(role);
+    }
     fn open() -> Self {
         Self::open_as(boardcraft_account::Role::Member, "reorder open")
     }
@@ -79,6 +89,9 @@ impl ReorderBoard {
     fn checkpoint(&mut self, action: &str, drops: usize, role: &str) {
         self.app.act(action);
         self.state.check(&self.app.f, self.app.account, drops);
+        self.access_checkpoint(role);
+    }
+    fn access_checkpoint(&self, role: &str) {
         self.app.catalog.check_grants(&self.app.f, true);
         assert!(StoredSession::only(&self.app.f, self.app.account) == self.session);
         assert_eq!(
@@ -94,6 +107,84 @@ impl ReorderBoard {
             role
         );
     }
+}
+
+#[test]
+fn browser_moves_toolbar_selection_in_request_order() {
+    let mut c = ReorderBoard::batch_dialog();
+    c.batch_unchanged("batch cancel", "member");
+    let mut db = c.app.f.connect();
+    let mut lock = db.transaction().unwrap();
+    lock.query_one(
+        "SELECT revision FROM boards WHERE id=$1 FOR UPDATE",
+        &[&selection::SELECTED],
+    )
+    .unwrap();
+    c.batch_unchanged("batch pending", "member");
+    lock.rollback().unwrap();
+    let order = [73, 77, 67, 59, 61];
+    c.app.act("batch saved");
+    c.state = c
+        .state
+        .batch(&c.app.f, c.app.account, "g-90", &order, &[67, 59, 61]);
+    c.access_checkpoint("member");
+    c.batch_unchanged("batch reload", "member");
+    c.app.act("batch reserve");
+    c.state
+        .batch(&c.app.f, c.app.account, "g-10", &order, &order);
+    c.access_checkpoint("member");
+}
+
+#[test]
+fn browser_reviews_conflicting_selection_move() {
+    let mut c = ReorderBoard::batch_dialog();
+    let mut db = c.app.f.connect();
+    let id = uuid::Uuid::from_u128(61);
+    db.execute(
+        "UPDATE board_items SET title='Indigo',revision=2 WHERE id=$1",
+        &[&id],
+    )
+    .unwrap();
+    c.state = reorder_state::Snapshot::read(&c.app.f);
+    c.batch_unchanged("batch conflict", "member");
+    db.execute("UPDATE board_items SET group_id='g-30' WHERE id=$1", &[&id])
+        .unwrap();
+    let visible = c.state.clone();
+    c.state = reorder_state::Snapshot::read(&c.app.f);
+    c.batch_unchanged("batch unavailable", "member");
+    db.execute("UPDATE board_items SET group_id='g-90' WHERE id=$1", &[&id])
+        .unwrap();
+    c.state = visible;
+    c.batch_unchanged("batch review", "member");
+    db.batch_execute("CREATE FUNCTION fail_batch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture commit fault'; END $$; CREATE CONSTRAINT TRIGGER fail_batch AFTER INSERT ON group_reorder_receipts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fail_batch()").unwrap();
+    c.batch_unchanged("batch fault", "member");
+    db.batch_execute("DROP TRIGGER fail_batch ON group_reorder_receipts")
+        .unwrap();
+    c.app.act("batch reviewed saved");
+    c.state.batch(
+        &c.app.f,
+        c.app.account,
+        "g-90",
+        &[73, 77, 67, 59, 61],
+        &[67, 59, 61],
+    );
+    c.access_checkpoint("member");
+}
+
+#[test]
+fn browser_demoted_viewer_cannot_move_selection() {
+    let mut c = ReorderBoard::batch_dialog();
+    c.batch_unchanged("batch choose other", "member");
+    c.app
+        .f
+        .connect()
+        .execute(
+            "UPDATE accounts SET role='viewer' WHERE id=$1",
+            &[&c.app.account],
+        )
+        .unwrap();
+    c.batch_unchanged("batch denied", "viewer");
+    c.batch_unchanged("batch viewer", "viewer");
 }
 
 #[test]

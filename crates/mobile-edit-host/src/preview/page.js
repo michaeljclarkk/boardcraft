@@ -125,6 +125,7 @@ async function loadDestination(id, current, notice = '') {
     mountNames(board, items, $('#failures'), {
       current: () => visit === mounted,
       read,
+      moveSelection: draft => request(`${path}/items/move-selection`, {method:'POST', body:JSON.stringify(draft)}),
       reorder: (item, draft) => request(`${path}/items/${encodeURIComponent(item)}/reorder`, {
         method: 'POST', body: JSON.stringify(draft)
       }),
