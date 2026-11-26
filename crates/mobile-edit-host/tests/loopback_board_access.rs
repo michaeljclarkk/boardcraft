@@ -4,6 +4,10 @@ mod browser_transport;
 mod caller;
 #[path = "fixture/create.rs"]
 mod create;
+#[path = "fixture/lifecycle.rs"]
+mod lifecycle;
+#[path = "fixture/lifecycle_checks.rs"]
+mod lifecycle_checks;
 #[path = "fixture/move_checks.rs"]
 mod move_checks;
 #[path = "fixture/move_state.rs"]
@@ -12,6 +16,16 @@ mod move_state;
 mod reorder_checks;
 #[path = "fixture/reorder_state.rs"]
 mod reorder_state;
+
+#[test]
+fn preview_root_lifecycle_requires_current_owner() {
+    lifecycle_checks::access();
+}
+#[test]
+fn preview_root_lifecycle_preserves_visibility_and_replay() {
+    lifecycle_checks::replay();
+    lifecycle_checks::migration();
+}
 #[path = "fixture/selection_move_checks.rs"]
 mod selection_move_checks;
 

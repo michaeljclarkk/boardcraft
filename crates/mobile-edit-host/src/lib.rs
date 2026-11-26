@@ -15,6 +15,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use uuid::Uuid;
 struct ReadMetadata {
     can_edit: bool,
+    owner: bool,
     revision: Option<i64>,
 }
 type ApiResult = Result<(Vec<u8>, Option<ReadMetadata>), u16>;
@@ -119,8 +120,20 @@ impl Host {
                         let mut response = Response::from_data(body).with_header(
                             Header::from_bytes("Content-Type", "application/json").unwrap(),
                         );
-                        if let Some(ReadMetadata { can_edit, revision }) = hint {
+                        if let Some(ReadMetadata {
+                            can_edit,
+                            revision,
+                            owner,
+                        }) = hint
+                        {
                             if let Some(revision) = revision {
+                                response.add_header(
+                                    Header::from_bytes(
+                                        "Boardcraft-Root-Lifecycle",
+                                        if owner { "owner" } else { "read" },
+                                    )
+                                    .unwrap(),
+                                );
                                 response.add_header(
                                     Header::from_bytes(
                                         "Boardcraft-Board-Revision",
@@ -275,6 +288,23 @@ fn handle(
             (id, SelectedRead, None)
         }
         (Method::Get, ["", "boards", id]) => (id, ScopedRead, None),
+        (Method::Get, ["", "navigation", "boards", board, "archive"])
+            if matches!(shape, ReadShape::Grouped) =>
+        {
+            (board, SelectedRead, None)
+        }
+        (
+            Method::Post,
+            [
+                "",
+                "navigation",
+                "boards",
+                board,
+                "items",
+                id,
+                "archive" | "restore",
+            ],
+        ) if matches!(shape, ReadShape::Grouped) => (board, SelectedLifecycle, Some(id)),
         (Method::Put, ["", "boards", board, "items", id, "name"]) => {
             (board, ScopedRename, Some(id))
         }
@@ -310,6 +340,8 @@ fn handle(
     // validation or board data before the caller has been authorized.
     enum Action {
         Read,
+        ArchivePage,
+        Lifecycle(ItemId, store::Lifecycle, Result<RootDraft, u16>),
         Rename(ItemId, Result<NameEdit, u16>),
         Create(Result<CreateDraft, u16>),
         SelectionMove(Result<SelectionMoveDraft, u16>),
@@ -317,6 +349,13 @@ fn handle(
         Reorder(ItemId, Result<ReorderDraft, u16>),
     }
     let action = match target {
+        Some(item) if path.last() == Some(&"archive") => {
+            Action::Lifecycle(item, store::Lifecycle::Archive, read_json(req))
+        }
+        Some(item) if path.last() == Some(&"restore") => {
+            Action::Lifecycle(item, store::Lifecycle::Restore, read_json(req))
+        }
+        None if path.last() == Some(&"archive") => Action::ArchivePage,
         Some(item) if path.last() == Some(&"reorder") => Action::Reorder(item, read_json(req)),
         Some(item) if path.last() == Some(&"group") => Action::Move(item, read_json(req)),
         Some(item) => Action::Rename(item, read_edit(req)),
@@ -336,8 +375,32 @@ fn handle(
     }
     let board = BoardId::new(requested).ok_or(404u16)?;
     let can_edit = access::authorize(&mut tx, &account, board, operation)?;
+    let owner = account.role == boardcraft_account::Role::Owner;
     let mut revision = None;
     let body = match action {
+        Action::ArchivePage => {
+            let page = store::archive_page(&mut tx, board)
+                .map_err(|e| order_error(e, requested, "archive_page"))?;
+            let items:Vec<_>=page.items.into_iter().map(|r|serde_json::json!({"id":r.id,"title":r.title,"group_id":r.group_id,"group_name":r.group_name,"revision":r.revision,"state":r.state,"effective_state":1,"restorable":owner && r.group_active,"group_active":r.group_active})).collect();
+            serde_json::to_vec(&serde_json::json!({"board_revision":page.revision,"can_manage":owner,"total":page.total,"has_more":page.total>items.len() as i64,"items":items})).unwrap()
+        }
+        Action::Lifecycle(item, action, draft) => {
+            let d = draft?;
+            store::transition_root(
+                &mut tx,
+                account.id,
+                board,
+                item,
+                &store::RootCommand {
+                    action,
+                    operation: d.operation_id,
+                    board_revision: d.board_revision,
+                    item_revision: d.item_revision,
+                },
+            )
+            .map_err(|e| order_error(e, requested, "transition_root"))?;
+            serde_json::to_vec(&serde_json::json!({"operation_id":d.operation_id,"item_id":item.as_uuid(),"board_id":requested})).unwrap()
+        }
         Action::SelectionMove(draft) => {
             let d = draft?;
             let items: Vec<_> = d.items.into_iter().map(|r| (r.id, r.revision)).collect();
@@ -456,7 +519,14 @@ fn handle(
     })?;
     let hint = matches!(operation, ScopedRead)
         || (mode == Mode::Preview && matches!(operation, SelectedRead));
-    Ok((body, hint.then_some(ReadMetadata { can_edit, revision })))
+    Ok((
+        body,
+        hint.then_some(ReadMetadata {
+            can_edit,
+            revision,
+            owner,
+        }),
+    ))
 }
 
 #[derive(serde::Deserialize)]
@@ -486,6 +556,14 @@ struct SelectionMoveDraft {
     group_id: String,
     board_revision: i64,
     items: Vec<SelectedRoot>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RootDraft {
+    operation_id: Uuid,
+    board_revision: i64,
+    item_revision: i64,
 }
 
 #[derive(serde::Deserialize)]

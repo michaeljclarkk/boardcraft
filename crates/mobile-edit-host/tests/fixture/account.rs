@@ -18,6 +18,7 @@ pub fn seed_account_on(db: &mut postgres::Client, login: &str, password: &str, r
     );
     let role = match role {
         Role::Viewer => "viewer",
+        Role::Owner => "owner",
         Role::Member => "member",
     };
     db.execute(

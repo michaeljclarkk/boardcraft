@@ -500,3 +500,18 @@ test('36 requires selection move order, review, denial, whole-command replay and
   run();
   for (const n of [...browser, ...host]) assert.throws(() => run(n), /Missing passing/);
 });
+
+test('37 requires root archive and restore, recovery, Owner checks, visibility and every inherited board gate', () => {
+  const previous = packets.find(p => p.id === '36-browser-selection-group-move');
+  const packet = packets.find(p => p.id === '37-browser-root-archive-restore');
+  const browser = [...previous.browserCases, 'browser_archives_and_restores_one_root', 'browser_recovers_failed_root_lifecycle', 'browser_demoted_member_cannot_restore_root'];
+  const host = [...previous.cases, 'preview_root_lifecycle_requires_current_owner', 'preview_root_lifecycle_preserves_visibility_and_replay'];
+  assert.deepEqual(packet, { ...previous, id: '37-browser-root-archive-restore', cases: host, browserCases: browser });
+  const run = missing => verify(packet, (_bin, args) => {
+    const names = args.includes('browser_preview') ? browser : args.includes('loopback_board_access') ? host : [];
+    const present = names.filter(n => n !== missing);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  run();
+  for (const name of [...browser, ...host]) assert.throws(() => run(name), /Missing passing/);
+});

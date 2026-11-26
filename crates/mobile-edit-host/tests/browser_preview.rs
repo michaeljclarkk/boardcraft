@@ -1,6 +1,8 @@
 mod browser;
 #[allow(dead_code)]
 mod fixture;
+#[path = "fixture/lifecycle.rs"]
+mod lifecycle;
 #[path = "fixture/move_state.rs"]
 mod move_state;
 #[path = "fixture/peer.rs"]
@@ -62,6 +64,22 @@ struct ReorderBoard {
     state: reorder_state::Snapshot,
 }
 impl ReorderBoard {
+    fn owner_board() -> Self {
+        let (mut app, session) = grouped_board(boardcraft_account::Role::Owner);
+        lifecycle::seed(&app.f, app.account);
+        let state = reorder_state::Snapshot::read(&app.f);
+        app.act("select member");
+        Self {
+            app,
+            session,
+            state,
+        }
+    }
+    fn changed(&mut self, step: &str, action: &str) {
+        self.app.act(step);
+        self.state = self.state.lifecycle(&self.app.f, self.app.account, action);
+        self.access_checkpoint("owner");
+    }
     fn batch_dialog() -> Self {
         let mut c = Self::open_as(boardcraft_account::Role::Member, "select member");
         c.checkpoint("batch open", 0, "member");
@@ -107,6 +125,113 @@ impl ReorderBoard {
             role
         );
     }
+}
+
+#[test]
+fn browser_archives_and_restores_one_root() {
+    let mut c = ReorderBoard::owner_board();
+    for step in ["life cancel", "life dialog"] {
+        c.batch_unchanged(step, "owner");
+    }
+    let mut db = c.app.f.connect();
+    let mut lock = db.transaction().unwrap();
+    lock.query_one(
+        "SELECT revision FROM boards WHERE id=$1 FOR UPDATE",
+        &[&selection::SELECTED],
+    )
+    .unwrap();
+    c.batch_unchanged("life pending", "owner");
+    lock.rollback().unwrap();
+    c.changed("life committed", "archive");
+    for step in ["life inspect", "life reload"] {
+        c.batch_unchanged(step, "owner");
+    }
+    let mut lock = db.transaction().unwrap();
+    lock.query_one(
+        "SELECT revision FROM boards WHERE id=$1 FOR UPDATE",
+        &[&selection::SELECTED],
+    )
+    .unwrap();
+    c.batch_unchanged("life restoring", "owner");
+    lock.rollback().unwrap();
+    c.changed("life restored", "restore");
+    for step in ["life close", "life empty"] {
+        c.batch_unchanged(step, "owner");
+    }
+}
+
+#[test]
+fn browser_recovers_failed_root_lifecycle() {
+    let mut c = ReorderBoard::owner_board();
+    c.batch_unchanged("life dialog", "owner");
+    let mut db = c.app.f.connect();
+    db.batch_execute("CREATE FUNCTION fail_receipt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture commit fault'; END $$; CREATE CONSTRAINT TRIGGER fail_receipt AFTER INSERT ON group_reorder_receipts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fail_receipt()").unwrap();
+    c.batch_unchanged("life fault", "owner");
+    db.batch_execute("DROP TRIGGER fail_receipt ON group_reorder_receipts")
+        .unwrap();
+    c.changed("life retry", "archive");
+    c.batch_unchanged("life inspect", "owner");
+    db.execute(
+        "UPDATE boards SET revision=3 WHERE id=$1",
+        &[&selection::SELECTED],
+    )
+    .unwrap();
+    c.state = reorder_state::Snapshot::read(&c.app.f);
+    for step in ["life stale", "life review"] {
+        c.batch_unchanged(step, "owner");
+    }
+    c.changed("life latest restore", "restore");
+    c.batch_unchanged("life close", "owner");
+    c.batch_unchanged("life dialog", "owner");
+    db.execute(
+        "UPDATE board_items SET revision=revision+1 WHERE id=$1",
+        &[&uuid::Uuid::from_u128(67)],
+    )
+    .unwrap();
+    c.state = reorder_state::Snapshot::read(&c.app.f);
+    for step in ["life stale archive", "life review archive"] {
+        c.batch_unchanged(step, "owner");
+    }
+}
+
+#[test]
+fn browser_demoted_member_cannot_restore_root() {
+    let mut c = ReorderBoard::owner_board();
+    c.batch_unchanged("life dialog", "owner");
+    c.changed("life archive", "archive");
+    c.batch_unchanged("life inspect", "owner");
+    let mut db = c.app.f.connect();
+    db.execute(
+        "UPDATE accounts SET role='member' WHERE id=$1",
+        &[&c.app.account],
+    )
+    .unwrap();
+    for step in [
+        "life denied",
+        "life readonly",
+        "life member grid",
+        "life return readonly",
+    ] {
+        c.batch_unchanged(step, "member");
+    }
+    db.execute(
+        "UPDATE accounts SET role='viewer' WHERE id=$1",
+        &[&c.app.account],
+    )
+    .unwrap();
+    for step in ["life readonly", "life viewer grid"] {
+        c.batch_unchanged(step, "viewer");
+    }
+    c.app.catalog.membership(&c.app.f, false);
+    c.app.act("life unavailable");
+    assert_eq!(c.state, reorder_state::Snapshot::read(&c.app.f));
+    c.app.catalog.check_grants(&c.app.f, false);
+    assert!(c.session.present(&c.app.f));
+    c.session.revoke(&c.app.f);
+    c.app.act("life expired");
+    assert_eq!(c.state, reorder_state::Snapshot::read(&c.app.f));
+    c.app.catalog.check_grants(&c.app.f, false);
+    assert!(!c.session.present(&c.app.f));
 }
 
 #[test]

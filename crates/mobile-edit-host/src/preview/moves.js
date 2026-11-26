@@ -1,5 +1,5 @@
 // Mounted for one selected-board visit. Only Confirm and Apply call the PUT.
-export function mountMoves({api, list, failures, button, board, refresh, busy, setBusy}) {
+export function mountMoves({api, list, failures, button, board, refresh, busy, setBusy, archive}) {
   const failed = new Map();
   const sourceOf = (state, id) => state.groups.find(g => g.items.some(r => r.id === id));
   function accessError(error) {
@@ -121,11 +121,14 @@ export function mountMoves({api, list, failures, button, board, refresh, busy, s
     const container = document.createElement('span'); container.className = 'row-menu';
     const more = button('⋯', () => {
       if (busy() || !api.current()) return;
-      move.hidden = !move.hidden; more.setAttribute('aria-expanded', String(!move.hidden));
+      lifecycle.hidden = move.hidden = !move.hidden; more.setAttribute('aria-expanded', String(!move.hidden));
     });
     more.setAttribute('aria-label', `More options for ${row.title}`); more.setAttribute('aria-expanded','false');
     const move = button('Move to', () => open(row, group)); move.disabled = !board().editable; move.hidden = true;
-    container.append(more, move); return container;
+    const lifecycle = button('Archive', () => archive(row)); lifecycle.className = 'archive-item';
+    lifecycle.hidden = true; lifecycle.disabled = !board().owner;
+    if (lifecycle.disabled) lifecycle.title = 'Owner access required.';
+    container.append(more, lifecycle, move); return container;
   }
   return {menu, showFailures};
 }

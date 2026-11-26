@@ -51,6 +51,10 @@ const previewReorder = { ...previewMove,
 const previewSelection = { ...previewReorder,
   browserCases: [...previewReorder.browserCases, 'browser_selects_duplicate_rows_and_groups', 'browser_shift_selects_roots_across_groups'] };
 
+const previewSelectionMove = { ...previewSelection,
+  cases: [...previewSelection.cases, 'preview_selection_move_requires_current_access_and_valid_roots', 'preview_selection_move_is_atomic_and_replay_safe'],
+  browserCases: [...previewSelection.browserCases, 'browser_moves_toolbar_selection_in_request_order', 'browser_reviews_conflicting_selection_move', 'browser_demoted_viewer_cannot_move_selection'] };
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -101,9 +105,10 @@ export const packets = [
   { id: '33-browser-group-item-move', ...previewMove },
   { id: '34-browser-group-item-reorder', ...previewReorder },
   { id: '35-browser-item-selection', ...previewSelection },
-  { id: '36-browser-selection-group-move', ...previewSelection,
-    cases: [...previewSelection.cases, 'preview_selection_move_requires_current_access_and_valid_roots', 'preview_selection_move_is_atomic_and_replay_safe'],
-    browserCases: [...previewSelection.browserCases, 'browser_moves_toolbar_selection_in_request_order', 'browser_reviews_conflicting_selection_move', 'browser_demoted_viewer_cannot_move_selection'] },
+  { id: '36-browser-selection-group-move', ...previewSelectionMove },
+  { id: '37-browser-root-archive-restore', ...previewSelectionMove,
+    cases: [...previewSelectionMove.cases, 'preview_root_lifecycle_requires_current_owner', 'preview_root_lifecycle_preserves_visibility_and_replay'],
+    browserCases: [...previewSelectionMove.browserCases, 'browser_archives_and_restores_one_root', 'browser_recovers_failed_root_lifecycle', 'browser_demoted_member_cannot_restore_root'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

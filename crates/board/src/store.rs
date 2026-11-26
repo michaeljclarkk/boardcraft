@@ -3,6 +3,8 @@ use postgres::{Client, Error};
 
 use crate::{Board, BoardId, Item, ItemId, RenameError, interactive_title};
 
+mod lifecycle;
+pub use lifecycle::{ArchivePage, Lifecycle, RootCommand, archive_page, transition_root};
 mod reorder;
 mod selection_move;
 pub use reorder::{Reorder, ReorderError, reorder_group_item};
@@ -84,6 +86,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
     {
         tx.batch_execute(include_str!("../migrations/0007_selection_move.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (7)", &[])?;
+    }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version=8",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0008_root_lifecycle.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (8)", &[])?;
     }
     tx.commit()
 }
@@ -181,7 +193,7 @@ pub fn create_group_item(
         ON CONFLICT (id) DO NOTHING RETURNING group_id,title,revision", &[&item.0,&board.0,&group,&creator,&title]).map_err(Database)?;
     let row = match inserted {
         Some(row) => row,
-        None => tx.query_opt("SELECT i.group_id,i.title,i.revision FROM board_items i JOIN board_groups g ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.id=$1 AND i.board_id=$2 AND creation_group_id=$3 AND created_by=$4 AND creation_title=$5 AND g.active FOR SHARE",
+        None => tx.query_opt("SELECT i.group_id,i.title,i.revision FROM board_items i JOIN board_groups g ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.id=$1 AND i.board_id=$2 AND creation_group_id=$3 AND created_by=$4 AND creation_title=$5 AND g.active AND i.state=0 FOR SHARE",
             &[&item.0,&board.0,&group,&creator,&title]).map_err(Database)?.ok_or(Collision)?,
     };
     Ok(group_item(row, item))
@@ -205,7 +217,7 @@ pub fn move_group_item(
 ) -> Result<GroupItem, MoveError> {
     use MoveError::*;
     lock_structure_writer(tx, board).map_err(Database)?;
-    let mut row = tx.query_opt("SELECT i.group_id,i.title,i.revision,i.group_revision FROM board_items i JOIN board_groups g ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.board_id=$1 AND i.id=$2 AND g.active FOR UPDATE OF i FOR SHARE OF g", &[&board.0,&item.0]).map_err(Database)?.ok_or(MissingItem)?;
+    let mut row = tx.query_opt("SELECT i.group_id,i.title,i.revision,i.group_revision FROM board_items i JOIN board_groups g ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.board_id=$1 AND i.id=$2 AND g.active AND i.state=0 FOR UPDATE OF i FOR SHARE OF g", &[&board.0,&item.0]).map_err(Database)?.ok_or(MissingItem)?;
     tx.query_opt(
         "SELECT id FROM board_groups WHERE board_id=$1 AND id=$2 AND active FOR SHARE",
         &[&board.0, &destination],
@@ -229,7 +241,7 @@ pub fn load_items(
     let rows = client.query(
         "SELECT i.id, i.title, i.revision FROM boards b
          LEFT JOIN board_groups g ON g.board_id=b.id AND g.active
-         LEFT JOIN board_items i ON (i.board_id,i.group_id)=(g.board_id,g.id)
+         LEFT JOIN board_items i ON (i.board_id,i.group_id)=(g.board_id,g.id) AND i.state=0
          WHERE b.id=$1 ORDER BY g.position,g.id,i.position,i.created_at NULLS FIRST,i.id",
         &[&id.0],
     )?;
@@ -279,7 +291,7 @@ pub fn load_group_snapshot(
         .query(
             "SELECT g.id, g.name, i.id, i.title, i.revision, b.revision FROM boards b
          LEFT JOIN board_groups g ON g.board_id=b.id AND g.active
-         LEFT JOIN board_items i ON (i.board_id,i.group_id)=(g.board_id,g.id)
+         LEFT JOIN board_items i ON (i.board_id,i.group_id)=(g.board_id,g.id) AND i.state=0
          WHERE b.id=$1 ORDER BY g.position,g.id,i.position,i.created_at NULLS FIRST,i.id LIMIT $2",
             &[&board.0, &(GROUPED_ROW_LIMIT + 1)],
         )
@@ -330,7 +342,7 @@ pub fn current_item(
     client
         .query_opt(
             "SELECT i.title,i.revision FROM board_items i JOIN board_groups g
-             ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.board_id=$1 AND i.id=$2 AND g.active",
+             ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.board_id=$1 AND i.id=$2 AND g.active AND i.state=0",
             &[&board.0, &item.0],
         )
         .and_then(|row| {
@@ -439,7 +451,7 @@ fn save_title(
     let row = tx
         .query_opt(
             "SELECT i.title,i.revision FROM board_items i JOIN board_groups g
-             ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.board_id=$1 AND i.id=$2 AND g.active
+             ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.board_id=$1 AND i.id=$2 AND g.active AND i.state=0
              FOR UPDATE OF i FOR SHARE OF g",
             &[&board.0, &item.0],
         )

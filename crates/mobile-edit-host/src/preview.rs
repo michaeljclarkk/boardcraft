@@ -6,6 +6,7 @@ fn board_document(request: &Request) -> bool {
     let Some(text) = request.url().strip_prefix("/boards/") else {
         return false;
     };
+    let text = text.strip_suffix("/archive").unwrap_or(text);
     let has = |name, value: &str| {
         request
             .headers()
@@ -27,6 +28,7 @@ pub(super) fn asset(request: &Request) -> Option<Response<Cursor<&'static [u8]>>
             include_bytes!("preview/index.html"),
         ),
         "/preview/page.js" => ("text/javascript", include_bytes!("preview/page.js")),
+        "/preview/lifecycle.js" => ("text/javascript", include_bytes!("preview/lifecycle.js")),
         "/preview/binding.js" => ("text/javascript", include_bytes!("preview/binding.js")),
         "/preview/names.js" => ("text/javascript", include_bytes!("preview/names.js")),
         "/preview/moves.js" => ("text/javascript", include_bytes!("preview/moves.js")),

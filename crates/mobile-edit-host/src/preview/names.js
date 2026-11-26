@@ -1,6 +1,7 @@
 // State belongs to one mounted board visit. Requests close over that visit's path;
 // only its accepted rows supply editor baselines. A projection never changes them.
 import {mountMoves} from './moves.js';
+import {archiveDialog} from './lifecycle.js';
 import {mountReorder} from './reorder.js';
 import {mountSelection} from './selection.js';
 
@@ -17,7 +18,7 @@ export function mountNames(board, list, failureArea, api) {
       if (!board.editable) { drafts.clear(); rejected.clear(); }
       render(); showFailures();
     }};
-  const moves = mountMoves({...controls, list, failures: moveFailures});
+  const moves = mountMoves({...controls, list, failures: moveFailures, archive: row => archiveDialog(row, controls, failureArea)});
   const selection = mountSelection(controls, failureArea);
   const grip = mountReorder({...controls, status: reorderStatus, multiDrag: selection.multiDrag});
 

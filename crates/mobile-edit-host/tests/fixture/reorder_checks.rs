@@ -273,13 +273,18 @@ pub fn migration() {
         db.execute("INSERT INTO board_items(id,board_id,group_id,title,position,created_at,created_by,creation_title,creation_group_id,revision,group_revision) VALUES ($1,$2,'g','Ink',10,$3::text::timestamptz,$4,'Original','g',4,3)", &[&Uuid::from_u128(id),&SELECTED,&date,&actor]).unwrap();
     }
     let rows = |db: &mut postgres::Client| {
-        db.query("SELECT (to_jsonb(i)-'position_revision')::text FROM board_items i ORDER BY position,created_at NULLS FIRST,id",&[]).unwrap().into_iter().map(|r|r.get::<_,String>(0)).collect::<Vec<_>>()
+        db.query("SELECT (to_jsonb(i)-'position_revision'-'state')::text FROM board_items i ORDER BY position,created_at NULLS FIRST,id",&[]).unwrap().into_iter().map(|r|r.get::<_,String>(0)).collect::<Vec<_>>()
     };
     let before = rows(&mut db);
     for _ in 0..2 {
         store::migrate(&mut db).unwrap();
         db = connect();
         assert_eq!(rows(&mut db), before);
+        assert!(
+            db.query_one("SELECT bool_and(state=0) FROM board_items", &[])
+                .unwrap()
+                .get::<_, bool>(0)
+        );
     }
     let mut tx = db.transaction().unwrap();
     let board = BoardId::new(SELECTED).unwrap();

@@ -59,7 +59,7 @@ pub fn move_selected_items(
     let siblings = lock_group_order(tx, board, cmd.group)?;
     let roots = tx.query(
         "SELECT i.id,i.revision FROM unnest($2::uuid[]) WITH ORDINALITY AS r(id,n)
-        JOIN board_items i ON i.board_id=$1 AND i.id=r.id
+        JOIN board_items i ON i.board_id=$1 AND i.id=r.id AND i.state=0
         JOIN board_groups g ON g.board_id=i.board_id AND g.id=i.group_id AND g.active
         ORDER BY r.n FOR UPDATE OF i FOR SHARE OF g",
         &[&board.0, &ids],
@@ -108,10 +108,13 @@ pub fn move_selected_items(
     Ok(affected)
 }
 
-fn check_grid_budget(tx: &mut Transaction<'_>, board: BoardId) -> Result<(), ReorderError> {
+pub(super) fn check_grid_budget(
+    tx: &mut Transaction<'_>,
+    board: BoardId,
+) -> Result<(), ReorderError> {
     let overflow = tx.query_opt(
         "SELECT 1 FROM board_groups g LEFT JOIN board_items i
-        ON (i.board_id,i.group_id)=(g.board_id,g.id) WHERE g.board_id=$1 AND g.active
+        ON (i.board_id,i.group_id)=(g.board_id,g.id) AND i.state=0 WHERE g.board_id=$1 AND g.active
         OFFSET $2 LIMIT 1",
         &[&board.0, &GROUPED_ROW_LIMIT],
     )?;

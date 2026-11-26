@@ -1,4 +1,5 @@
 import {mountNames} from './names.js';
+import {mountArchive} from './lifecycle.js';
 import {readBinding, changeBinding, onChange} from './binding.js';
 
 const $ = selector => document.querySelector(selector);
@@ -19,6 +20,7 @@ function clearNavigation() {
   $('#failures').replaceChildren();
   list.replaceChildren(); $('#empty').hidden = true;
   items.replaceChildren(); retry.hidden = true; retry.onclick = null;
+  $('#recovery-nav').replaceChildren();
 }
 
 function signInScreen() {
@@ -68,6 +70,8 @@ function navigate(path) {
 }
 
 function loadRoute(current) {
+  const archive = /^\/boards\/([^/]+)\/archive$/.exec(location.pathname);
+  if (archive) return loadDestination(archive[1], current, '', true);
   return location.pathname === '/preview/' ? loadBoards(current)
     : loadDestination(location.pathname.slice('/boards/'.length), current);
 }
@@ -107,24 +111,42 @@ async function loadBoards(current) {
   }
 }
 
-async function loadDestination(id, current, notice = '') {
+async function loadDestination(id, current, notice = '', recovery = false) {
   clearNavigation();
-  step(destination, 'Board items');
+  step(destination, recovery ? 'Archive' : 'Board items');
   alert.textContent = notice;
   const path = `/navigation/boards/${encodeURIComponent(id)}`;
   async function read() {
     const response = await fetchResponse(path);
     const groups = await response.json();
     const revision = Number(response.headers.get('boardcraft-board-revision'));
-    return {id, revision, groups, rows: groups.flatMap(g => g.items), editable: response.headers.get('boardcraft-board-access') === 'edit'};
+    return {id, revision, groups, rows: groups.flatMap(g => g.items), owner: response.headers.get('boardcraft-root-lifecycle') === 'owner', editable: response.headers.get('boardcraft-board-access') === 'edit'};
   }
+  async function transition(item, action, draft) {
+    const ack = await request(`${path}/items/${encodeURIComponent(item)}/${action}`, {method:'POST', body:JSON.stringify(draft)});
+    if (ack.board_id !== id || ack.item_id !== item || ack.operation_id !== draft.operation_id) throw Error('Unexpected acknowledgment');
+  }
+  const link = document.createElement('a');
+  link.href = `/boards/${id}${recovery ? '' : '/archive'}`;
+  link.textContent = recovery ? 'Close recovery' : 'Archive';
+  link.onclick = e => { if (!e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey) { e.preventDefault(); navigate(link.pathname); } };
   try {
+    if (recovery) {
+      const page = await request(path+'/archive');
+      if (!current()) return;
+      const mounted = visit = Symbol();
+      mountArchive(items, page, {transition, current: () => visit === mounted, expired: forgetSession, readBoard: read, refresh: () => run(loadRoute)});
+      $('#recovery-nav').append(link); return;
+    }
     const board = await read();
     if (!current()) return;
     const mounted = visit = Symbol();
+    const menu = document.createElement('details'), label = document.createElement('summary');
+    label.textContent = 'Archived & deleted content'; menu.append(label, link); $('#recovery-nav').append(menu);
     mountNames(board, items, $('#failures'), {
       current: () => visit === mounted,
       read,
+      transition,
       moveSelection: draft => request(`${path}/items/move-selection`, {method:'POST', body:JSON.stringify(draft)}),
       reorder: (item, draft) => request(`${path}/items/${encodeURIComponent(item)}/reorder`, {
         method: 'POST', body: JSON.stringify(draft)

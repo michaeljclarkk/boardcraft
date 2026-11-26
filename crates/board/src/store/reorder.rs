@@ -67,6 +67,15 @@ pub fn reorder_group_item(
     let rows = lock_group_order(tx, board, r.group)?;
     let mut order: Vec<Uuid> = rows.iter().map(|r| r.get(0)).collect();
     let source = order.iter().position(|id| *id == item.0).ok_or(Missing)?;
+    if rows[source].get::<_, i32>(2) != 0 {
+        return Err(Missing);
+    }
+    if !rows
+        .iter()
+        .any(|row| row.get::<_, Uuid>(0) == r.anchor && row.get::<_, i32>(2) == 0)
+    {
+        return Err(Conflict);
+    }
     if rows[source].get::<_, i64>(1) != r.item_revision {
         return Err(Conflict);
     }
@@ -109,7 +118,7 @@ pub(super) fn lock_group_order(
     )?
     .ok_or(ReorderError::Invalid)?;
     let rows = tx.query(
-        "SELECT id,revision FROM board_items WHERE board_id=$1 AND group_id=$2
+        "SELECT id,revision,state FROM board_items WHERE board_id=$1 AND group_id=$2
          ORDER BY position,created_at NULLS FIRST,id LIMIT $3 FOR UPDATE",
         &[&board.0, &group, &(GROUPED_ROW_LIMIT + 1)],
     )?;

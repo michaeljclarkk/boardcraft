@@ -16,6 +16,7 @@ li { padding: .45rem; border-bottom: 1px solid #c5d6d1; overflow-wrap: anywhere;
 .add-item { display: flex; align-items: center; gap: .4rem; margin: .4rem 0; flex-wrap: wrap; }
 .add-item input { margin: 0; min-width: 0; }
 .row-menu { float: right; }
+#recovery-nav details:not([open]) > a { display: none; }
 #items li { display: flow-root; }
 #items input[type=checkbox] { display: inline-block; margin: 0 .5rem 0 0; vertical-align: middle; }
 #items section > input[type=checkbox] { float: left; margin-top: .4rem; }

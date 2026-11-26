@@ -27,6 +27,7 @@ fn unavailable<E>(operation: &'static str) -> impl FnOnce(E) -> Error {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
+    Owner,
     Viewer,
     Member,
 }
@@ -81,8 +82,12 @@ impl Token {
 
 pub fn migrate(config: &Config) -> Result<(), Error> {
     let mut db = config.connect(NoTls).map_err(unavailable("migrate"))?;
-    db.batch_execute(include_str!("../migrations/0001_account_session.sql"))
-        .map_err(unavailable("migrate"))
+    db.batch_execute(concat!(
+        include_str!("../migrations/0001_account_session.sql"),
+        "\n",
+        include_str!("../migrations/0002_owner.sql")
+    ))
+    .map_err(unavailable("migrate"))
 }
 
 fn identifier(raw: &str) -> Result<&str, Error> {
@@ -156,6 +161,7 @@ pub fn resolve_on(db: &mut impl postgres::GenericClient, token: &Token) -> Resul
         .ok_or(Error::Rejected)?;
     let role = match row.get::<_, &str>(1) {
         "viewer" => Role::Viewer,
+        "owner" => Role::Owner,
         "member" => Role::Member,
         _ => return Err(unavailable("resolve")(())),
     };
