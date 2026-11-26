@@ -4,7 +4,7 @@
 |---|---|---|
 | Board items | [`Board::rename_item` and `interactive_title`](../crates/board/src/lib.rs) | Own non-nil UUID identities, item order and the shared interactive title rule. |
 | Durable boards | [`store`](../crates/board/src/store.rs) and [schema](../crates/board/migrations/0001_boards.sql) | Migrate the schema, round-trip ordered boards, and return a board-scoped rename result after commit. |
-| Desktop startup | [Desktop entry point](../crates/desktop/src/main.rs) | Initialize GPUI Kit and open the development window. |
+| Desktop board editor | [Kit window and rows](../crates/desktop/src/main.rs), [`InlineEdit`](../crates/desktop/src/lib.rs) | Load an ordered board in the background. Each row owns a Kit input, draft, last accepted title and save phase. Submit calls `store::rename_item_if_current` off the UI thread. |
 | Framework versions | [Desktop package](../crates/desktop/Cargo.toml) and [lockfile](../Cargo.lock) | Select the Kit release as a unit; use its GPUI re-exports rather than adding an independent GPUI revision. |
 | Development database | [Local helper](../scripts/postgres.ps1) | Own the disposable local cluster and test login. |
 | Milestone execution | [Runner](../scripts/run.mjs) | Dispatch one worker per packet, check its handoff, run gates and record a checkpoint. |

@@ -63,6 +63,7 @@ pub fn load_board(client: &mut Client, id: BoardId) -> Result<Option<Board>, Err
 #[derive(Debug)]
 pub enum SaveError {
     Rejected(RenameError),
+    Conflict { current: String },
     Database(Error),
 }
 
@@ -70,6 +71,27 @@ pub fn rename_item(
     client: &mut Client,
     board: BoardId,
     item: ItemId,
+    draft: &str,
+) -> Result<String, SaveError> {
+    save_title(client, board, item, None, draft)
+}
+
+/// An inline editor must not silently overwrite a title changed since it loaded.
+pub fn rename_item_if_current(
+    client: &mut Client,
+    board: BoardId,
+    item: ItemId,
+    expected: &str,
+    draft: &str,
+) -> Result<String, SaveError> {
+    save_title(client, board, item, Some(expected), draft)
+}
+
+fn save_title(
+    client: &mut Client,
+    board: BoardId,
+    item: ItemId,
+    expected: Option<&str>,
     draft: &str,
 ) -> Result<String, SaveError> {
     let title = interactive_title(draft).map_err(SaveError::Rejected)?;
@@ -83,6 +105,19 @@ pub fn rename_item(
         SaveError::Database(error)
     };
     let mut tx = client.transaction().map_err(fault)?;
+    if let Some(expected) = expected {
+        let row = tx
+            .query_opt(
+                "SELECT title FROM board_items WHERE board_id = $1 AND id = $2 FOR UPDATE",
+                &[&board.0, &item.0],
+            )
+            .map_err(fault)?
+            .ok_or(SaveError::Rejected(RenameError::MissingItem(item)))?;
+        let current: String = row.try_get(0).map_err(fault)?;
+        if current != expected {
+            return Err(SaveError::Conflict { current });
+        }
+    }
     let saved = tx
         .query_opt(
             "UPDATE board_items SET title = $3 WHERE board_id = $1 AND id = $2 RETURNING title",

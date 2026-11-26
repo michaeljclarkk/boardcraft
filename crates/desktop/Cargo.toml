@@ -4,5 +4,18 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+native-smoke = ["gpui-kit/test-support"]
+
+[[test]]
+name = "windows_smoke"
+required-features = ["native-smoke"]
+
 [dependencies]
 gpui-kit = "=0.11.0"
+postgres = "0.19"
+rustday-board = { path = "../board" }
+uuid = "1"
+
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }
