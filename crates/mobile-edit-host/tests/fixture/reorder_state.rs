@@ -32,6 +32,29 @@ pub struct Snapshot {
     receipts: Vec<Value>,
 }
 impl Snapshot {
+    pub fn created_group(
+        &self,
+        f: &Fixture,
+        id: &str,
+        name: &str,
+        colour: &str,
+        position: i64,
+    ) -> Self {
+        let mut expected = self.clone();
+        let board = expected
+            .boards
+            .iter_mut()
+            .find(|b| b["id"] == json!(SELECTED))
+            .unwrap();
+        board["revision"] = json!(board["revision"].as_i64().unwrap() + 1);
+        expected.groups.push(json!({"id":id,"board_id":SELECTED,"name":name,"position":position,"active":true,"deleted":false,"revision":1,"colour":colour}));
+        expected.groups.sort_by(|a, b| {
+            (a["board_id"].as_str(), a["id"].as_str())
+                .cmp(&(b["board_id"].as_str(), b["id"].as_str()))
+        });
+        assert_eq!(Self::read(f), expected);
+        expected
+    }
     pub fn group_transition(&self, f: &Fixture, id: &str, active: bool) -> Self {
         let mut expected = self.clone();
         let board = expected

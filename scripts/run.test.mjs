@@ -530,3 +530,18 @@ test('38 requires group lifecycle, child visibility, rollback, current Owner and
   run();
   for (const name of [...browser, ...host]) assert.throws(() => run(name), /Missing passing/);
 });
+
+test('39 requires group creation, stable order, draft recovery, current Owner and every prior browser-board gate', () => {
+  const previous = packets.find(p => p.id === '38-browser-group-archive-restore');
+  const packet = packets.find(p => p.id === '39-browser-group-create');
+  const browser = [...previous.browserCases, 'browser_creates_duplicate_group_in_position_order', 'browser_reviews_failed_group_create', 'browser_demoted_owner_cannot_create_group'];
+  const host = [...previous.cases, 'preview_group_create_requires_current_owner', 'preview_group_create_preserves_identity_and_order'];
+  assert.deepEqual(packet, { ...previous, id: '39-browser-group-create', cases: host, browserCases: browser });
+  const run = missing => verify(packet, (_bin, args) => {
+    const names = args.includes('browser_preview') ? browser : args.includes('loopback_board_access') ? host : [];
+    const present = names.filter(n => n !== missing);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  run();
+  for (const name of [...browser, ...host]) assert.throws(() => run(name), /Missing passing/);
+});

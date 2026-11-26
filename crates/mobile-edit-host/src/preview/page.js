@@ -21,6 +21,7 @@ function clearNavigation() {
   list.replaceChildren(); $('#empty').hidden = true;
   items.replaceChildren(); retry.hidden = true; retry.onclick = null;
   $('#recovery-nav').replaceChildren();
+  $('#new-item-options').replaceChildren();
 }
 
 function signInScreen() {
@@ -156,6 +157,7 @@ async function loadDestination(id, current, notice = '', recovery = false) {
       read,
       transition,
       transitionGroup, readArchive,
+      createGroup: draft => request(path+'/groups', {method:'POST', body:JSON.stringify(draft)}),
       moveSelection: draft => request(`${path}/items/move-selection`, {method:'POST', body:JSON.stringify(draft)}),
       reorder: (item, draft) => request(`${path}/items/${encodeURIComponent(item)}/reorder`, {
         method: 'POST', body: JSON.stringify(draft)

@@ -264,7 +264,7 @@ fn grouped_body(tx: &mut postgres::Transaction<'_>, board: BoardId) -> Result<(i
         }
     })?;
     let groups: Vec<_> = groups.into_iter().map(|group| serde_json::json!({
-        "id": group.id, "name": group.name, "items": group.items.into_iter().map(wire).collect::<Vec<_>>()
+        "id": group.id, "name": group.name, "colour": group.colour, "items": group.items.into_iter().map(wire).collect::<Vec<_>>()
     })).collect();
     Ok((
         revision,
@@ -305,7 +305,12 @@ fn handle(
                 _,
                 "archive" | "restore",
             ],
-        ) if matches!(shape, ReadShape::Grouped) => (board, SelectedLifecycle, None),
+        )
+        | (Method::Post, ["", "navigation", "boards", board, "groups"])
+            if matches!(shape, ReadShape::Grouped) =>
+        {
+            (board, SelectedOwner, None)
+        }
         (
             Method::Post,
             [
@@ -317,7 +322,7 @@ fn handle(
                 id,
                 "archive" | "restore",
             ],
-        ) if matches!(shape, ReadShape::Grouped) => (board, SelectedLifecycle, Some(id)),
+        ) if matches!(shape, ReadShape::Grouped) => (board, SelectedOwner, Some(id)),
         (Method::Put, ["", "boards", board, "items", id, "name"]) => {
             (board, ScopedRename, Some(id))
         }
@@ -353,6 +358,7 @@ fn handle(
     // validation or board data before the caller has been authorized.
     enum Action {
         Read,
+        CreateGroup(Result<CreateGroupDraft, u16>),
         ArchivePage(Option<(i64, i64)>),
         Group(String, store::Lifecycle, Result<GroupDraft, u16>),
         Lifecycle(ItemId, store::Lifecycle, Result<RootDraft, u16>),
@@ -369,6 +375,7 @@ fn handle(
         Some(item) if path.last() == Some(&"restore") => {
             Action::Lifecycle(item, store::Lifecycle::Restore, read_json(req))
         }
+        None if path.last() == Some(&"groups") => Action::CreateGroup(read_json(req)),
         None if path.get(4) == Some(&"groups") => Action::Group(
             percent_encoding::percent_decode_str(path[5])
                 .decode_utf8()
@@ -411,6 +418,12 @@ fn handle(
     let owner = account.role == boardcraft_account::Role::Owner;
     let mut revision = None;
     let body = match action {
+        Action::CreateGroup(draft) => {
+            let d = draft?;
+            store::create_group(&mut tx, board, &d.id, d.board_revision, &d.name, &d.colour)
+                .map_err(|e| order_error(e, requested, "create_group"))?;
+            serde_json::to_vec(&serde_json::json!({"board_id":requested,"group_id":d.id})).unwrap()
+        }
         Action::Group(group, action, draft) => {
             let baseline = draft?.board_revision;
             store::transition_group(&mut tx, board, &group, action, baseline)
@@ -612,6 +625,15 @@ struct RootDraft {
 #[serde(deny_unknown_fields)]
 struct GroupDraft {
     board_revision: i64,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateGroupDraft {
+    id: String,
+    board_revision: i64,
+    name: String,
+    colour: String,
 }
 
 #[derive(serde::Deserialize)]

@@ -73,8 +73,7 @@ export function launch(profile, foreground) {
         if (req.method === 'POST' && new URL(req.url).pathname === '/preview/api/navigation/boards/00000000-0000-0000-0000-0000000000c9/items/move-selection') {
           tab.batchIds.push(msg.params.requestId);
         }
-        if (req.method === 'POST' && new URL(req.url).pathname ===
-            '/preview/api/navigation/boards/00000000-0000-0000-0000-0000000000c9/items') {
+        if (req.method === 'POST' && /^\/preview\/api\/navigation\/boards\/00000000-0000-0000-0000-0000000000c9\/(items|groups)$/.test(new URL(req.url).pathname)) {
           tab.createIds.push(msg.params.requestId);
         }
         if (nameCase && req.method === 'PUT' && new URL(req.url).pathname ===

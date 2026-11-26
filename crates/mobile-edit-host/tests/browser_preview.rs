@@ -1,4 +1,21 @@
 mod browser;
+#[path = "fixture/group_create.rs"]
+mod group_create;
+#[path = "browser/group_create.rs"]
+mod group_create_browser;
+
+#[test]
+fn browser_creates_duplicate_group_in_position_order() {
+    group_create_browser::default_group();
+}
+#[test]
+fn browser_reviews_failed_group_create() {
+    group_create_browser::review();
+}
+#[test]
+fn browser_demoted_owner_cannot_create_group() {
+    group_create_browser::demote();
+}
 #[allow(dead_code)]
 mod fixture;
 #[path = "fixture/lifecycle.rs"]

@@ -18,7 +18,8 @@ li { padding: .45rem; border-bottom: 1px solid #c5d6d1; overflow-wrap: anywhere;
 .row-menu { float: right; }
 .group-menu { float: right; }
 .group-menu button { padding: .1rem .45rem; }
-#recovery-nav details:not([open]) > a { display: none; }
+#recovery-nav details:not([open]) > a,
+#new-item-options details:not([open]) > button { display: none; }
 #items li { display: flow-root; }
 #items input[type=checkbox] { display: inline-block; margin: 0 .5rem 0 0; vertical-align: middle; }
 #items section > input[type=checkbox] { float: left; margin-top: .4rem; }

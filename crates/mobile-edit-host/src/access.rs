@@ -97,7 +97,7 @@ pub(super) enum Operation {
     ScopedRename,
     SelectedRead,
     SelectedWrite,
-    SelectedLifecycle,
+    SelectedOwner,
 }
 
 pub(super) fn authorize(
@@ -107,7 +107,7 @@ pub(super) fn authorize(
     operation: Operation,
 ) -> Result<bool, u16> {
     let can_edit = !account.role.is_read_only();
-    if matches!(operation, Operation::SelectedLifecycle)
+    if matches!(operation, Operation::SelectedOwner)
         && account.role != boardcraft_account::Role::Owner
     {
         return Err(403);

@@ -59,6 +59,10 @@ const previewRootLifecycle = { ...previewSelectionMove,
   cases: [...previewSelectionMove.cases, 'preview_root_lifecycle_requires_current_owner', 'preview_root_lifecycle_preserves_visibility_and_replay'],
   browserCases: [...previewSelectionMove.browserCases, 'browser_archives_and_restores_one_root', 'browser_recovers_failed_root_lifecycle', 'browser_demoted_member_cannot_restore_root'] };
 
+const previewGroupLifecycle = { ...previewRootLifecycle,
+  cases: [...previewRootLifecycle.cases, 'preview_group_lifecycle_requires_current_owner', 'preview_group_lifecycle_preserves_children_and_order'],
+  browserCases: [...previewRootLifecycle.browserCases, 'browser_archives_and_restores_one_group', 'browser_recovers_failed_group_lifecycle', 'browser_demoted_owner_cannot_restore_group'] };
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -111,9 +115,10 @@ export const packets = [
   { id: '35-browser-item-selection', ...previewSelection },
   { id: '36-browser-selection-group-move', ...previewSelectionMove },
   { id: '37-browser-root-archive-restore', ...previewRootLifecycle },
-  { id: '38-browser-group-archive-restore', ...previewRootLifecycle,
-    cases: [...previewRootLifecycle.cases, 'preview_group_lifecycle_requires_current_owner', 'preview_group_lifecycle_preserves_children_and_order'],
-    browserCases: [...previewRootLifecycle.browserCases, 'browser_archives_and_restores_one_group', 'browser_recovers_failed_group_lifecycle', 'browser_demoted_owner_cannot_restore_group'] },
+  { id: '38-browser-group-archive-restore', ...previewGroupLifecycle },
+  { id: '39-browser-group-create', ...previewGroupLifecycle,
+    cases: [...previewGroupLifecycle.cases, 'preview_group_create_requires_current_owner', 'preview_group_create_preserves_identity_and_order'],
+    browserCases: [...previewGroupLifecycle.browserCases, 'browser_creates_duplicate_group_in_position_order', 'browser_reviews_failed_group_create', 'browser_demoted_owner_cannot_create_group'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

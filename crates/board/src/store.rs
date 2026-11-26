@@ -3,6 +3,8 @@ use postgres::{Client, Error};
 
 use crate::{Board, BoardId, Item, ItemId, RenameError, interactive_title};
 
+mod group_create;
+pub use group_create::create_group;
 mod group_lifecycle;
 mod lifecycle;
 pub use group_lifecycle::{archived_groups, transition_group};
@@ -108,6 +110,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
     {
         tx.batch_execute(include_str!("../migrations/0009_group_lifecycle.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (9)", &[])?;
+    }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version=10",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0010_group_colour.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (10)", &[])?;
     }
     tx.commit()
 }
@@ -276,6 +288,7 @@ pub fn load_items(
 pub struct ItemGroup {
     pub id: String,
     pub name: String,
+    pub colour: String,
     pub items: Vec<StoredItem>,
 }
 
@@ -301,7 +314,7 @@ pub fn load_group_snapshot(
 ) -> Result<(i64, Vec<ItemGroup>), GroupReadError> {
     let rows = client
         .query(
-            "SELECT g.id, g.name, i.id, i.title, i.revision, b.revision FROM boards b
+            "SELECT g.id, g.name, i.id, i.title, i.revision, b.revision, g.colour FROM boards b
          LEFT JOIN board_groups g ON g.board_id=b.id AND g.active
          LEFT JOIN board_items i ON (i.board_id,i.group_id)=(g.board_id,g.id) AND i.state=0
          WHERE b.id=$1 ORDER BY g.position,g.id,i.position,i.created_at NULLS FIRST,i.id LIMIT $2",
@@ -324,6 +337,7 @@ pub fn load_group_snapshot(
             groups.push(ItemGroup {
                 id,
                 name: row.get(1),
+                colour: row.get(6),
                 items: Vec::new(),
             });
         }

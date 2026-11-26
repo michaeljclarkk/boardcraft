@@ -28,6 +28,9 @@ pub(super) fn asset(request: &Request) -> Option<Response<Cursor<&'static [u8]>>
             include_bytes!("preview/index.html"),
         ),
         "/preview/page.js" => ("text/javascript", include_bytes!("preview/page.js")),
+        "/preview/group-create.js" => {
+            ("text/javascript", include_bytes!("preview/group-create.js"))
+        }
         "/preview/lifecycle.js" => ("text/javascript", include_bytes!("preview/lifecycle.js")),
         "/preview/group-lifecycle.js" => (
             "text/javascript",

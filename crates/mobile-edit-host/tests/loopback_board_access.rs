@@ -4,6 +4,19 @@ mod browser_transport;
 mod caller;
 #[path = "fixture/create.rs"]
 mod create;
+#[path = "fixture/group_create.rs"]
+mod group_create;
+#[path = "fixture/group_create_checks.rs"]
+mod group_create_checks;
+
+#[test]
+fn preview_group_create_requires_current_owner() {
+    group_create_checks::access();
+}
+#[test]
+fn preview_group_create_preserves_identity_and_order() {
+    group_create_checks::round_trip();
+}
 #[path = "fixture/group_lifecycle_checks.rs"]
 mod group_lifecycle_checks;
 #[path = "fixture/lifecycle.rs"]

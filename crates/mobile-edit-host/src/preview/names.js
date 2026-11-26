@@ -3,6 +3,7 @@
 import {mountMoves} from './moves.js';
 import {archiveDialog} from './lifecycle.js';
 import {groupMenus} from './group-lifecycle.js';
+import {groupOptions} from './group-create.js';
 import {mountReorder} from './reorder.js';
 import {mountSelection} from './selection.js';
 
@@ -25,6 +26,7 @@ export function mountNames(board, list, failureArea, api) {
   const notice = document.createElement('div'); notice.className = 'group-notice'; notice.setAttribute('role', 'status');
   failureArea.prepend(notice);
   const groupMenu = groupMenus(controls, notice);
+  const options = groupOptions(controls, document.querySelector('#new-item-options'), notice);
 
   function setBusy(value) {
     busy = value;
@@ -200,6 +202,7 @@ export function mountNames(board, list, failureArea, api) {
     const count = group.items.length;
     heading.textContent = `${group.name} / ${count ? count + (count === 1 ? ' item' : ' items') : 'No Items'}`;
     heading.id = `group-${group.id}`;
+    heading.style.borderLeft = `0.3rem solid ${group.colour}`;
     region.setAttribute('aria-labelledby', heading.id);
     const rows = document.createElement('ul');
     rows.setAttribute('aria-label', 'Board items');
@@ -208,6 +211,7 @@ export function mountNames(board, list, failureArea, api) {
     return region;
   }
   function render() {
+    options.disabled = !board.owner;
     selection.resetSnapshot(); list.replaceChildren(...board.groups.map(section));
     selection.paint(); moves.showFailures();
   }

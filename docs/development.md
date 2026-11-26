@@ -97,6 +97,8 @@ On a selected preview board with edit access, double-click a name or focus it an
 
 The browser detail GET returns ordered `{id, name, items}` groups, including empty active groups. The limit is 500 active item rows, counting each empty group as one row. Above it the preview shows **Board too large for this preview** (HTTP 413) instead of partial counts. Native detail reads still return a flat item array. For compatibility, the migration and `create_board` give each flat board one active group with board-local ID `main`, heading `Items`, and position zero. An empty snapshot has an empty section and no item rows.
 
+An Owner can open **New item options → New group of items** and save the default name or enter a name and choose a colour. Escape or Cancel discards the dialog. If the board has changed, **Review latest board**, then **Keep my draft and use this revision**; only **Save group** submits. If the post-commit refresh fails, **Reload board** retries the read.
+
 On an editable board, type in **Add item to <group>** and press Enter or choose **+ Add item**. Escape clears the draft; leaving the field does not save. A rejected title stays in that group for correction. After a successful create the preview reads the groups again. If the outcome is uncertain, **Retry destination** reads the board without resubmitting the item.
 
 To move an existing row on that board, open **More options** beside its name, choose **Move to**, select the destination group and **Confirm**. A move preserves the item's position and creation time. If saving fails, **Review move** reads the current source and requested destination, including their IDs. **Apply reviewed move** submits once at the reviewed revision; **Dismiss** discards the failed request.
