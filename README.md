@@ -18,7 +18,7 @@ node scripts/run.mjs status
 node scripts/run.mjs run 3
 ```
 
-`run 3` processes up to three pending packets; `run 1` is a single-milestone trial. Each gets a new `opencode run` session, with compaction available inside the session. The worker writes a short handoff; the runner checks it, runs the named Cargo suite and workspace checks, then records a verified checkpoint. The next session reads the handoff and the actual files, not a replay of the previous chat. The runner stops at the end of the queue, on a blocker, after a failed check, or on a command timeout (two hours per invocation).
+`run 3` processes up to three pending packets; `run 1` is a single-milestone trial. Each gets a new `opencode run` session, with compaction available inside the session. The worker writes a short handoff; the runner checks it, runs the named Cargo suite and workspace checks, then records a verified checkpoint. The next session reads the handoff and the actual files, not a replay of the previous chat. The runner stops at the end of the queue, on a blocker, after a failed check, or on a command timeout (two hours by default). Packet 05 also needs the [dedicated x86_64 Android emulator and NDK linker](docs/development.md#android-emulator-edit-gate); its preflight and focused runtime gate have shorter deadlines.
 
 If the CLI is not on PATH, set `OPENCODE_BIN` to its executable. On Windows with OpenCode Desktop already running, PowerShell can use `$env:OPENCODE_BIN = (Get-Process opencode-cli | Select-Object -First 1 -ExpandProperty Path)`.
 

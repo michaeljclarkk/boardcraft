@@ -1,0 +1,15 @@
+{
+  "status": "ready",
+  "summary": "The Android EditClient saved and reopened an item by UUID through the production loopback Host on Rustday_Edit_X64. The host reused store::rename_item_at_revision and the shared interactive title rule. Both journeys passed in one run against separate synthetic boards in rustday_test.",
+  "evidence": [
+    "On the integrated boardcraft checkout, the runner's verify function cross-built android-edit-probe with cargo build --locked -p boardcraft-mobile-edit-client --bin android-edit-probe --target x86_64-linux-android.",
+    "cargo test --locked -p boardcraft-mobile-edit-host --features android-smoke --test android_emulator_edit -- --test-threads=1: 2 passed, 0 failed, 0 ignored, 0 filtered out in 4.26 seconds. Each case checked the selected AVD, boot and ABI before pushing its executable and allocating its reverse port.",
+    "emulator_rename_then_reopen: Android read two Review rows at revision 1. The save returned the second UUID with trimmed title Review artwork and an advanced revision. A new Android process and a fresh Windows store connection to the same board UUID agreed on both ordered IDs, titles and revisions, including the untouched first row.",
+    "emulator_reject_then_correct: the whitespace-only draft returned InvalidDraft. Before retry, fresh device and store reads found both original rows unchanged at revision 1. Saving the correction using the reopened second row's revision returned Corrected under its original UUID with an advanced revision. Fresh reads on both sides matched, with the sibling and order unchanged.",
+    "cargo fmt --all -- --check passed. cargo test --locked --workspace passed all 8 portable integration cases. Android Kit input, keyboard dismissal, system Back, background/resume and a same-board Windows window readback remain open in docs/workflows.md.",
+    "On both adb 36.0.0 and 37.0.3, the pre-fix private daemon logged handle_packet disallowed connect to the second fixture host port; Windows Application Error 1000 for the 36.0.0 listener reported 0xc0000409. The isolated setup and transport cleanup are documented in docs/development.md.",
+    "Before the rename, node scripts/run.mjs run 1 printed Verified 05-android-emulator-edit. The integrated checkout reused that existing marker; verification above was rerun directly without dispatching a worker or changing the marker.",
+    "node --test scripts/run.test.mjs: 6 passed, including runner-state compatibility and both Android gate checks. cargo clippy --locked --workspace --all-targets --features android-smoke -- -D warnings passed. Final inspection found zero reverse mappings and zero old or new fixture executables on the dedicated AVD."
+  ],
+  "next": "Identify a compatible Android Kit activity and renderer for a real input, keyboard and lifecycle check."
+}

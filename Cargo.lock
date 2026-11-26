@@ -729,6 +729,7 @@ name = "boardcraft-mobile-edit-client"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "ureq",
  "uuid",
 ]
@@ -742,8 +743,10 @@ dependencies = [
  "log",
  "postgres",
  "serde_json",
+ "tempfile",
  "tiny_http",
  "uuid",
+ "wait-timeout",
 ]
 
 [[package]]

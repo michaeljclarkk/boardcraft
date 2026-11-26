@@ -37,6 +37,19 @@ Gate: `cargo test --locked --workspace --test mobile_edit_service`. Use actual s
 
 This is host/client evidence only. The [Android host assessment](docs/development.md#android-native-host) explains the dependency gap. Keep the next runtime gate open: on a dedicated emulator, use a real Kit name input, exercise failed save/correction, keyboard dismissal and system Back, save, background and resume, then open the same UUID in a Windows Kit window. Verify both rows there. Neither SQL readback nor an APK build proves that journey.
 
+### 05-android-emulator-edit
+
+Run the existing Rust `EditClient` as an Android executable on the dedicated x86_64 `Rustday_Edit_X64` AVD. No renderer is needed for this packet. The Windows test starts the 04 production `Host` on loopback for a fresh board/schema in `rustday_test`. Push the cross-built client probe to a unique `/data/local/tmp` path; use `adb -s <serial> reverse --no-rebind tcp:0 tcp:<host-port>` and pass the allocated **device** port to the probe. Only synthetic fixture values cross the bridge; never pass database configuration to Android. Do not use an HTTP stub, host-native client or canned probe output to satisfy an assertion.
+
+Gate: build `android-edit-probe` in `boardcraft-mobile-edit-client` for `x86_64-linux-android`, then run the host's explicitly enabled `android_emulator_edit` suite (commands in the [runbook](docs/development.md#android-emulator-edit-gate)). Each test uses two distinct `Review` items. Assert actual probe results against the fixture, including UUIDs, ordered titles and revisions, and independently reconnect via the store used by Windows to the **same board UUID**:
+
+- `emulator_rename_then_reopen`: Android reads both rows, uses the second ID and its positive revision to submit ` Review artwork `, and receives that ID, trimmed title and advanced revision. Exit the device process. Launch a fresh Android process and read the same board; compare both rows to the committed result, including the unchanged first row. Repeat that comparison via the host store.
+- `emulator_reject_then_correct`: Android submits a whitespace-only edit to the second item and receives `InvalidDraft`. Before correction, confirm both original rows and revisions on Android and via a fresh store connection. Use the reopened row's revision to submit ` Corrected `; assert committed `Corrected` under the original second ID, advanced revision and unchanged sibling/order in a fresh device read and host store read.
+
+Direct test invocation must also check the explicit emulator serial, exact AVD name, completed boot and x86_64 ABI **before pushing, reversing ports or running the probe**. Missing prerequisites, timeout, nonzero exit, empty/malformed output or mismatched state fail the gate. Bound every subprocess (≤30 seconds per adb call) and fixture I/O; clean up only the test's own reverse, executable, host and fixture even on errors. Do not touch another AVD, phone, global adb server or shared mappings. Keep portable workspace tests enabled; use a `required-features` test target for the separate emulator suite, never a passing early return.
+
+This proves Android process execution and persisted cross-client data, not an Android app. Next native milestone: render a real Kit input in a compatible Android activity, then exercise correction, keyboard/Back, background/resume and same-board Windows **window** readback. Leave those workflows open.
+
 ## Delivery phases after the first slice
 
 Each row is a group of independently testable packets. For each area, inventory the user actions, persisted settings, contracts and supported clients **before** estimating it. Add newly identified behavior to the register even if it falls between phases. The exit scenarios below are representative gates, not the entire inventory.

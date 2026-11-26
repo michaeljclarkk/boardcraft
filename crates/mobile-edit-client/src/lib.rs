@@ -18,7 +18,7 @@ pub struct NameEdit {
     pub revision: i64,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EditError {
     InvalidDraft,
     Conflict,

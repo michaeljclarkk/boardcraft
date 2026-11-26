@@ -14,4 +14,13 @@ tiny_http = "0.12"
 uuid = "1"
 
 [dev-dependencies]
+tempfile = "3"
+wait-timeout = "0.2"
 uuid = { version = "1", features = ["v4"] }
+
+[features]
+android-smoke = []
+
+[[test]]
+name = "android_emulator_edit"
+required-features = ["android-smoke"]

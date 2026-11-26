@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { packets, runQueue, validLimit, verify } from './run.mjs';
+import { packets, requireEditEmulator, runQueue, validLimit, verify } from './run.mjs';
 
 test('resume skips verified work; a stale handoff or failed gate cannot advance the queue', () => {
   const cwd = process.cwd(), dir = mkdtempSync(join(tmpdir(), 'boardcraft-'));
@@ -73,4 +73,54 @@ test('the mobile service gate requires both cases, an enabled suite and workspac
     return [success, recovery, summary].join('\r\n');
   });
   assert.deepEqual(calls, ['cargo fmt --all -- --check', 'cargo test --locked --workspace --test mobile_edit_service', 'cargo test --locked --workspace']);
+});
+
+test('emulator preflight fails closed before any device mutation', () => {
+  for (const serial of ['', '192.0.2.1:5555', 'usb-phone', 'emulator-1 extra']) {
+    assert.throws(() => requireEditEmulator(() => assert.fail('unexpected adb'), serial), /dedicated emulator serial/);
+  }
+  for (const [replies, error] of [
+    [['another_avd\r\nOK'], /Expected Rustday_Edit_X64/],
+    [['Rustday_Edit_X64\r\nOK', '0'], /not booted/],
+    [['Rustday_Edit_X64\r\nOK', '1', 'arm64-v8a'], /Expected x86_64/],
+  ]) {
+    assert.throws(() => requireEditEmulator((bin, args, capture, timeout) => {
+      assert.equal(bin, 'adb');
+      assert.deepEqual(args.slice(0, 2), ['-s', 'emulator-5582']);
+      assert.ok(['emu avd name', 'shell getprop sys.boot_completed', 'shell getprop ro.product.cpu.abi'].includes(args.slice(2).join(' ')));
+      assert.ok(capture && timeout > 0 && timeout <= 10_000);
+      return replies.shift();
+    }, 'emulator-5582'), error);
+  }
+});
+
+test('05 cross-builds the device binary and requires both enabled real-suite cases before workspace checks', t => {
+  const packet = packets.at(-1);
+  assert.equal(packet.id, '05-android-emulator-edit');
+  assert.equal(packet.database, true);
+  const prior = process.env.RUSTDAY_ANDROID_SERIAL;
+  t.after(() => { if (prior === undefined) delete process.env.RUSTDAY_ANDROID_SERIAL; else process.env.RUSTDAY_ANDROID_SERIAL = prior; });
+  process.env.RUSTDAY_ANDROID_SERIAL = 'emulator-5582';
+  const success = 'test emulator_rename_then_reopen ... ok', recovery = 'test emulator_reject_then_correct ... ok';
+  const summary = 'test result: ok. 2 passed; 0 failed; 0 ignored';
+  const calls = [];
+  function run(lines) {
+    const replies = ['Rustday_Edit_X64\r\r\nOK\r\r\n', '1', 'x86_64'];
+    verify(packet, (bin, args, capture, timeout) => {
+      if (bin === 'adb') return replies.shift();
+      calls.push([bin, ...args].join(' '));
+      if (args.includes('android_emulator_edit')) {
+        assert.ok(capture && timeout > 0 && timeout <= 600_000);
+        return lines.join('\n');
+      }
+    });
+  }
+  for (const one of [success, recovery]) assert.throws(() => run([one, summary]), /Missing passing/);
+  assert.throws(() => run([success, recovery, 'test result: ok. 2 passed; 0 failed; 1 ignored']), /No passing/);
+  calls.length = 0;
+  run([recovery, success, summary]);
+  assert.deepEqual(calls, ['cargo fmt --all -- --check',
+    'cargo build --locked -p boardcraft-mobile-edit-client --bin android-edit-probe --target x86_64-linux-android',
+    'cargo test --locked -p boardcraft-mobile-edit-host --features android-smoke --test android_emulator_edit -- --test-threads=1',
+    'cargo test --locked --workspace']);
 });

@@ -1,92 +1,9 @@
-use boardcraft_board::{Board, BoardId, ItemId, store};
+mod fixture;
+
+use boardcraft_board::{BoardId, ItemId, store};
 use boardcraft_mobile_edit_client::{EditClient, EditError, NameEdit, SavedItem};
-use boardcraft_mobile_edit_host::Host;
-use postgres::{Client, Config, NoTls};
+use fixture::{FIRST, Fixture, SECOND};
 use uuid::Uuid;
-
-const FIRST: Uuid = Uuid::from_u128(42);
-const SECOND: Uuid = Uuid::from_u128(17);
-
-struct Fixture {
-    config: Config,
-    schema: String,
-    board: Uuid,
-    host: Host,
-}
-
-impl Fixture {
-    fn start() -> Self {
-        let mut config: Config = std::env::var("RUSTDAY_TEST_DATABASE_URL")
-            .expect("RUSTDAY_TEST_DATABASE_URL is required")
-            .parse()
-            .expect("invalid database configuration");
-        assert_eq!(config.get_dbname(), Some("rustday_test"));
-        let schema = format!("mobile_test_{}", Uuid::new_v4().simple());
-        config
-            .connect(NoTls)
-            .unwrap()
-            .batch_execute(&format!("CREATE SCHEMA {schema}"))
-            .unwrap();
-        config.options(&format!("-csearch_path={schema}"));
-        let mut db = config.connect(NoTls).unwrap();
-        store::migrate(&mut db).unwrap();
-        let board = Uuid::new_v4();
-        let mut fixture = Board::new(BoardId::new(board).unwrap());
-        for id in [FIRST, SECOND] {
-            fixture
-                .add_item(ItemId::new(id).unwrap(), "Review")
-                .unwrap();
-        }
-        store::create_board(&mut db, &fixture).unwrap();
-        let host = Host::start(&config, fixture.id()).unwrap();
-        Self {
-            config,
-            schema,
-            board,
-            host,
-        }
-    }
-
-    fn client(&self) -> EditClient {
-        EditClient::new(self.host.port)
-    }
-    fn connect(&self) -> Client {
-        self.config.connect(NoTls).unwrap()
-    }
-
-    fn check_store(&self, expected: &[SavedItem]) {
-        let mut db = self.connect();
-        let id = BoardId::new(self.board).unwrap();
-        let desktop = store::load_board(&mut db, id).unwrap().unwrap();
-        assert_eq!(desktop.id(), id);
-        assert_eq!(desktop.items().len(), expected.len());
-        for (actual, expected) in desktop.items().iter().zip(expected) {
-            assert_eq!(
-                (actual.id.as_uuid(), &actual.title),
-                (expected.id, &expected.title)
-            );
-        }
-        let revisions: Vec<i64> = store::load_items(&mut db, id)
-            .unwrap()
-            .unwrap()
-            .into_iter()
-            .map(|row| row.revision)
-            .collect();
-        assert_eq!(
-            revisions,
-            expected.iter().map(|row| row.revision).collect::<Vec<_>>()
-        );
-    }
-
-    fn finish(self) {
-        drop(self.host);
-        self.config
-            .connect(NoTls)
-            .unwrap()
-            .batch_execute(&format!("DROP SCHEMA {} CASCADE", self.schema))
-            .unwrap();
-    }
-}
 
 fn edit(title: &str, revision: i64) -> NameEdit {
     NameEdit {
@@ -109,7 +26,7 @@ fn open(client: &EditClient, board: Uuid) -> Vec<SavedItem> {
 #[test]
 fn rename_then_reconnect() {
     let f = Fixture::start();
-    let client = f.client();
+    let client = EditClient::new(f.host.port);
     let mut rows = open(&client, f.board);
     let request = edit(" Review artwork ", rows[1].revision);
     let saved = client.rename(f.board, SECOND, &request).unwrap();
@@ -119,7 +36,7 @@ fn rename_then_reconnect() {
     rows[1] = saved.clone();
     drop(client);
 
-    let fresh = f.client();
+    let fresh = EditClient::new(f.host.port);
     assert_eq!(fresh.read(f.board).unwrap(), rows);
     f.check_store(&rows);
     assert_eq!(fresh.rename(f.board, SECOND, &request).unwrap(), saved);
@@ -145,13 +62,12 @@ fn rename_then_reconnect() {
     assert!(changed.revision > after_desktop[1].revision);
     rows[1] = changed;
     f.check_store(&rows);
-    f.finish();
 }
 
 #[test]
 fn reject_then_retry() {
     let f = Fixture::start();
-    let client = f.client();
+    let client = EditClient::new(f.host.port);
     let mut rows = open(&client, f.board);
     for (board, item, request, error) in [
         (
@@ -204,5 +120,4 @@ fn reject_then_retry() {
         Err(EditError::HostFault)
     );
     f.check_store(&rows);
-    f.finish();
 }
