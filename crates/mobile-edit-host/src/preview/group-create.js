@@ -1,28 +1,34 @@
-// The dialog owns the proposed identity, raw spelling and revision until close.
+// Both entry points edit the same fields. Only creation has a replay identity.
 export function groupOptions({api, board, busy, setBusy, refresh, button}, host, notice) {
   const menu = document.createElement('details'), toggle = document.createElement('summary');
   toggle.textContent = 'New item options';
-  const create = button('New group of items', open);
+  const create = button('New group of items', () => open(null, toggle));
   menu.append(toggle, create); host.append(menu);
-  return create;
+  return {create, edit:open};
 
-  function open() {
+  function open(group, opener) {
     if (busy() || !board().owner || !api.current()) return;
     menu.open = false; setBusy(true);
-    const id = `g-${crypto.randomUUID()}`;
+    const id = group?.id ?? `g-${crypto.randomUUID()}`;
+    let groupRevision = group?.revision;
     let baseline = board().revision, latest, phase = 'draft', pending = false, uncertain = false;
     const dialog = document.createElement('dialog'), heading = document.createElement('h2');
-    heading.textContent = 'Add group'; dialog.setAttribute('aria-label', heading.textContent);
+    heading.textContent = group ? 'Edit group' : 'Add group'; dialog.setAttribute('aria-label', heading.textContent);
     const name = document.createElement('input'), colour = document.createElement('select');
     function label(text, field) {
       const el = document.createElement('label'); el.append(text, field); return el;
     }
-    name.value = 'New group'; name.autofocus = true;
+    name.value = group?.name ?? 'New group'; name.autofocus = true;
     colour.add(new Option('Blue', '#579bfc')); colour.add(new Option('Green', '#00c875'));
+    if (group) {
+      if (![...colour.options].some(o => o.value === group.colour)) colour.add(new Option(group.colour, group.colour));
+      colour.value = group.colour;
+    }
     const status = document.createElement('p'); status.setAttribute('role','status');
     const save = button('Save group', submit), cancel = button('Cancel', close);
     const review = button('Review latest board', () => readLatest(true));
     const adopt = button('Keep my draft and use this revision', () => {
+      if (group) groupRevision = latest.groups.find(g => g.id === id).revision;
       baseline = latest.revision; phase = 'draft'; status.textContent = ''; paint(); name.focus();
     });
     const reload = button('Reload board', () => readLatest(false));
@@ -38,11 +44,11 @@ export function groupOptions({api, board, busy, setBusy, refresh, button}, host,
       finish();
     }
     function finish() {
-      dialog.close(); dialog.remove(); setBusy(false); toggle.focus();
+      dialog.close(); dialog.remove(); setBusy(false); opener.focus();
     }
     function denied(error) {
       if (error === 401) api.expired();
-      else if (error === 403) api.denied('Group creation denied.');
+      else if (error === 403) api.denied(group ? 'Group edit denied.' : 'Group creation denied.');
       else return false;
       return true;
     }
@@ -57,7 +63,16 @@ export function groupOptions({api, board, busy, setBusy, refresh, button}, host,
       }
       if (!api.current()) return;
       pending = false;
-      const present = latest.groups.some(g => g.id === id);
+      const present = latest.groups.find(g => g.id === id);
+      if (group) {
+        const accepted = present ? `Board revision ${latest.revision}, group ${id} revision ${present.revision}: ${present.name} / ${present.colour}` : `Group ${id} is no longer available.`;
+        if (forReview && present && latest.owner) {
+          phase = 'reviewed'; status.textContent = accepted; paint(); adopt.focus();
+        } else {
+          finish(); refresh(latest); notice.textContent = accepted;
+        }
+        return;
+      }
       if (!present && latest.owner && (forReview || uncertain)) {
         uncertain = false;
         if (forReview || latest.revision !== baseline) {
@@ -77,7 +92,8 @@ export function groupOptions({api, board, busy, setBusy, refresh, button}, host,
       if (pending || phase !== 'draft' || !name.value.trim() || !api.current()) return;
       pending = true; status.textContent = 'Saving…'; paint();
       try {
-        const ack = await api.createGroup({id, board_revision:baseline, name:name.value, colour:colour.value});
+        const fields = {board_revision:baseline, name:name.value, colour:colour.value};
+        const ack = group ? await api.editGroup(id, {...fields, group_revision:groupRevision}) : await api.createGroup({...fields, id});
         if (ack.board_id !== board().id || ack.group_id !== id) throw Error('Unexpected acknowledgment');
       } catch (error) {
         if (!api.current() || denied(error)) return;
@@ -89,7 +105,11 @@ export function groupOptions({api, board, busy, setBusy, refresh, button}, host,
           status.textContent = error === 413 ? 'Board too large for this preview.' : 'Could not save group.';
           paint(); name.focus(); return;
         }
-        // The response may have been lost after commit. Resolve by ID, never by another write.
+        if (group) {
+          phase = 'reload'; status.textContent = error === 404 ? 'Group unavailable. Reload the board.' : 'Save outcome unavailable. Reload the board.';
+          paint(); reload.focus(); return;
+        }
+        // A proposed create ID, unlike an edit target, can identify a replay.
         uncertain = true;
       }
       if (!api.current()) return;

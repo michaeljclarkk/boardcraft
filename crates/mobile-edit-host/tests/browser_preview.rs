@@ -3,6 +3,23 @@ mod browser;
 mod group_create;
 #[path = "browser/group_create.rs"]
 mod group_create_browser;
+#[path = "fixture/group_edit.rs"]
+mod group_edit;
+#[path = "browser/group_edit.rs"]
+mod group_edit_browser;
+
+#[test]
+fn browser_edits_existing_group_by_id() {
+    group_edit_browser::edit();
+}
+#[test]
+fn browser_reviews_conflicting_group_edit() {
+    group_edit_browser::review();
+}
+#[test]
+fn browser_demoted_owner_cannot_edit_group() {
+    group_edit_browser::demote();
+}
 
 #[test]
 fn browser_creates_duplicate_group_in_position_order() {

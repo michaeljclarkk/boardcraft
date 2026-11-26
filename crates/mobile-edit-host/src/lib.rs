@@ -264,7 +264,7 @@ fn grouped_body(tx: &mut postgres::Transaction<'_>, board: BoardId) -> Result<(i
         }
     })?;
     let groups: Vec<_> = groups.into_iter().map(|group| serde_json::json!({
-        "id": group.id, "name": group.name, "colour": group.colour, "items": group.items.into_iter().map(wire).collect::<Vec<_>>()
+        "id": group.id, "name": group.name, "colour": group.colour, "revision":group.revision, "items": group.items.into_iter().map(wire).collect::<Vec<_>>()
     })).collect();
     Ok((
         revision,
@@ -307,6 +307,7 @@ fn handle(
             ],
         )
         | (Method::Post, ["", "navigation", "boards", board, "groups"])
+        | (Method::Put, ["", "navigation", "boards", board, "groups", _])
             if matches!(shape, ReadShape::Grouped) =>
         {
             (board, SelectedOwner, None)
@@ -359,6 +360,7 @@ fn handle(
     enum Action {
         Read,
         CreateGroup(Result<CreateGroupDraft, u16>),
+        EditGroup(String, Result<EditGroupDraft, u16>),
         ArchivePage(Option<(i64, i64)>),
         Group(String, store::Lifecycle, Result<GroupDraft, u16>),
         Lifecycle(ItemId, store::Lifecycle, Result<RootDraft, u16>),
@@ -375,19 +377,28 @@ fn handle(
         Some(item) if path.last() == Some(&"restore") => {
             Action::Lifecycle(item, store::Lifecycle::Restore, read_json(req))
         }
-        None if path.last() == Some(&"groups") => Action::CreateGroup(read_json(req)),
-        None if path.get(4) == Some(&"groups") => Action::Group(
-            percent_encoding::percent_decode_str(path[5])
+        None if path.get(4) == Some(&"groups") && path.len() == 5 => {
+            Action::CreateGroup(read_json(req))
+        }
+        None if path.get(4) == Some(&"groups") => {
+            let id = percent_encoding::percent_decode_str(path[5])
                 .decode_utf8()
                 .map_err(|_| 400u16)?
-                .into_owned(),
-            if path[6] == "archive" {
-                store::Lifecycle::Archive
+                .into_owned();
+            if path.len() == 6 {
+                Action::EditGroup(id, read_json(req))
             } else {
-                store::Lifecycle::Restore
-            },
-            read_json(req),
-        ),
+                Action::Group(
+                    id,
+                    if path[6] == "archive" {
+                        store::Lifecycle::Archive
+                    } else {
+                        store::Lifecycle::Restore
+                    },
+                    read_json(req),
+                )
+            }
+        }
         None if path.get(4) == Some(&"archive") => Action::ArchivePage(if path.len() == 8 {
             Some((
                 path[6].parse().map_err(|_| 400u16)?,
@@ -418,6 +429,20 @@ fn handle(
     let owner = account.role == boardcraft_account::Role::Owner;
     let mut revision = None;
     let body = match action {
+        Action::EditGroup(id, draft) => {
+            let d = draft?;
+            store::edit_group(
+                &mut tx,
+                board,
+                &id,
+                d.board_revision,
+                d.group_revision,
+                &d.name,
+                &d.colour,
+            )
+            .map_err(|e| order_error(e, requested, "edit_group"))?;
+            serde_json::to_vec(&serde_json::json!({"board_id":requested,"group_id":id})).unwrap()
+        }
         Action::CreateGroup(draft) => {
             let d = draft?;
             store::create_group(&mut tx, board, &d.id, d.board_revision, &d.name, &d.colour)
@@ -625,6 +650,15 @@ struct RootDraft {
 #[serde(deny_unknown_fields)]
 struct GroupDraft {
     board_revision: i64,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EditGroupDraft {
+    board_revision: i64,
+    group_revision: i64,
+    name: String,
+    colour: String,
 }
 
 #[derive(serde::Deserialize)]

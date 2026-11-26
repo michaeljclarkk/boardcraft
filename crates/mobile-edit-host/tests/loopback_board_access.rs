@@ -8,6 +8,19 @@ mod create;
 mod group_create;
 #[path = "fixture/group_create_checks.rs"]
 mod group_create_checks;
+#[path = "fixture/group_edit.rs"]
+mod group_edit;
+#[path = "fixture/group_edit_checks.rs"]
+mod group_edit_checks;
+
+#[test]
+fn preview_group_edit_requires_current_owner() {
+    group_edit_checks::access();
+}
+#[test]
+fn preview_group_edit_checks_both_revisions_and_preserves_children() {
+    group_edit_checks::edits();
+}
 
 #[test]
 fn preview_group_create_requires_current_owner() {

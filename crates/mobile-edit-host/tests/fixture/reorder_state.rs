@@ -32,6 +32,26 @@ pub struct Snapshot {
     receipts: Vec<Value>,
 }
 impl Snapshot {
+    pub fn edited_group(&self, f: &Fixture, id: &str, name: &str, colour: &str) -> Self {
+        let mut expected = self.clone();
+        let board = expected
+            .boards
+            .iter_mut()
+            .find(|r| r["id"] == json!(SELECTED))
+            .unwrap();
+        let group = expected
+            .groups
+            .iter_mut()
+            .find(|r| r["board_id"] == json!(SELECTED) && r["id"] == id)
+            .unwrap();
+        group["name"] = json!(name);
+        group["colour"] = json!(colour);
+        for row in [group, board] {
+            row["revision"] = json!(row["revision"].as_i64().unwrap() + 1);
+        }
+        assert_eq!(Self::read(f), expected);
+        expected
+    }
     pub fn created_group(
         &self,
         f: &Fixture,

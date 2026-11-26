@@ -3,8 +3,8 @@ use postgres::{Client, Error};
 
 use crate::{Board, BoardId, Item, ItemId, RenameError, interactive_title};
 
-mod group_create;
-pub use group_create::create_group;
+mod group_fields;
+pub use group_fields::{create_group, edit_group};
 mod group_lifecycle;
 mod lifecycle;
 pub use group_lifecycle::{archived_groups, transition_group};
@@ -286,6 +286,7 @@ pub fn load_items(
 }
 
 pub struct ItemGroup {
+    pub revision: i64,
     pub id: String,
     pub name: String,
     pub colour: String,
@@ -314,7 +315,7 @@ pub fn load_group_snapshot(
 ) -> Result<(i64, Vec<ItemGroup>), GroupReadError> {
     let rows = client
         .query(
-            "SELECT g.id, g.name, i.id, i.title, i.revision, b.revision, g.colour FROM boards b
+            "SELECT g.id, g.name, i.id, i.title, i.revision, b.revision, g.colour, g.revision FROM boards b
          LEFT JOIN board_groups g ON g.board_id=b.id AND g.active
          LEFT JOIN board_items i ON (i.board_id,i.group_id)=(g.board_id,g.id) AND i.state=0
          WHERE b.id=$1 ORDER BY g.position,g.id,i.position,i.created_at NULLS FIRST,i.id LIMIT $2",
@@ -338,6 +339,7 @@ pub fn load_group_snapshot(
                 id,
                 name: row.get(1),
                 colour: row.get(6),
+                revision: row.get(7),
                 items: Vec::new(),
             });
         }

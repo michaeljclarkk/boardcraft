@@ -25,8 +25,8 @@ export function mountNames(board, list, failureArea, api) {
   const grip = mountReorder({...controls, status: reorderStatus, multiDrag: selection.multiDrag});
   const notice = document.createElement('div'); notice.className = 'group-notice'; notice.setAttribute('role', 'status');
   failureArea.prepend(notice);
-  const groupMenu = groupMenus(controls, notice);
   const options = groupOptions(controls, document.querySelector('#new-item-options'), notice);
+  const groupMenu = groupMenus(controls, notice, options.edit);
 
   function setBusy(value) {
     busy = value;
@@ -200,7 +200,9 @@ export function mountNames(board, list, failureArea, api) {
     region.dataset.groupId = group.id;
     const heading = document.createElement('h2');
     const count = group.items.length;
-    heading.textContent = `${group.name} / ${count ? count + (count === 1 ? ' item' : ' items') : 'No Items'}`;
+    const name = document.createElement('span'); name.textContent = group.name;
+    if (board.owner) name.ondblclick = () => options.edit(group, region.querySelector('.group-menu button'));
+    heading.append(name, ` / ${count ? count + (count === 1 ? ' item' : ' items') : 'No Items'}`);
     heading.id = `group-${group.id}`;
     heading.style.borderLeft = `0.3rem solid ${group.colour}`;
     region.setAttribute('aria-labelledby', heading.id);
@@ -211,7 +213,7 @@ export function mountNames(board, list, failureArea, api) {
     return region;
   }
   function render() {
-    options.disabled = !board.owner;
+    options.create.disabled = !board.owner;
     selection.resetSnapshot(); list.replaceChildren(...board.groups.map(section));
     selection.paint(); moves.showFailures();
   }

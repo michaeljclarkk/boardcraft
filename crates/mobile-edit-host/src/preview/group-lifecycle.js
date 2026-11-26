@@ -1,6 +1,6 @@
 // A removal message belongs to this mounted visit only. Its label is never a
 // restore target. Both Restore gestures submit the same board-scoped command.
-export function groupMenus({api, board, busy, setBusy, refresh, button}, notice) {
+export function groupMenus({api, board, busy, setBusy, refresh, button}, notice, edit) {
   async function submit(group, action) {
     if (busy() || !api.current() || !board().owner) return;
     setBusy(true); notice.replaceChildren();
@@ -42,11 +42,15 @@ export function groupMenus({api, board, busy, setBusy, refresh, button}, notice)
     });
     toggle.setAttribute('aria-label', `Group menu for ${group.name}`);
     const archive = button('Archive group', () => { expand(false); submit(group, 'archive'); });
-    archive.disabled = !board().owner;
-    if (archive.disabled) archive.title = 'Owner access required.';
-    function expand(open) { archive.hidden = !open; toggle.setAttribute('aria-expanded', String(open)); }
+    const actions = ['Rename group','Change group colour'].map(label => button(label, () => { expand(false); edit(group, toggle); }));
+    actions.push(archive);
+    for (const action of actions) {
+      action.disabled = !board().owner;
+      if (action.disabled) action.title = 'Owner access required.';
+    }
+    function expand(open) { for (const action of actions) action.hidden = !open; toggle.setAttribute('aria-expanded', String(open)); }
     menu.onkeydown = e => { if (e.key === 'Escape') { expand(false); toggle.focus(); } };
     menu.onfocusout = e => { if (!menu.contains(e.relatedTarget)) expand(false); };
-    expand(false); menu.append(toggle, archive); return menu;
+    expand(false); menu.append(toggle, ...actions); return menu;
   };
 }
