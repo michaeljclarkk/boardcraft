@@ -26,7 +26,7 @@ export function matchBoard(lines, editing) {
   return lines.find(l => l.text === board.items[1].title);
 }
 
-function run(bin, args, { timeout = 30_000, binary = false, inherit = false } = {}) {
+export function run(bin, args, { timeout = 30_000, binary = false, inherit = false } = {}) {
   const r = spawnSync(bin, args, { cwd: root, encoding: binary ? null : 'utf8', timeout,
     maxBuffer: 16 * 1024 * 1024, stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'] });
   if (r.error) throw r.error;
@@ -34,7 +34,7 @@ function run(bin, args, { timeout = 30_000, binary = false, inherit = false } = 
   return r.stdout;
 }
 
-async function gate() {
+export async function withKitApp(journey) {
   requireKitEmulator();
   const serial = process.env.RUSTDAY_ANDROID_SERIAL;
   const adb = (...args) => run('adb', ['-s', serial, ...args]);
@@ -44,17 +44,19 @@ async function gate() {
   const installed = () => adb('shell', 'pm', 'list', 'packages', '-u', pkg).trim().split(/\s+/).includes(`package:${pkg}`);
   const foreground = () => adb('shell', 'dumpsys', 'activity', 'activities').split('\n').some(l =>
     l.includes('topResumedActivity=ActivityRecord{') && l.includes(` ${pkg}/`));
-  async function frame(editing) {
+  async function frame(label, match) {
     const deadline = Date.now() + 45_000;
+    let last = [];
     do {
       if (foreground()) {
         writeFileSync(png, run('adb', ['-s', serial, 'exec-out', 'screencap', '-p'], { binary: true }));
-        const hit = matchBoard(JSON.parse(run('powershell', [...ps, 'scripts/ocr-frame.ps1', png])), editing);
+        last = JSON.parse(run('powershell', [...ps, 'scripts/ocr-frame.ps1', png]));
+        const hit = match(last);
         if (hit && foreground()) return hit;
       }
       await delay(350);
     } while (Date.now() < deadline);
-    throw Error(`No matching foreground ${editing ? 'editor' : 'board'} frame`);
+    throw Error(`No matching foreground ${label} frame; last fixture frame: ${JSON.stringify(last)}`);
   }
   let own = false;
   try {
@@ -68,10 +70,9 @@ async function gate() {
     if (installed()) throw Error('Fixture package already present; refusing replacement');
     own = true; // absent on this exclusive AVD; also clean up a timed-out install
     if (!/^Success\s*$/m.test(adb('install', '--no-incremental', apk))) throw Error('Install failed');
-    adb('shell', 'am', 'start', '-W', '-n', `${pkg}/${activity}`);
-    const { x, y } = await frame(false);
-    adb('shell', 'input', 'tap', String(x), String(y));
-    await frame(true);
+    const start = (...extras) => adb('shell', 'am', 'start', '-W', '-n', `${pkg}/${activity}`, ...extras);
+    const tap = ({x, y}) => adb('shell', 'input', 'tap', String(x), String(y));
+    await journey({ adb, start, tap, frame, foreground });
   } finally {
     try {
       if (own) {
@@ -81,7 +82,13 @@ async function gate() {
       }
     } finally { rmSync(work, { recursive: true, force: true }); }
   }
-  console.log('Android Kit: ordered board frame, touch on second row, inline editor frame');
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) await gate();
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  await withKitApp(async ({start, tap, frame}) => {
+    start();
+    tap(await frame('board', l => matchBoard(l, false)));
+    await frame('editor', l => matchBoard(l, true));
+  });
+  console.log('Android Kit: ordered board frame, touch on second row, inline editor frame');
+}

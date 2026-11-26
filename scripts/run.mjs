@@ -12,6 +12,7 @@ export const packets = [
   { id: '05-android-emulator-edit', target: 'android_emulator_edit', database: true, android: true,
     cases: ['emulator_rename_then_reopen', 'emulator_reject_then_correct'] },
   { id: '06-android-kit-frame', database: true, kitFrame: true },
+  { id: '07-android-kit-edit', database: true, kitFrame: true, kitEdit: true },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -43,11 +44,15 @@ export function requireKitEmulator(exec = command, env = process.env) {
   requireEditEmulator(exec, env.RUSTDAY_ANDROID_SERIAL ?? '');
 }
 
-export function verify({ target, buildBins, cases = [], android, kitFrame }, exec = command) {
+export function verify({ target, buildBins, cases = [], android, kitFrame, kitEdit }, exec = command) {
   exec('cargo', ['fmt', '--all', '--', '--check']);
   if (kitFrame) {
     exec('cargo', ['fmt', '--manifest-path', 'android/Cargo.toml', '--', '--check']);
     exec('node', ['scripts/android-kit-frame.mjs']);
+    if (kitEdit) {
+      exec('node', ['--test', 'scripts/run.test.mjs']);
+      exec('node', ['scripts/android-kit-edit.mjs']);
+    }
     exec('cargo', ['test', '--locked', '--workspace']);
     return;
   }

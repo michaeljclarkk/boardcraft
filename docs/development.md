@@ -97,6 +97,18 @@ node --test scripts/run.test.mjs        # gate regressions, not emulator evidenc
 
 The [frame gate](../scripts/android-kit-frame.mjs) checks package ID/ABI/debug flag before install and refuses to replace an existing package. It observes the foreground activity, captures PNG bytes directly, recognizes ordered text and derives touch coordinates from the first frame. It fails on missing frames, wrong order, stale frames and timeouts. Do not use a static screenshot or draw a second copy of the Input value for OCR. Keep observed strings legible and away from the system bars. Keyboard and lifecycle need their own checks; in particular the mobile host [documents the NativeActivity recreation limitation and host-driven alternative](https://github.com/longbridge/gpui-mobile/blob/7548ebc4b24f00494af9976af8852c7163ded9ce/src/android/host.rs#L1-L51). If blocked on another renderer/driver, preserve the error, package/version tuple and actual last frame; independent source work is the Windows display-to-editor transition (double-click/F2 → draft → Escape restores the accepted name, no revision change). Do not pass 06 with that separate interaction.
 
+### Android Kit edit gate
+
+Use the frame gate's dedicated AVD and host GPU setup, with `rustday_test` active in the operator shell. Use a JDK with `javac --release 8` support. The build compiles only `GpuiInputActivity.java` from the locked mobile host checkout and packages its DEX alongside the Rust library. Its transparent input connection forwards keyboard edits to the focused GPUI handler.
+
+```powershell
+node scripts/android-kit-frame.mjs       # no extras: original offline fixture
+node --test scripts/run.test.mjs
+node scripts/android-kit-edit.mjs        # live Kit input and independent store readbacks
+```
+
+The edit gate starts [`kit_edit_fixture`](../crates/mobile-edit-host/examples/kit_edit_fixture.rs) against a fresh schema. Only a board UUID and reversed loopback port go into the activity intent. The fixture's stdin replies reflect new store connections; EOF stops the host and drops the schema. Record the live gate outcomes in the handoff before runner verification.
+
 ### Disposable PostgreSQL
 
 The product rename does not migrate PostgreSQL. Keep the existing cluster path, `rustday_admin` and `rustday_test` roles, database name and `RUSTDAY_TEST_DATABASE_URL`. The `rustday_migrations` table and `rustday.board.migrations` advisory lock are shared with earlier binaries so they see the same applied versions and serialize migrations. Do not create a second cluster or rename these identifiers. The ignored `.private/dev.json` tool settings are unchanged. Historical handoffs keep the command and package names actually tested at the time.

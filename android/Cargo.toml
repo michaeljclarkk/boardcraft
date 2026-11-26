@@ -12,6 +12,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 android-activity = { version = "0.6", features = ["native-activity"] }
+boardcraft-mobile-edit-client = { path = "../crates/mobile-edit-client" }
+jni = "0.22"
+uuid = { version = "1", features = ["serde"] }
 gpui-kit = { version = "=0.8.1", default-features = false, features = ["component"] }
 gpui-mobile = { package = "gpui-pre-mobile", git = "https://github.com/longbridge/gpui-mobile", rev = "7548ebc4b24f00494af9976af8852c7163ded9ce", default-features = false }
 serde = { version = "1", features = ["derive"] }

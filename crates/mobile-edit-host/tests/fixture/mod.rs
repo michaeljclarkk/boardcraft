@@ -37,7 +37,12 @@ pub struct Fixture {
 }
 
 impl Fixture {
+    #[cfg(test)]
     pub fn start() -> Self {
+        Self::with_titles(["Review", "Review"])
+    }
+
+    pub fn with_titles(titles: [&str; 2]) -> Self {
         let mut config: Config = std::env::var("RUSTDAY_TEST_DATABASE_URL")
             .expect("RUSTDAY_TEST_DATABASE_URL is required")
             .parse()
@@ -55,8 +60,8 @@ impl Fixture {
         store::migrate(&mut db).unwrap();
         let board = Uuid::new_v4();
         let mut seed = Board::new(BoardId::new(board).unwrap());
-        for id in [FIRST, SECOND] {
-            seed.add_item(ItemId::new(id).unwrap(), "Review").unwrap();
+        for (id, title) in [FIRST, SECOND].into_iter().zip(titles) {
+            seed.add_item(ItemId::new(id).unwrap(), title).unwrap();
         }
         store::create_board(&mut db, &seed).unwrap();
         let host = Host::start(&schema.config, seed.id()).unwrap();

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { packets, requireEditEmulator, requireKitEmulator, runQueue, validLimit, verify } from './run.mjs';
 import { matchBoard } from './android-kit-frame.mjs';
+import { editFrame } from './android-kit-edit.mjs';
 
 test('resume skips verified work; a stale handoff or failed gate cannot advance the queue', () => {
   const cwd = process.cwd(), dir = mkdtempSync(join(tmpdir(), 'boardcraft-'));
@@ -135,7 +136,7 @@ test('06 rejects shared/remote servers and requires the dedicated AVD', () => {
 });
 
 test('06 requires the frame gate, not the process probe or just a successful build', () => {
-  const p = packets.at(-1);
+  const p = packets.find(p => p.id === '06-android-kit-frame');
   assert.equal(p.id, '06-android-kit-frame');
   const calls = [];
   verify(p, (bin, args) => calls.push([bin, ...args].join(' ')));
@@ -152,4 +153,18 @@ test('ordered OCR frames distinguish an editor from a stale, blank or unrelated 
     assert.equal(matchBoard(wrong, true), undefined);
   }
   assert.equal(matchBoard(frame, false), undefined);
+});
+
+test('07 requires live editor, recovery and store gate after the existing frame gate', () => {
+  const packet = packets.find(p => p.id === '07-android-kit-edit');
+  const calls = [];
+  verify(packet, (bin, args) => calls.push([bin,...args].join(' ')));
+  assert.deepEqual(calls.slice(2), ['node scripts/android-kit-frame.mjs','node --test scripts/run.test.mjs','node scripts/android-kit-edit.mjs','cargo test --locked --workspace']);
+  assert.throws(() => verify(packet, (_, args) => { if (args.includes('scripts/android-kit-edit.mjs')) throw Error('store mismatch'); }), /store mismatch/);
+  const expected = ['Sample board','Review sketch','Editing name','Coral','Save'];
+  const frame = expected.map((text,i) => ({text, x:60, y:50+i*50}));
+  assert.deepEqual(editFrame(frame, expected).Coral, frame[3]);
+  for (const bad of [frame.slice(0,-1), [...frame,frame[3]], [...frame.slice(0,3),frame[4],{...frame[3],y:500}], [...frame,{text:'Ink',x:30,y:65}]]) {
+    assert.equal(editFrame(bad, expected, ['Ink']), undefined);
+  }
 });

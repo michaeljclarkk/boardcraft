@@ -15,9 +15,21 @@ $keytool = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin/keytool.exe' } el
 $manifest = Join-Path $PSScriptRoot 'Cargo.toml'
 $abi = 'x86_64-linux-android'
 
-Invoke-Checked cargo build --manifest-path $manifest --locked --target $abi --lib
-$meta = Invoke-Checked cargo metadata --manifest-path $manifest --locked --format-version 1 --no-deps | ConvertFrom-Json
-$so = Join-Path $meta.target_directory "$abi/debug/libboardcraft_kit_fixture.so"
+# Compile just the platform's matching, transparent IME proxy from the locked
+# Cargo checkout. Its nativeIme JNI method belongs to this same mobile host.
+$so = $null
+$proxy = $null
+Invoke-Checked cargo build --manifest-path $manifest --locked --target $abi --lib --message-format=json-render-diagnostics | ForEach-Object {
+    $artifact = $_ | ConvertFrom-Json
+    if ($artifact.reason -eq 'compiler-artifact') {
+        if ($artifact.target.name -eq 'gpui_mobile') {
+            $proxy = Join-Path (Split-Path $artifact.manifest_path) 'example/android/gradle/app/src/main/java/dev/gpui/mobile/GpuiInputActivity.java'
+        } elseif ($artifact.target.name -eq 'boardcraft_kit_fixture') {
+            $so = $artifact.filenames | Where-Object { [IO.Path]::GetFileName($_) -eq 'libboardcraft_kit_fixture.so' }
+        }
+    }
+}
+if (!$so -or !$proxy) { throw 'Missing fixture or Android host build artifact' }
 
 # Everything except the final signed APK (including its one-build debug key)
 # lives in this invocation's staging directory.
@@ -35,6 +47,11 @@ $buildFailed = $false
 try {
     [void][IO.Directory]::CreateDirectory($lib)
     Copy-Item -LiteralPath $so -Destination $lib
+    $classes = [IO.Directory]::CreateDirectory((Join-Path $work 'classes')).FullName
+    $javac = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin/javac.exe' } else { 'javac.exe' }
+    Invoke-Checked $javac --release 8 -classpath $platform -encoding UTF-8 -d $classes $proxy
+    $bytecode = @(Get-ChildItem -LiteralPath $classes -Filter '*.class' -Recurse | ForEach-Object FullName)
+    Invoke-Checked (Join-Path $tools 'd8.bat') --min-api 28 --lib $platform --output $payload @bytecode
     Invoke-Checked (Join-Path $tools 'aapt.exe') package -M (Join-Path $PSScriptRoot 'AndroidManifest.xml') -I $platform -F $unsigned '-0' so $payload
     Invoke-Checked (Join-Path $tools 'zipalign.exe') -P 16 4 $unsigned $aligned
     Invoke-Checked $keytool -genkeypair -keystore $key -storetype PKCS12 -storepass android -keypass android -alias fixture -keyalg RSA -keysize 2048 -validity 30 -dname 'CN=Boardcraft Debug Fixture'
