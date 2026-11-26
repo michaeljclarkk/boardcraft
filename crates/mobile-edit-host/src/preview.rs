@@ -40,6 +40,9 @@ pub(super) fn asset(request: &Request) -> Option<Response<Cursor<&'static [u8]>>
         "/preview/names.js" => ("text/javascript", include_bytes!("preview/names.js")),
         "/preview/moves.js" => ("text/javascript", include_bytes!("preview/moves.js")),
         "/preview/reorder.js" => ("text/javascript", include_bytes!("preview/reorder.js")),
+        "/preview/heading-drag.js" => {
+            ("text/javascript", include_bytes!("preview/heading-drag.js"))
+        }
         "/preview/selection.js" => ("text/javascript", include_bytes!("preview/selection.js")),
         "/preview/selection-move.js" => (
             "text/javascript",

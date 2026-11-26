@@ -13,6 +13,9 @@ li { padding: .45rem; border-bottom: 1px solid #c5d6d1; overflow-wrap: anywhere;
 #items button { white-space: pre-wrap; }
 #items h2 { font-size: 1.1rem; margin: .75rem 0 .25rem; }
 #items ul { margin: 0; }
+#items:has(> section[data-group-id]) { max-height: 70vh; overflow-y: auto; }
+#items h2 > span { user-select: none; }
+.heading-drag-label { pointer-events: none; position: fixed; z-index: 1; padding: .15rem .5rem; color: white; background: #235f58; border-radius: .2rem; }
 .add-item { display: flex; align-items: center; gap: .4rem; margin: .4rem 0; flex-wrap: wrap; }
 .add-item input { margin: 0; min-width: 0; }
 .row-menu { float: right; }

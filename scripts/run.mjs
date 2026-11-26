@@ -71,6 +71,10 @@ const previewGroupEdit = { ...previewGroupCreate,
   cases: [...previewGroupCreate.cases, 'preview_group_edit_requires_current_owner', 'preview_group_edit_checks_both_revisions_and_preserves_children'],
   browserCases: [...previewGroupCreate.browserCases, 'browser_edits_existing_group_by_id', 'browser_reviews_conflicting_group_edit', 'browser_demoted_owner_cannot_edit_group'] };
 
+const previewGroupOrder = { ...previewGroupEdit,
+  cases: [...previewGroupEdit.cases, 'preview_group_reorder_requires_current_owner', 'preview_group_reorder_checks_active_permutation_and_commit'],
+  browserCases: [...previewGroupEdit.browserCases, 'browser_moves_group_one_place_from_menu', 'browser_reloads_order_before_moving_group_again', 'browser_demoted_owner_cannot_reorder_groups'] };
+
 export const packets = [
   { id: '01-board', target: 'board_edit', database: false },
   { id: '02-postgres', target: 'postgres_board', database: true },
@@ -126,9 +130,9 @@ export const packets = [
   { id: '38-browser-group-archive-restore', ...previewGroupLifecycle },
   { id: '39-browser-group-create', ...previewGroupCreate },
   { id: '40-browser-group-edit', ...previewGroupEdit },
-  { id: '41-browser-group-reorder', ...previewGroupEdit,
-    cases: [...previewGroupEdit.cases, 'preview_group_reorder_requires_current_owner', 'preview_group_reorder_checks_active_permutation_and_commit'],
-    browserCases: [...previewGroupEdit.browserCases, 'browser_moves_group_one_place_from_menu', 'browser_reloads_order_before_moving_group_again', 'browser_demoted_owner_cannot_reorder_groups'] },
+  { id: '41-browser-group-reorder', ...previewGroupOrder },
+  { id: '42-browser-group-heading-drag', ...previewGroupOrder,
+    browserCases: [...previewGroupOrder.browserCases, 'browser_drags_group_across_sections', 'browser_cancels_group_heading_drag', 'browser_scrolls_to_group_drop_target', 'browser_recovers_group_drag_after_refusal'] },
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

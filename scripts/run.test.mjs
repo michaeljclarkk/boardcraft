@@ -575,3 +575,17 @@ test('41 requires adjacent menu moves, conflict recovery, current Owner and all 
   run();
   for (const name of [...browser, ...host]) assert.throws(() => run(name), /Missing passing/);
 });
+
+test('42 requires heading drag, cancellation, scroll and recovery alongside the complete group-order gate', () => {
+  const previous = packets.find(p => p.id === '41-browser-group-reorder');
+  const packet = packets.find(p => p.id === '42-browser-group-heading-drag');
+  const browser = [...previous.browserCases, 'browser_drags_group_across_sections', 'browser_cancels_group_heading_drag', 'browser_scrolls_to_group_drop_target', 'browser_recovers_group_drag_after_refusal'];
+  assert.deepEqual(packet, { ...previous, id: '42-browser-group-heading-drag', browserCases: browser });
+  const run = missing => verify(packet, (_bin, args) => {
+    const names = args.includes('browser_preview') ? browser : args.includes('loopback_board_access') ? previous.cases : [];
+    const present = names.filter(n => n !== missing);
+    return [...present.map(n => `test ${n} ... ok`), `test result: ok. ${present.length} passed; 0 failed; 0 ignored`].join('\n');
+  });
+  run();
+  for (const name of [...browser, ...previous.cases]) assert.throws(() => run(name), /Missing passing/);
+});

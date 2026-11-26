@@ -11,6 +11,23 @@ mod group_edit_browser;
 mod group_order_browser;
 
 #[test]
+fn browser_drags_group_across_sections() {
+    group_order_browser::across();
+}
+#[test]
+fn browser_cancels_group_heading_drag() {
+    group_order_browser::cancel_drag();
+}
+#[test]
+fn browser_scrolls_to_group_drop_target() {
+    group_order_browser::scroll();
+}
+#[test]
+fn browser_recovers_group_drag_after_refusal() {
+    group_order_browser::recover_drag();
+}
+
+#[test]
 fn browser_moves_group_one_place_from_menu() {
     group_order_browser::moves();
 }

@@ -1,4 +1,7 @@
-export async function groupOrderJourney(step, {browser,uuid,click,key,wait,check,requests,statuses,reload,selectedGet,resolve,observe,list,origin}) {
+import {headingDragJourney} from './heading-drag.mjs';
+
+export async function groupOrderJourney(step, context) {
+  const {browser,uuid,click,key,wait,check,requests,statuses,reload,selectedGet,resolve,observe,list,origin} = context;
   const get = selectedGet(201), post = ['POST',get[1]+'/group-order'];
   const A='g-old', B='g-z', C='g-end', ABC=[A,B,C], BAC=[B,A,C], ACB=[A,C,B];
   const exchange = (...pairs) => { requests(pairs.map(([r])=>r)); statuses(...pairs); };
@@ -24,6 +27,7 @@ export async function groupOrderJourney(step, {browser,uuid,click,key,wait,check
     const states=await observe(`[...document.querySelectorAll('${section(id)} button')].filter(b=>b.textContent.startsWith('Move group') && !b.hidden).map(b=>[b.textContent,!b.disabled])`);
     check(JSON.stringify(states)===JSON.stringify([['Move group up',up],['Move group down',down]]),'both direction permissions');
   }
+  if (step.startsWith('drag ')) return headingDragJourney(step.slice(5), {...context, grid, payload, exchange, post, get, notice});
   switch(step) {
     case 'boundaries':
       await accessible(A,false,true); await choice('up',A,true); await dismiss();

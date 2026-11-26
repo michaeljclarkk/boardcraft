@@ -33,7 +33,8 @@ export function groupMenus({api, board, busy, setBusy, refresh, button}, notice,
       else api.reload('Group changed. Reload the board.');
     }
   }
-  return (group, index) => {
+  return {menu, move};
+  function menu(group, index) {
     const menu = document.createElement('span'); menu.className = 'group-menu';
     const toggle = button('⋯', () => {
       if (busy()) return;
@@ -63,7 +64,7 @@ export function groupMenus({api, board, busy, setBusy, refresh, button}, notice,
     menu.onkeydown = e => { if (e.key === 'Escape') { expand(false); toggle.focus(); } };
     menu.onfocusout = e => { if (!menu.contains(e.relatedTarget)) expand(false); };
     expand(false); menu.append(toggle, ...actions); return menu;
-  };
+  }
 
   // Until an authoritative read succeeds, keep the previous grid and block
   // all new choices. Recovery never retains the submitted IDs or direction.
@@ -88,13 +89,14 @@ export function groupMenus({api, board, busy, setBusy, refresh, button}, notice,
     }
   }
   async function move(ids) {
+    if (busy() || !api.current() || !board().owner) return;
     setBusy(true); notice.textContent = 'Saving group order…';
     try {
       await api.reorderGroups(board().revision, ids);
     } catch (error) {
       if (!api.current() || accessChanged(error)) return;
       if (error === 500 || error === 422 || error === 413) {
-        setBusy(false); notice.textContent = 'Could not move group. Reopen its menu to retry.';
+        setBusy(false); notice.textContent = 'Could not move group. Try the move again.';
       } else reload(error === 409 ? 'Group order changed.' : 'Could not confirm group order.');
       return;
     }

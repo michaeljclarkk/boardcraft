@@ -7,7 +7,12 @@ const identify = $('#identify'), authenticate = $('#authenticate'), boards = $('
 const identifier = $('#identifier'), password = $('#password'), alert = $('[role=alert]');
 const refresh = $('#refresh'), resolve = $('#resolve'), list = $('#boards ul');
 const destination = $('#destination'), items = $('#items'), retry = $('#retry-destination');
-let binding, active, visit;
+let binding, active, visit, unmount;
+
+function leaveVisit() {
+  visit = undefined;
+  unmount?.(); unmount = undefined;
+}
 
 function step(panel, title) {
   for (const view of [identify, authenticate, boards, destination, resolve]) view.hidden = view !== panel;
@@ -16,7 +21,7 @@ function step(panel, title) {
 }
 
 function clearNavigation() {
-  visit = undefined;
+  leaveVisit();
   $('#failures').replaceChildren();
   list.replaceChildren(); $('#empty').hidden = true;
   items.replaceChildren(); retry.hidden = true; retry.onclick = null;
@@ -33,7 +38,7 @@ function signInScreen() {
 
 // History traversal can start a new read while an older one is still in flight.
 async function run(operation) {
-  visit = undefined; // Invalidate editor blur and late saves before changing focus.
+  leaveVisit(); // Invalidate editor blur and late saves before changing focus.
   const turn = active = Symbol();
   const current = () => active === turn;
   const controls = document.querySelectorAll('input, button');
@@ -152,7 +157,7 @@ async function loadDestination(id, current, notice = '', recovery = false) {
     const mounted = visit = Symbol();
     const menu = document.createElement('details'), label = document.createElement('summary');
     label.textContent = 'Archived & deleted content'; menu.append(label, link); $('#recovery-nav').append(menu);
-    mountNames(board, items, $('#failures'), {
+    unmount = mountNames(board, items, $('#failures'), {
       current: () => visit === mounted,
       read,
       transition,

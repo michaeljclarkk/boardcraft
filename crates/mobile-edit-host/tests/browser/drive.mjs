@@ -216,6 +216,7 @@ async function perform({action, password, rows, otherPort}) {
   if (action.startsWith('new group ')) return groupCreateJourney(action.slice(10), {browser,uuid,click,key,type,wait,check,requests,statuses,reload,selectedGet,resolve,observe,login,list,origin});
   if (action.startsWith('edit group ')) return groupEditJourney(action.slice(11), {browser,uuid,click,key,type,wait,check,requests,statuses,reload,selectedGet,resolve,observe,login,list,origin});
   if (action.startsWith('order groups ')) return groupOrderJourney(action.slice(13), {browser,uuid,click,key,wait,check,requests,statuses,reload,selectedGet,resolve,observe,list,origin});
+  if (action.startsWith('drag ')) return groupOrderJourney(action, {browser,uuid,click,key,wait,check,requests,statuses,reload,selectedGet,resolve,observe,list,origin});
   if (action.startsWith('group life ')) return groupLifecycleJourney(action.slice(11), {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, traverse, boardPath, selectedGet, resolve, observe, login, list, origin});
   if (action.startsWith('life ')) return lifecycleJourney(action, {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe, named, traverse});
   if (action.startsWith('batch ')) return batchJourney(action, {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe, named});

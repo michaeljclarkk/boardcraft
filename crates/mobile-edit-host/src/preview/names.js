@@ -5,6 +5,7 @@ import {archiveDialog} from './lifecycle.js';
 import {groupMenus} from './group-lifecycle.js';
 import {groupOptions} from './group-create.js';
 import {mountReorder} from './reorder.js';
+import {mountHeadingDrag} from './heading-drag.js';
 import {mountSelection} from './selection.js';
 
 export function mountNames(board, list, failureArea, api) {
@@ -26,7 +27,8 @@ export function mountNames(board, list, failureArea, api) {
   const notice = document.createElement('div'); notice.className = 'group-notice'; notice.setAttribute('role', 'status');
   failureArea.prepend(notice);
   const options = groupOptions(controls, document.querySelector('#new-item-options'), notice);
-  const groupMenu = groupMenus(controls, notice, options.edit);
+  const {menu: groupMenu, move} = groupMenus(controls, notice, options.edit);
+  const unmountDrag = mountHeadingDrag(list, controls, move);
 
   function setBusy(value) {
     busy = value;
@@ -218,4 +220,5 @@ export function mountNames(board, list, failureArea, api) {
     selection.paint(); moves.showFailures();
   }
   render();
+  return unmountDrag;
 }
