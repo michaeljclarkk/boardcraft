@@ -37,6 +37,7 @@ enum State {
 }
 
 pub(super) struct MoveDialog {
+    archive: bool,
     operation: Uuid,
     board_revision: i64,
     roots: Vec<Root>,
@@ -60,13 +61,16 @@ impl MoveDialog {
     }
     fn adoptable(&self) -> bool {
         self.review.as_ref().is_some_and(|read| {
-            read.is_editable()
-                && self.roots.iter().all(|root| {
-                    read.groups()
-                        .iter()
-                        .flat_map(|g| g.items())
-                        .any(|r| r.id == root.id)
-                })
+            (if self.archive {
+                read.is_manageable()
+            } else {
+                read.is_editable()
+            }) && self.roots.iter().all(|root| {
+                read.groups()
+                    .iter()
+                    .flat_map(|g| g.items())
+                    .any(|r| r.id == root.id)
+            })
         })
     }
     fn emit(&self, event: MoveEvent, cx: &mut Context<Self>) {
@@ -95,21 +99,25 @@ impl Render for MoveDialog {
         if self.roots.len() > 6 {
             body = body.child(Label::new(format!("and {} more", self.roots.len() - 6)));
         }
-        body = body
-            .child(Label::new("Destination board"))
-            .child(
-                Button::new("move-board")
-                    .label("Current board")
-                    .disabled(true),
-            )
-            .child(Label::new("Destination group"))
-            .child(
-                div().h_8().child(
-                    Select::new(&self.destination)
-                        .accessibility_label("Destination group")
-                        .disabled(self.pending()),
-                ),
-            );
+        if self.archive {
+            body = body.child(Label::new("Restore these items later from board Archive."));
+        } else {
+            body = body
+                .child(Label::new("Destination board"))
+                .child(
+                    Button::new("move-board")
+                        .label("Current board")
+                        .disabled(true),
+                )
+                .child(Label::new("Destination group"))
+                .child(
+                    div().h_8().child(
+                        Select::new(&self.destination)
+                            .accessibility_label("Destination group")
+                            .disabled(self.pending()),
+                    ),
+                );
+        }
         if let Some(read) = &self.review {
             body = body.child(Label::new(format!(
                 "Current board revision {}",
@@ -132,15 +140,16 @@ impl Render for MoveDialog {
                     ),
                 }));
             }
-            let group_present = self
-                .destination
-                .read(cx)
-                .selected_value()
-                .is_some_and(|id| read.groups().iter().any(|g| g.id() == id.as_ref()));
+            let group_present = self.archive
+                || self
+                    .destination
+                    .read(cx)
+                    .selected_value()
+                    .is_some_and(|id| read.groups().iter().any(|g| g.id() == id.as_ref()));
             body = body.child(
                 Button::new("move-adopt")
                     .label("Use these revisions and keep my choices")
-                    .disabled(!self.adoptable() || !group_present)
+                    .disabled(self.pending() || !self.adoptable() || !group_present)
                     .on_click(cx.listener(|d, _, _, cx| d.emit(MoveEvent::Adopt, cx))),
             );
         }
@@ -170,7 +179,7 @@ impl Render for MoveDialog {
                     Button::new("move-confirm")
                         .track_focus(&self.confirm_focus)
                         .primary()
-                        .label("Confirm")
+                        .label(if self.archive { "Archive" } else { "Confirm" })
                         .loading(self.state == State::Saving)
                         .disabled(self.state != State::Ready)
                         .on_click(cx.listener(|d, _, _, cx| d.emit(MoveEvent::Confirm, cx))),
@@ -182,6 +191,18 @@ impl Render for MoveDialog {
 enum Failure {
     Save(EditError),
     Read(EditError),
+}
+impl Failure {
+    fn is_uncertain(&self, archive: bool, reviewing: bool) -> bool {
+        match self {
+            // A review that sent no command may be retried without losing its draft.
+            Self::Read(_) => !(archive && reviewing),
+            Self::Save(EditError::Transport | EditError::AccessUnavailable) => true,
+            // The archive host returns 500 only after rolling back the transaction.
+            Self::Save(EditError::HostFault) => !archive,
+            Self::Save(_) => false,
+        }
+    }
 }
 
 impl Connected {
@@ -205,6 +226,12 @@ impl Connected {
     }
 
     pub(super) fn open_selection_move(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        self.open_selection_command(false, w, cx);
+    }
+    pub(super) fn open_selection_archive(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        self.open_selection_command(true, w, cx);
+    }
+    fn open_selection_command(&mut self, archive: bool, w: &mut Window, cx: &mut Context<Self>) {
         let Screen::Navigation(nav) = &mut self.screen else {
             return;
         };
@@ -213,7 +240,11 @@ impl Connected {
         };
         if table.pending
             || table.reconcile
-            || !table.editable
+            || !(if archive {
+                table.manageable
+            } else {
+                table.editable
+            })
             || table.selection.ids.is_empty()
             || table.move_dialog.is_some()
             || table.item_move.is_some()
@@ -255,6 +286,7 @@ impl Connected {
             return;
         };
         let dialog = cx.new(|cx| MoveDialog {
+            archive,
             operation: Uuid::new_v4(),
             board_revision: table.board_revision,
             roots,
@@ -271,7 +303,11 @@ impl Connected {
                 }),
             );
         table.move_dialog = Some(dialog.clone());
-        table.move_focus.focus(w, cx);
+        if archive {
+            table.selection_archive_focus.focus(w, cx);
+        } else {
+            table.move_focus.focus(w, cx);
+        }
         let cancel = dialog.downgrade();
         let confirm = cancel.clone();
         w.open_dialog(cx, move |surface, _, cx| {
@@ -279,7 +315,11 @@ impl Connected {
             let cancel = cancel.clone();
             let confirm = confirm.clone();
             surface
-                .title("Move selected items")
+                .title(if archive {
+                    "Archive selected items?"
+                } else {
+                    "Move selected items"
+                })
                 .overlay_closable(false)
                 .close_button(!busy)
                 .on_cancel(move |_, _, cx| {
@@ -331,11 +371,12 @@ impl Connected {
                         return;
                     }
                     let read = d.review.as_ref().unwrap();
-                    if !d
-                        .destination
-                        .read(cx)
-                        .selected_value()
-                        .is_some_and(|id| read.groups().iter().any(|g| g.id() == id.as_ref()))
+                    if !d.archive
+                        && !d
+                            .destination
+                            .read(cx)
+                            .selected_value()
+                            .is_some_and(|id| read.groups().iter().any(|g| g.id() == id.as_ref()))
                     {
                         return;
                     }
@@ -352,13 +393,23 @@ impl Connected {
                     }
                     d.review = None;
                     d.state = State::Ready;
-                    d.notice = "Revisions adopted. Confirm separately to move the selected items.";
+                    d.notice = if d.archive {
+                        "Revisions adopted. Confirm separately to archive the selected items."
+                    } else {
+                        "Revisions adopted. Confirm separately to move the selected items."
+                    };
                     cx.notify();
                 });
                 return;
             }
             MoveEvent::Confirm
-                if dialog.read(cx).state != State::Ready || !table.editable || table.reconcile =>
+                if dialog.read(cx).state != State::Ready
+                    || !(if dialog.read(cx).archive {
+                        table.manageable
+                    } else {
+                        table.editable
+                    })
+                    || table.reconcile =>
             {
                 return;
             }
@@ -370,6 +421,7 @@ impl Connected {
         let reviewing = matches!(event, MoveEvent::Review);
         let uncertain = dialog.read(cx).state == State::Uncertain;
         let d = dialog.read(cx);
+        let archive = d.archive;
         let Some(group) = d.destination.read(cx).selected_value() else {
             return;
         };
@@ -391,6 +443,8 @@ impl Connected {
             };
             d.notice = if reviewing {
                 "Reading current items…"
+            } else if archive {
+                "Archiving selected items…"
             } else {
                 "Moving selected items…"
             };
@@ -402,9 +456,17 @@ impl Connected {
         }
         let work = cx.background_executor().spawn(async move {
             if !reviewing {
-                client
-                    .move_main_table_selection(board, command.0, &command.1, command.2, &command.3)
-                    .map_err(Failure::Save)?;
+                if archive {
+                    client
+                        .archive_main_table_selection(board, command.0, command.2, &command.3)
+                        .map_err(Failure::Save)?;
+                } else {
+                    client
+                        .move_main_table_selection(
+                            board, command.0, &command.1, command.2, &command.3,
+                        )
+                        .map_err(Failure::Save)?;
+                }
             }
             client.read_main_table(board).map_err(Failure::Read)
         });
@@ -417,7 +479,7 @@ impl Connected {
                 if *current != board || old.move_dialog.as_ref() != Some(&dialog) { return; }
                 old.set_busy(false, cx);
                 match result {
-                    Ok(read) if reviewing && !uncertain && read.is_editable() => {
+                    Ok(read) if reviewing && !uncertain && (if archive { read.is_manageable() } else { read.is_editable() }) => {
                         dialog.update(cx, |d, cx| {
                             d.review = Some(read);
                             d.state = State::Reviewed;
@@ -433,8 +495,8 @@ impl Connected {
                         // disclosure only after Kit has restored the dialog trigger.
                         table.focus_first(w, cx);
                         nav.page = Page::Items(board, Box::new(table));
-                        v.message = if uncertain { "Board reloaded. Review accepted items before another move." }
-                            else if reviewing { "Move not saved: permission denied." } else { "" };
+                        v.message = if uncertain { if archive { "Board reloaded. Review accepted items before another archive." } else { "Board reloaded. Review accepted items before another move." } }
+                            else if reviewing { if archive { "Archive not saved: permission denied." } else { "Move not saved: permission denied." } } else { "" };
                     }
                     Err(Failure::Save(EditError::SessionRejected) | Failure::Read(EditError::SessionRejected)) => {
                         w.close_dialog(cx);
@@ -452,9 +514,10 @@ impl Connected {
                         let denied = matches!(failure, Failure::Save(EditError::PermissionDenied));
                         dialog.update(cx, |d, cx| {
                             d.review = None;
-                            d.state = if uncertain || matches!(failure, Failure::Read(_) | Failure::Save(EditError::Transport | EditError::AccessUnavailable | EditError::HostFault)) { State::Uncertain } else { State::Refused };
-                            d.notice = if denied { "Move not saved: permission denied. Checking current access…" }
-                                else if d.state == State::Uncertain { "Move not confirmed. Read the board before another move; this request will not be repeated." }
+                            d.state = if uncertain || failure.is_uncertain(archive, reviewing) { State::Uncertain } else { State::Refused };
+                            d.notice = if denied { if archive { "Archive not saved: permission denied. Checking current access…" } else { "Move not saved: permission denied. Checking current access…" } }
+                                else if d.state == State::Uncertain { if archive { "Archive not confirmed. Read the board before another archive; this request will not be repeated." } else { "Move not confirmed. Read the board before another move; this request will not be repeated." } }
+                                else if archive && reviewing { "Could not review selected items. Retry review." }
                                 else { "Items changed or are unavailable. Review latest items before confirming again." };
                             cx.notify();
                         });

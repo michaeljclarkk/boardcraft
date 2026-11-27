@@ -89,6 +89,14 @@ impl MainTable {
                     .on_click(cx.listener(|v, _, w, cx| v.open_selection_move(w, cx))),
             )
             .child(
+                Button::new("selection-archive")
+                    .track_focus(&self.selection_archive_focus)
+                    .small()
+                    .label("Archive…")
+                    .disabled(!self.manageable || self.pending || self.reconcile)
+                    .on_click(cx.listener(|v, _, w, cx| v.open_selection_archive(w, cx))),
+            )
+            .child(
                 Button::new("selection-clear")
                     .small()
                     .ghost()

@@ -162,6 +162,11 @@ const groupOrder = packets.at(-1);
 packets.push({ ...groupOrder, id: '50-windows-item-placement',
   cases: [...groupOrder.cases, 'native_single_root_placement_checks_access'],
   windowsCases: [...groupOrder.windowsCases, 'windows_moves_and_reorders_single_roots', 'windows_recovers_single_root_placement'] });
+const itemPlacement = packets.at(-1);
+packets.push({ ...itemPlacement, id: '51-selected-root-archive',
+  cases: [...itemPlacement.cases, 'selected_root_archive_is_atomic_and_authorized'],
+  windowsCases: [...itemPlacement.windowsCases, 'windows_archives_selected_roots'],
+  browserCases: [...packets.find(p => p.id === '43-browser-group-collapse').browserCases, 'browser_archives_selected_roots'] });
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
 const text = value => typeof value === 'string' && value.trim().length > 0;

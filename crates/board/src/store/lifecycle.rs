@@ -2,6 +2,7 @@ use super::{
     BoardId, ItemId, ReorderError, reorder::lock_board, selection_move::check_grid_budget,
 };
 use postgres::{Transaction, types::ToSql};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 pub struct ArchivedRoot {
@@ -80,9 +81,9 @@ pub fn transition_root(
         return Err(Invalid);
     }
     let version = lock_board(tx, board)?;
-    let (kind, from, to) = match cmd.action {
-        Lifecycle::Archive => ("archive", 0, 1),
-        Lifecycle::Restore => ("restore", 1, 0),
+    let kind = match cmd.action {
+        Lifecycle::Archive => "archive",
+        Lifecycle::Restore => "restore",
     };
     let args: &[&(dyn ToSql + Sync)] = &[
         &cmd.operation,
@@ -105,20 +106,7 @@ pub fn transition_root(
     if version != cmd.board_revision {
         return Err(Conflict);
     }
-    let row = tx
-        .query_opt(
-            "SELECT i.revision,i.state FROM board_items i JOIN board_groups g
-            ON (g.board_id,g.id)=(i.board_id,i.group_id)
-         WHERE i.board_id=$1 AND i.id=$2 AND g.active FOR UPDATE OF i FOR SHARE OF g",
-            &[&board.0, &item.0],
-        )?
-        .ok_or(Missing)?;
-    if row.get::<_, i64>(0) != cmd.item_revision {
-        return Err(Conflict);
-    }
-    if row.get::<_, i32>(1) != from {
-        return Err(Invalid);
-    }
+    validate_roots(tx, board, &[item.0], &[cmd.item_revision], cmd.action)?;
     if matches!(cmd.action, Lifecycle::Restore)
         && !archive_page(tx, board)?
             .items
@@ -127,15 +115,7 @@ pub fn transition_root(
     {
         return Err(Missing);
     }
-    tx.execute(
-        "UPDATE board_items SET state=$2,revision=revision+1 WHERE id=$1",
-        &[&item.0, &to],
-    )?;
-    check_grid_budget(tx, board)?;
-    tx.execute(
-        "UPDATE boards SET revision=revision+1 WHERE id=$1",
-        &[&board.0],
-    )?;
+    apply_transition(tx, board, &[item.0], cmd.action)?;
     let inserted = tx.execute(
         "INSERT INTO group_reorder_receipts(operation_id,actor_id,board_id,item_id,
                                             board_revision,item_revision,lifecycle)
@@ -145,5 +125,112 @@ pub fn transition_root(
     if inserted != 1 {
         return Err(Conflict);
     }
+    Ok(())
+}
+
+/// Archive a bounded ordered selection atomically. The caller must hold current
+/// Owner access through commit, including when returning an existing receipt.
+pub fn archive_selected_roots(
+    tx: &mut Transaction<'_>,
+    actor: Uuid,
+    board: BoardId,
+    operation: Uuid,
+    board_revision: i64,
+    items: &[(Uuid, i64)],
+) -> Result<Vec<Uuid>, ReorderError> {
+    use ReorderError::*;
+    if operation.is_nil()
+        || !(1..=10_000).contains(&items.len())
+        || items.iter().any(|(id, rev)| id.is_nil() || *rev < 1)
+    {
+        return Err(Invalid);
+    }
+    let (ids, revisions): (Vec<_>, Vec<_>) = items.iter().copied().unzip();
+    if ids.iter().collect::<HashSet<_>>().len() != ids.len() {
+        return Err(Invalid);
+    }
+    let version = lock_board(tx, board)?;
+    let args: &[&(dyn ToSql + Sync)] = &[
+        &operation,
+        &actor,
+        &board.0,
+        &board_revision,
+        &ids,
+        &revisions,
+    ];
+    if let Some(row) = tx.query_opt(
+        "SELECT lifecycle='archive-selection' AND (actor_id,board_id,board_revision,selected_ids,selected_revisions)
+        IS NOT DISTINCT FROM ($2,$3,$4,$5,$6), affected_ids
+        FROM group_reorder_receipts WHERE operation_id=$1", args)? {
+        return if row.get::<_, Option<bool>>(0) == Some(true) { Ok(row.get(1)) } else { Err(Conflict) };
+    }
+    if version != board_revision {
+        return Err(Conflict);
+    }
+    validate_roots(tx, board, &ids, &revisions, Lifecycle::Archive)?;
+    apply_transition(tx, board, &ids, Lifecycle::Archive)?;
+    let inserted = tx.execute(
+        "INSERT INTO group_reorder_receipts(operation_id,actor_id,board_id,board_revision,selected_ids,selected_revisions,affected_ids,lifecycle)
+        VALUES($1,$2,$3,$4,$5,$6,$5,'archive-selection') ON CONFLICT DO NOTHING", args)?;
+    if inserted != 1 {
+        return Err(Conflict);
+    }
+    Ok(ids)
+}
+
+// Single and batch actions share eligibility, field ownership and revision rules.
+// Validate every target under locks before making the first change.
+fn validate_roots(
+    tx: &mut Transaction<'_>,
+    board: BoardId,
+    ids: &[Uuid],
+    revisions: &[i64],
+    action: Lifecycle,
+) -> Result<(), ReorderError> {
+    let rows = tx.query(
+        "SELECT i.revision,i.state FROM unnest($2::uuid[]) WITH ORDINALITY r(id,n)
+        JOIN board_items i ON i.board_id=$1 AND i.id=r.id
+        JOIN board_groups g ON (g.board_id,g.id)=(i.board_id,i.group_id) AND g.active
+        ORDER BY r.n FOR UPDATE OF i FOR SHARE OF g",
+        &[&board.0, &ids],
+    )?;
+    if rows.len() != ids.len() {
+        return Err(ReorderError::Missing);
+    }
+    if rows
+        .iter()
+        .zip(revisions)
+        .any(|(r, rev)| r.get::<_, i64>(0) != *rev)
+    {
+        return Err(ReorderError::Conflict);
+    }
+    let from = match action {
+        Lifecycle::Archive => 0,
+        Lifecycle::Restore => 1,
+    };
+    if rows.iter().any(|r| r.get::<_, i32>(1) != from) {
+        return Err(ReorderError::Invalid);
+    }
+    Ok(())
+}
+fn apply_transition(
+    tx: &mut Transaction<'_>,
+    board: BoardId,
+    ids: &[Uuid],
+    action: Lifecycle,
+) -> Result<(), ReorderError> {
+    let to = match action {
+        Lifecycle::Archive => 1i32,
+        Lifecycle::Restore => 0,
+    };
+    tx.execute(
+        "UPDATE board_items SET state=$3,revision=revision+1 WHERE board_id=$1 AND id=ANY($2)",
+        &[&board.0, &ids, &to],
+    )?;
+    check_grid_budget(tx, board)?;
+    tx.execute(
+        "UPDATE boards SET revision=revision+1 WHERE id=$1",
+        &[&board.0],
+    )?;
     Ok(())
 }

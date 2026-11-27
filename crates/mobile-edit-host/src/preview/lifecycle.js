@@ -4,21 +4,46 @@ function element(tag, text) {
   return node;
 }
 
-export function archiveDialog(row, {api, board, busy, setBusy, refresh, button}, container) {
+export function archiveDialog(targets, {api, board, busy, setBusy, refresh, button}, container, clearSelection) {
   if (!api.current() || busy() || !board().owner) return;
-  let draft = {operation_id: crypto.randomUUID(), board_revision: board().revision, item_revision: row.revision};
+  const batch = Array.isArray(targets), rows = batch ? targets : [targets];
+  if (!rows.length || rows.some(r => !r)) return;
+  const ids = rows.map(r => r.id), row = rows[0];
+  let draft = {operation_id: crypto.randomUUID(), board_revision: board().revision,
+    ...(batch ? {items: rows.map(r => ({id:r.id, revision:r.revision}))} : {item_revision:row.revision})};
   const dialog = document.createElement('dialog');
   const title = 'Archive selected items?';
   dialog.setAttribute('aria-label', title);
-  const description = element('p', `1 item: ${row.title}. Restore it later from this board’s Archive.`);
+  const summary = rows => `${rows.length} item${rows.length === 1 ? '' : 's'}: ${rows.slice(0,6).map(r=>r.title).join(', ')}${rows.length>6 ? ` and ${rows.length-6} more` : ''}. Restore ${rows.length===1?'it':'them'} later from this board’s Archive.`;
+  const description = element('p', summary(rows));
+  let reviewed;
+  const detail = element('div', '');
+  const adopt = button('Use these revisions and keep my choices', () => {
+    if (!reviewed || busy() || !api.current()) return;
+    draft = {...draft, board_revision:reviewed.revision, items:reviewed.rows.map(r=>({id:r.id,revision:r.revision}))};
+    description.textContent = summary(reviewed.rows); reviewed = undefined;
+    detail.replaceChildren(); adopt.hidden = review.hidden = true; confirm.disabled = false;
+    status.textContent = 'Latest revisions loaded. Confirm to archive.';
+  });
+  adopt.hidden = true;
   const status = element('p', ''); status.setAttribute('role', 'status');
-  const confirm = button('Confirm', submit), cancel = button('Cancel', () => dialog.close());
+  const trigger = document.activeElement;
+  const confirm = button('Confirm', submit), cancel = button('Cancel', () => { if (!busy()) dialog.close(); });
   const review = button('Review latest items', async () => {
     if (busy() || !api.current()) return;
-    setBusy(true); review.disabled = true;
+    setBusy(true); review.disabled = true; reviewed = undefined; adopt.disabled = true;
     try {
       const latest = await api.read();
       if (!api.current()) return;
+      if (batch) {
+        if (!latest.owner) { dialog.remove(); refresh(latest); return; }
+        const current = ids.map(id => latest.rows.find(r=>r.id===id));
+        reviewed = current.every(Boolean) && {revision:latest.revision,rows:current};
+        detail.replaceChildren(...current.map((r,i)=>element('p', r ? `${r.title} (${ids[i]}), revision ${r.revision}` : `${ids[i]}: Unavailable`)));
+        adopt.hidden = false; adopt.disabled = !reviewed;
+        status.textContent = 'Review every requested item before adopting these revisions.';
+        return;
+      }
       refresh(latest);
       const current = latest.rows.find(r => r.id === row.id);
       if (!current || !latest.owner) { status.textContent = current ? 'Owner access required.' : 'Item unavailable.'; return; }
@@ -26,7 +51,7 @@ export function archiveDialog(row, {api, board, busy, setBusy, refresh, button},
       description.textContent = `1 item: ${current.title}. Restore it later from this board’s Archive.`;
       status.textContent = 'Latest revisions loaded. Confirm to archive.';
       review.hidden = true; confirm.disabled = false;
-    } catch (error) { if (api.current()) failure(error, 'Could not review item.'); }
+    } catch (error) { if (api.current()) failure(error, batch ? 'Could not review selected items.' : 'Could not review item.'); }
     finally { if (api.current()) { setBusy(false); review.disabled = false; } }
   });
   function failure(error, message) {
@@ -38,10 +63,19 @@ export function archiveDialog(row, {api, board, busy, setBusy, refresh, button},
     if (busy() || !api.current()) return;
     setBusy(true); confirm.disabled = cancel.disabled = true; status.textContent = 'Saving…';
     try {
-      await api.transition(row.id, 'archive', draft);
+      if (batch) {
+        const ack = await api.archiveSelection(draft);
+        if (ack.operation_id!==draft.operation_id || ack.board_id!==board().id || !Array.isArray(ack.affected_ids) || ack.affected_ids.length!==ids.length || new Set(ack.affected_ids).size!==ids.length || !ack.affected_ids.every(id=>ids.includes(id))) throw Error('Unexpected acknowledgment');
+      } else await api.transition(row.id, 'archive', draft);
     } catch (error) {
       if (api.current()) {
-        if (error === 500) { failure(error, 'Could not archive item.'); confirm.disabled = false; }
+        if (batch) {
+          const uncertain = ![401,403,404,409,422,500].includes(error);
+          if (error===403) { dialog.remove(); try { const latest=await api.read(); if(api.current()) refresh(latest); } catch(e) { if(api.current()) { if(e===401) api.expired(); else api.reload(e===403 || e===404 ? 'Destination unavailable' : 'Could not recheck access. Reload the board.'); } } }
+          else if (uncertain) api.reload('Archive outcome unavailable. Reload the board.');
+          else { failure(error, error===409 ? 'Items changed. Review latest items.' : 'Archive not confirmed. Review latest items.'); review.hidden=false; }
+        }
+        else if (error === 500) { failure(error, 'Could not archive item.'); confirm.disabled = false; }
         else { failure(error, error === 409 ? 'Item changed. Review latest items.' : 'Archive outcome unavailable. Review latest items.'); review.hidden = false; }
         setBusy(false); cancel.disabled = false;
       }
@@ -49,14 +83,14 @@ export function archiveDialog(row, {api, board, busy, setBusy, refresh, button},
     }
     if (!api.current()) return;
     dialog.remove();
-    try { const latest = await api.read(); if (api.current()) refresh(latest); }
-    catch (error) { if (api.current()) { if (error === 401 || error === 403) failure(error, ''); else api.reload('Item archived. Reload the board.'); } }
+    try { const latest = await api.read(); if (api.current()) { clearSelection?.(); refresh(latest); } }
+    catch (error) { if (api.current()) { if (error === 401 || error === 403) failure(error, ''); else api.reload(batch ? 'Selected items archived. Reload the board.' : 'Item archived. Reload the board.'); } }
     finally { if (api.current()) setBusy(false); }
   }
   review.hidden = true;
   dialog.oncancel = event => { if (busy()) event.preventDefault(); };
-  dialog.onclose = () => dialog.remove();
-  dialog.append(element('h2', title), description, confirm, cancel, review, status);
+  dialog.onclose = () => { dialog.remove(); if (trigger?.isConnected) trigger.focus(); };
+  dialog.append(element('h2', title), description, confirm, cancel, review, status, detail, adopt);
   container.append(dialog); dialog.showModal(); cancel.focus();
 }
 

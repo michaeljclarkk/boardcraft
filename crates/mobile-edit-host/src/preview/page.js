@@ -175,6 +175,7 @@ async function loadDestination(id, current, notice = '', recovery = false) {
       createGroup: draft => request(path+'/groups', {method:'POST', body:JSON.stringify(draft)}),
       editGroup: (id, draft) => request(`${path}/groups/${encodeURIComponent(id)}`, {method:'PUT', body:JSON.stringify(draft)}),
       moveSelection: draft => request(`${path}/items/move-selection`, {method:'POST', body:JSON.stringify(draft)}),
+      archiveSelection: draft => request(`${path}/items/archive-selection`, {method:'POST', body:JSON.stringify(draft)}),
       reorder: (item, draft) => request(`${path}/items/${encodeURIComponent(item)}/reorder`, {
         method: 'POST', body: JSON.stringify(draft)
       }),

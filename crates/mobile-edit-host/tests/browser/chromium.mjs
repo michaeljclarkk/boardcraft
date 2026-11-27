@@ -73,7 +73,7 @@ export function launch(profile, foreground) {
         if (req.method === 'POST' && new URL(req.url).pathname.endsWith('/group-order')) tab.groupOrderIds.push(msg.params.requestId);
         if (req.method === 'PUT' && new URL(req.url).pathname === '/preview/api/navigation/boards/00000000-0000-0000-0000-0000000000c9/groups/g-z') tab.editGroupIds.push(msg.params.requestId);
         if (req.method === 'POST' && /\/(items|groups)\/[^/]+\/(archive|restore)$/.test(new URL(req.url).pathname)) tab.lifecycleIds.push(msg.params.requestId);
-        if (req.method === 'POST' && new URL(req.url).pathname === '/preview/api/navigation/boards/00000000-0000-0000-0000-0000000000c9/items/move-selection') {
+        if (req.method === 'POST' && /\/items\/(move-selection|archive-selection)$/.test(new URL(req.url).pathname)) {
           tab.batchIds.push(msg.params.requestId);
         }
         if (req.method === 'POST' && /^\/preview\/api\/navigation\/boards\/00000000-0000-0000-0000-0000000000c9\/(items|groups)$/.test(new URL(req.url).pathname)) {

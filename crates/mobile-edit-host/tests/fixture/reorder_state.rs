@@ -296,6 +296,40 @@ impl Snapshot {
         assert_eq!(now, expected);
         now
     }
+    pub fn archived_selection(
+        &self,
+        f: &Fixture,
+        actor: Uuid,
+        operation: Uuid,
+        selected: &[u128],
+    ) -> Self {
+        let mut expected = self.clone();
+        let ids: Vec<_> = selected.iter().copied().map(Uuid::from_u128).collect();
+        let revisions: Vec<_> = ids
+            .iter()
+            .map(|id| self.items.iter().find(|r| r["id"] == json!(id)).unwrap()["revision"].clone())
+            .collect();
+        for id in &ids {
+            let r = expected
+                .items
+                .iter_mut()
+                .find(|r| r["id"] == json!(id))
+                .unwrap();
+            assert_eq!(r["state"], 0);
+            r["state"] = json!(1);
+            r["revision"] = json!(r["revision"].as_i64().unwrap() + 1);
+        }
+        let b = expected
+            .boards
+            .iter_mut()
+            .find(|r| r["id"] == json!(SELECTED))
+            .unwrap();
+        let revision = b["revision"].as_i64().unwrap();
+        b["revision"] = json!(revision + 1);
+        expected.receipts.push(json!({"operation_id":operation,"actor_id":actor,"board_id":SELECTED,"board_revision":revision,"selected_ids":ids,"selected_revisions":revisions,"affected_ids":ids,"lifecycle":"archive-selection"}));
+        assert_eq!(Self::read(f), expected);
+        expected
+    }
     // Build the expected committed records from the pre-attempt snapshot, then
     // verify the two public read shapes independently of the POST acknowledgment.
     pub fn batch(

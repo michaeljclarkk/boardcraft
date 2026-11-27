@@ -1,5 +1,6 @@
 // One complete, bounded physical grid. Never infer group membership from controls.
 import {openSelectionMove} from './selection-move.js';
+import {archiveDialog} from './lifecycle.js';
 
 export function mountSelection(controls, area) {
   const {api, board, busy, setBusy, button} = controls;
@@ -13,10 +14,13 @@ export function mountSelection(controls, area) {
     if (!busy() && api.current()) { checked.clear(); notice.replaceChildren(); paint(); }
   }));
   const move = button('Move to', () => openSelectionMove(controls, area, checked));
-  toolbar.append(move);
+  const archive = button('Archive', () => archiveDialog([...checked].map(id => board().rows.find(r => r.id === id)), controls, area, () => checked.clear()));
+  archive.className = 'archive-selected';
+  toolbar.append(archive, move);
 
   function paint() {
     move.disabled = !board().editable;
+    archive.disabled = !board().owner;
     for (const [id, box] of rowControls) {
       box.checked = checked.has(id);
       box.closest('li').classList.toggle('selected-item', box.checked);

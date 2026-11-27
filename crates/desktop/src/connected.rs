@@ -94,6 +94,9 @@ pub(super) fn open(port: u16, board: Option<Uuid>, cx: &mut App) {
                 super::native_smoke::main_table::install(_view, &mode, w);
             } else if mode.starts_with("--entry-") {
                 super::native_smoke::grouped_entry::install(_view, &mode, w);
+            } else if mode.starts_with("--bulk-archive-") {
+                cx.set_reduce_motion(true);
+                super::native_smoke::selected_archive::install(_view, &mode, w);
             } else if mode.starts_with("--selection-") {
                 cx.set_reduce_motion(true);
                 super::native_smoke::selection_move::install(_view, &mode, w);

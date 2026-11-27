@@ -12,6 +12,7 @@ pub(super) mod logout;
 pub(super) mod main_table;
 pub(super) mod name;
 pub(super) mod navigation;
+pub(super) mod selected_archive;
 pub(super) mod selection_move;
 
 #[derive(Debug, Copy, Clone)]

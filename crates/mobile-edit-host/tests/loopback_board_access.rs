@@ -14,6 +14,12 @@ mod grouped_entry_checks;
 mod native_archive;
 #[path = "fixture/native_archive_checks.rs"]
 mod native_archive_checks;
+#[path = "fixture/selected_archive_checks.rs"]
+mod selected_archive_checks;
+#[test]
+fn selected_root_archive_is_atomic_and_authorized() {
+    selected_archive_checks::atomic_and_authorized();
+}
 #[path = "fixture/native_group_fields.rs"]
 mod native_group_fields;
 #[path = "fixture/native_group_fields_checks.rs"]

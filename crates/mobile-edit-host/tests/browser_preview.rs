@@ -11,6 +11,12 @@ mod group_edit;
 mod group_edit_browser;
 #[path = "browser/group_order.rs"]
 mod group_order_browser;
+#[path = "browser/selected_archive.rs"]
+mod selected_archive_browser;
+#[test]
+fn browser_archives_selected_roots() {
+    selected_archive_browser::run();
+}
 
 #[test]
 fn browser_collapses_physical_groups_by_id() {

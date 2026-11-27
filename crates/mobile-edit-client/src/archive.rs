@@ -85,6 +85,34 @@ impl ArchivedGroup {
 }
 
 impl EditClient {
+    /// One explicit selected-root command; recovery reads do not call this method.
+    pub fn archive_main_table_selection(
+        &self,
+        board: Uuid,
+        operation: Uuid,
+        board_revision: i64,
+        items: &[(Uuid, i64)],
+    ) -> Result<(), EditError> {
+        let url = format!(
+            "http://127.0.0.1:{}/navigation/boards/{board}/main-table/items/archive-selection",
+            self.port
+        );
+        let draft = serde_json::json!({"operation_id":operation,"board_revision":board_revision,
+            "items":items.iter().map(|(id,revision)|serde_json::json!({"id":id,"revision":revision})).collect::<Vec<_>>()});
+        let saved: serde_json::Value =
+            decode(self.authorize(self.http.post(url)).send_json(draft))?;
+        let affected: Vec<Uuid> = serde_json::from_value(saved["affected_ids"].clone())
+            .map_err(|_| EditError::Transport)?;
+        let expected: HashSet<_> = items.iter().map(|(id, _)| *id).collect();
+        if saved["operation_id"] != serde_json::json!(operation)
+            || saved["board_id"] != serde_json::json!(board)
+            || affected.len() != items.len()
+            || affected.iter().copied().collect::<HashSet<_>>() != expected
+        {
+            return Err(EditError::Transport);
+        }
+        Ok(())
+    }
     pub fn read_main_table_archive(
         &self,
         board: Uuid,

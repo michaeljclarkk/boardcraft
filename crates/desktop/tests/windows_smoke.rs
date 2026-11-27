@@ -15,6 +15,12 @@ use uuid::Uuid;
 
 #[path = "windows/archive.rs"]
 mod archive;
+#[path = "windows/selected_archive.rs"]
+mod selected_archive;
+#[test]
+fn windows_archives_selected_roots() {
+    selected_archive::run();
+}
 #[cfg(feature = "attended-clipboard")]
 #[path = "windows/board_link.rs"]
 mod board_link;

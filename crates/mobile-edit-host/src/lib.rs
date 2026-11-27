@@ -322,6 +322,17 @@ fn handle(
                     "boards",
                     _,
                     "main-table",
+                    "items",
+                    "archive-selection"
+                ]
+            ) | (
+                Method::Post,
+                [
+                    "",
+                    "navigation",
+                    "boards",
+                    _,
+                    "main-table",
                     "items" | "groups",
                     _,
                     "archive" | "restore"
@@ -433,6 +444,17 @@ fn handle(
             ],
         ) if mode != Mode::Scoped => (board, SelectedWrite, Some(id)),
         (Method::Get, ["", "boards", id]) => (id, ScopedRead, None),
+        (
+            Method::Post,
+            [
+                "",
+                "navigation",
+                "boards",
+                board,
+                "items",
+                "archive-selection",
+            ],
+        ) if matches!(shape, ReadShape::Grouped) || native_archive => (board, SelectedOwner, None),
         (Method::Get, ["", "navigation", "boards", board, "archive"])
         | (Method::Get, ["", "navigation", "boards", board, "archive", "groups", _, _])
             if matches!(shape, ReadShape::Grouped) || native_archive =>
@@ -519,6 +541,7 @@ fn handle(
         Rename(ItemId, Result<NameEdit, u16>),
         Create(Result<CreateDraft, u16>),
         SelectionMove(Result<SelectionMoveDraft, u16>),
+        SelectionArchive(Result<SelectionArchiveDraft, u16>),
         Move(ItemId, Result<MoveDraft, u16>),
         Reorder(ItemId, Result<ReorderDraft, u16>),
     }
@@ -570,6 +593,9 @@ fn handle(
         Some(item) => Action::Rename(item, read_edit(req)),
         None if path.last() == Some(&"move-selection") => {
             Action::SelectionMove(read_json_limit(req, 1024 * 1024))
+        }
+        None if path.last() == Some(&"archive-selection") => {
+            Action::SelectionArchive(read_json_limit(req, 1024 * 1024))
         }
         None if req.method() == &Method::Post => Action::Create(read_json(req)),
         None => Action::Read,
@@ -661,6 +687,20 @@ fn handle(
             )
             .map_err(|e| order_error(e, requested, "transition_root"))?;
             serde_json::to_vec(&serde_json::json!({"operation_id":d.operation_id,"item_id":item.as_uuid(),"board_id":requested})).unwrap()
+        }
+        Action::SelectionArchive(draft) => {
+            let d = draft?;
+            let items: Vec<_> = d.items.into_iter().map(|r| (r.id, r.revision)).collect();
+            let affected = store::archive_selected_roots(
+                &mut tx,
+                account.id,
+                board,
+                d.operation_id,
+                d.board_revision,
+                &items,
+            )
+            .map_err(|e| order_error(e, requested, "archive_selected_roots"))?;
+            serde_json::to_vec(&serde_json::json!({"board_id":requested,"operation_id":d.operation_id,"affected_ids":affected})).unwrap()
         }
         Action::SelectionMove(draft) => {
             let d = draft?;
@@ -842,6 +882,14 @@ struct RootDraft {
     operation_id: Uuid,
     board_revision: i64,
     item_revision: i64,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelectionArchiveDraft {
+    operation_id: Uuid,
+    board_revision: i64,
+    items: Vec<SelectedRoot>,
 }
 
 #[derive(serde::Deserialize)]

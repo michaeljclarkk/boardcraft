@@ -64,6 +64,7 @@ Each packet is one file under [packets](packets/) and is loaded only when dispat
 - [48-windows-group-fields](packets/48-windows-group-fields.md) — Create a group and edit its name and colour in Windows browse.
 - [49-windows-group-order](packets/49-windows-group-order.md) — Reorder physical groups by menu or drag in Windows browse.
 - [50-windows-item-placement](packets/50-windows-item-placement.md) — Move an item to another group or drag it into position in Windows browse.
+- [51-selected-root-archive](packets/51-selected-root-archive.md) — Archive selected items together from the Windows and browser toolbars.
 
 ## Delivery phases after the first slice
 

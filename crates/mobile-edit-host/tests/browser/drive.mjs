@@ -13,6 +13,7 @@ import {groupCreateJourney} from './group-create.mjs';
 import {groupEditJourney} from './group-edit.mjs';
 import {groupOrderJourney} from './group-order.mjs';
 import {foldJourney} from './fold.mjs';
+import {selectedArchiveJourney} from './selected-archive.mjs';
 
 const [profile, mode, port] = process.argv.slice(2);
 const primary = `http://127.0.0.1:${port}`;
@@ -221,6 +222,7 @@ async function perform({action, password, rows, otherPort}) {
   if (action.startsWith('drag ')) return groupOrderJourney(action, {browser,uuid,click,key,wait,check,requests,statuses,reload,selectedGet,resolve,observe,list,origin});
   if (action.startsWith('group life ')) return groupLifecycleJourney(action.slice(11), {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, traverse, boardPath, selectedGet, resolve, observe, login, list, origin});
   if (action.startsWith('life ')) return lifecycleJourney(action, {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe, named, traverse});
+  if (action.startsWith('bulk ')) return selectedArchiveJourney(action.slice(5), {browser,uuid,click,key,wait,check,requests,statuses,reload,selectedGet,resolve,observe,named});
   if (action.startsWith('batch ')) return batchJourney(action, {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe, named});
   if (action.startsWith('select ')) return selectionJourney(action, {uuid, send, click, key, wait, requests, statuses, reload, historyAt, selectedGet, boardPath, resolve, observe, named});
   if (action.startsWith('reorder ')) return reorderJourney(action, {uuid, send, click, key, wait, requests, statuses, reload, historyAt, selectedGet, boardPath, resolve, observe});

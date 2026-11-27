@@ -50,6 +50,7 @@ pub(super) struct MainTable {
     selection_cache: bool,
     move_dialog: Option<Entity<MoveDialog>>,
     move_focus: FocusHandle,
+    selection_archive_focus: FocusHandle,
     _move_subscription: Option<Subscription>,
     item_move: Option<Entity<item_move::ItemMoveDialog>>,
     _item_move_subscription: Option<Subscription>,
@@ -228,6 +229,9 @@ impl MainTable {
                 .map(|t| t.move_focus.clone())
                 .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
             _move_subscription: None,
+            selection_archive_focus: previous
+                .map(|t| t.selection_archive_focus.clone())
+                .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
             item_move: None,
             _item_move_subscription: None,
             failed_moves: previous.map(|t| t.failed_moves.clone()).unwrap_or_default(),
