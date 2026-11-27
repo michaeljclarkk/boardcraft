@@ -1,6 +1,6 @@
 # Local development
 
-Run commands from the boardcraft checkout. On Windows use x64 MSVC Rust (tested with 1.100), Visual Studio's **Desktop development with C++** workload and a Windows SDK, CMake, Node 22+, OpenCode v2.2.3+ and PostgreSQL 17 client/server binaries. Install Rust via [rustup](https://rustup.rs/) and `rustup component add rustfmt clippy`. For other platforms see [Kit's native prerequisites](https://github.com/longbridge/gpui-kit/blob/v0.11.0/website/docs/installation.md).
+Run commands from the boardcraft checkout. On Windows use x64 MSVC Rust (tested with 1.100), Visual Studio's **Desktop development with C++** workload and a Windows SDK, CMake, Node 22+, OpenCode v2.2.3+ and PostgreSQL 17 client/server binaries. Install Rust via [rustup](https://rustup.rs/) and `rustup component add rustfmt clippy`. The browser client (packets 53–57) additionally needs the `wasm32-unknown-unknown` target, a `wasm-bindgen-cli` matching the locked release, and Trunk ([decision](web-client-stack.md)). For other platforms see [Kit's native prerequisites](https://github.com/longbridge/gpui-kit/blob/v0.11.0/website/docs/installation.md).
 
 ```powershell
 . .\scripts\dev.ps1               # activate tools in this PowerShell
@@ -75,7 +75,33 @@ For multi-board discovery, start `Host::start_with_navigation(config, target)` a
 
 In Windows browse, open a board and choose **Share** for its Board address. **Copy link** copies it to the clipboard. **Open in new window** reads that board independently. A recipient pastes the address into their own browse window and chooses **Open board link**. The connected origin must match and the recipient must already have access. After a denial, they can submit the same address again if access changes.
 
-### Browser board preview
+### Browser client toolchain (GPUI wasm, packets 53–57)
+
+The JavaScript preview below is transitional; new browser work belongs to `crates/web` and must build for the browser rather than being interpreted. The decided stack is [GPUI on WebAssembly](web-client-stack.md).
+
+```powershell
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version <locked wasm-bindgen release> --locked
+cargo build --locked -p boardcraft-web --target wasm32-unknown-unknown
+```
+
+Trunk serves the generated page during development. The host route ships with cross-origin isolation (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp`) on a secure origin. The shell has one canvas window, embedded fonts and assets, no filesystem and no PostgreSQL client; board reads and writes go through the existing host HTTP routes. Exact versions and commands land with packet 53; do not add a second web build path.
+
+### Shared component work
+
+When an interaction is missing, add it to `crates/boardcraft-ui` rather than to a client. Each control keeps a runnable example and interaction tests, and must build for native and wasm:
+
+```powershell
+cargo test --locked -p boardcraft-ui
+cargo run --locked -p boardcraft-ui --example heading_drag
+cargo build --locked -p boardcraft-ui --target wasm32-unknown-unknown
+```
+
+Record the control in [the register](gpui-components.md). Do not embed HTML/CSS/JS/React/TSX, a webview or a DOM overlay to avoid the shared work.
+
+### Browser board preview (transitional JavaScript client)
+
+This client is scheduled for complete removal — assets, routes, feature, example and harness — in packet 57. Its DOM test harness is deleted, not ported. It remains the working browser client only until packets 54–56 pass, and no fallback route or second client is kept afterwards.
 
 With the disposable `rustday_test` database active, run this **opt-in foreground** command:
 

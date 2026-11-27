@@ -8,6 +8,10 @@ The numbered packets below are the executable queue; later phases are planned. U
 
 **iOS follows Android.** Keep shared Rust rules and reusable controls portable. Defer iOS implementation and testing until Android's workflow and delivery checks pass and a Mac with Xcode is available. Track iOS as deferred so it does not block Windows or Android milestones. When iOS work begins, run the shared acceptance scenarios on iOS and record simulator or device evidence separately.
 
+## Decided stack change (2026-11-27)
+
+The browser client moves to GPUI on WebAssembly and shares `boardcraft-ui` with desktop and Android. [Browser client stack](docs/web-client-stack.md) records the decision, the unified `gpui-kit = "=0.11.0"` target, the wasm shell, the acceptance mechanism and the risks. Missing Kit interactions become documented `boardcraft-ui` controls, not HTML/CSS/JS or React/TSX fallbacks ([shared GPUI components](docs/gpui-components.md)). The JavaScript preview is transitional, closed to new workflows, and is removed completely — assets, router, mode, routes, feature, example and harness — not retained behind a flag once packets 54–56 pass. The old DOM test harness is deleted, not ported. Packets 53–57 are queued below and need their runner gates registered by the coordinator before dispatch.
+
 ## Packet index
 
 Each packet inherits the previous one's behavior. Run Cargo from the repository root. The named integration test targets must contain enabled assertions. Record any uncovered contract in the [workflow register](docs/workflows.md).
@@ -66,6 +70,11 @@ Each packet is one file under [packets](packets/) and is loaded only when dispat
 - [50-windows-item-placement](packets/50-windows-item-placement.md) — Move an item to another group or drag it into position in Windows browse.
 - [51-selected-root-archive](packets/51-selected-root-archive.md) — Archive selected items together from the Windows and browser toolbars.
 - [52-board-item-trash](packets/52-board-item-trash.md) — Move selected items to Trash and restore them in Windows and browser.
+- [53-web-shell](packets/53-web-shell.md) — Build the GPUI wasm shell in `crates/web` and serve it from the loopback host.
+- [54-web-auth-board](packets/54-web-auth-board.md) — Sign in, list, open, rename and recover a rejected save in the wasm client.
+- [55-web-groups](packets/55-web-groups.md) — Groups, create, move, reorder, selection, archive and Trash in the wasm client.
+- [56-web-test-harness](packets/56-web-test-harness.md) — Replace the DOM browser driver with accessibility-tree acceptance.
+- [57-delete-js-preview](packets/57-delete-js-preview.md) — Completely remove the JavaScript preview, its routes, feature, example and harness after parity is verified.
 
 ## Delivery phases after the first slice
 
@@ -80,7 +89,7 @@ Each row is a group of independently testable packets. For each area, inventory 
 | 5. Imports, exports and history | Spreadsheet and archive formats → URL acquisition → mapping and relationship resolution → preview, progress, cancellation, retry and publication. Preserve historical values separately from editable current state. | Import a synthetic board with duplicate labels, attachments and cross-board links. Interrupt and retry it; verify row counts, identities, history and links. Reject a malformed file without exposing partial results. Check export/reimport for each supported round trip. |
 | 6. Collaboration and discovery | Item conversations, replies, mentions and files → workspace chat and activity → inbox and notifications → personal work, quick search, global search and preferences. | Mention a teammate, open the notification on another client, and navigate to the intended item. Check read state after reconnect, file preview failure, and search visibility for a user without access. |
 | 7. Automations and integrations | Triggers, conditions, action graphs and configuration → durable scheduling and retries → provider adapters, inbound events and delivery status → assistant conversations, tools and recovery. | Commit a change, restart the worker, and redeliver the same synthetic event. Verify the intended effect occurs once where guaranteed. Show a failed or ambiguous delivery distinctly from the saved edit; recover an interrupted assistant operation. |
-| 8. Client and API completion | Verify each applicable workflow on desktop, web, mobile and programmatic clients as it lands. Close remaining gaps in GraphQL operations, compatibility APIs, tool contracts, live refresh, mobile navigation, drafts, files and settings. | Run the same synthetic journey through each supported entry point. Compare values, IDs, errors, access decisions and side effects. Include concurrent edits, an independent tab, and a disconnected mobile client returning with a draft. |
+| 8. Client and API completion | Verify each applicable workflow on desktop, web, mobile and programmatic clients as it lands. Close remaining gaps in GraphQL operations, compatibility APIs, tool contracts, live refresh, mobile navigation, drafts, files and settings. | Run the same synthetic journey through each supported entry point. Compare values, IDs, errors, access decisions and side effects. Include concurrent edits, an independent tab, and a disconnected mobile client returning with a draft. Browser work targets the GPUI wasm client in `crates/web`; evidence from the JavaScript preview is transitional ([decision](docs/web-client-stack.md)). |
 | 9. Upgrade and delivery | Database migrations, configuration, backup/restore → desktop installation and update → hosted service and mobile packages → final regression run. | Upgrade a populated synthetic installation. Reopen saved views and links, verify identities, attachments and pending work, then restore a backup into a clean instance and rerun the critical journeys. |
 
 ## Turn a phase into runnable work
@@ -95,4 +104,5 @@ Each row is a group of independently testable packets. For each area, inventory 
 - Every inventoried workflow has a row with a reproducible fixture, expected outcome, passing check and evidence for each applicable client. Label gaps **unknown**, **planned**, **implemented** or **verified**; only the last counts toward completion. A deliberate behavior difference stays visible as a difference.
 - Exercise complete journeys as well as isolated features: import → edit → save a view → share a link; submit a form → run an automation → open the notification; lose connection during an edit → reconnect → resolve and reopen. Check permissions and durable state at each boundary.
 - Verify interactive fidelity in running clients: layout, keyboard and pointer actions, touch where supported, focus, scrolling, loading, empty, error and recovery states. A passing Rust test alone cannot close a UI row.
+- Browser rows are verified against the GPUI wasm client after packet 57; evidence captured against the JavaScript preview is transitional and does not close the row.
 - Reconcile the final workflow, platform, API, data-format and delivery inventories. Any missing row, unresolved discrepancy or untested applicable client keeps the parity milestone open.

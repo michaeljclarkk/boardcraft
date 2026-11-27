@@ -1,5 +1,7 @@
 # Architecture and owner map
 
+The browser client is moving from the JavaScript preview to a GPUI WebAssembly shell. [Browser client stack](web-client-stack.md) records the decision, the unified Kit release, the shared `boardcraft-ui` requirements and the migration packets. The browser rows below describe the current transitional implementation until packet 57 deletes it.
+
 | Boundary | Owner | Responsibility |
 |---|---|---|
 | Account sessions | [`sign_in`, `resolve`, `revoke`](../crates/account/src/lib.rs) and [schema](../crates/account/migrations/0001_account_session.sql) | Verify an existing active account under a row lock. Commit a digest linked to its UUID before returning a bearer. Resolve the current role from that link; logout deletes only that digest. |
@@ -33,12 +35,26 @@
 | Windows failed-name recovery | [`Recovery`](../crates/desktop/src/recovery.rs) and [`Workbench`](../crates/desktop/src/main.rs) | After loading the board, attach failures by item UUID within the explicit local actor/board scope. Submission removes the matching failure before the database operation; only rejection records a raw request and reason. A locked check of the failure token prevents stale cleanup from deleting a later failure. PostgreSQL remains authoritative for the accepted board. |
 | Windows name drafts | [Kit row](../crates/desktop/src/main.rs), [scoped draft record](../crates/desktop/src/recovery.rs), [`finish_name_edit`](../crates/board/src/store.rs) | A change to the input records its exact text and entry spelling/revision separately from submitted failures. On reopen, the entry spelling decides whether to submit. The transaction checks both the entry revision and the title last observed from PostgreSQL. |
 | Android fixture board editor | [`BoardView`](../android/src/lib.rs), [launch arguments](../android/src/connection.rs), [APK build](../android/build-debug.ps1) | One Kit Root owns the board view and input. Without arguments it opens the offline fixture. UUID and port select a connected host but supply no session: the protected host rejects the read until a native session is available. |
-| Framework versions | [Desktop package](../crates/desktop/Cargo.toml) and [lockfile](../Cargo.lock) | Select the Kit release as a unit; use its GPUI re-exports rather than adding an independent GPUI revision. |
+| Framework versions | [Desktop package](../crates/desktop/Cargo.toml), [shared UI package](../crates/boardcraft-ui/Cargo.toml), [Android package](../android/Cargo.toml) and [lockfile](../Cargo.lock) | Select the Kit release as a unit; use its GPUI re-exports rather than adding an independent GPUI revision. The decided target is `gpui-kit = "=0.11.0"` for desktop, shared UI, Android and the wasm client; the Android 0.8.1 pin is a known blocker ([decision](web-client-stack.md#constraints-and-risks)). |
 | Development database | [Local helper](../scripts/postgres.ps1) | Own the disposable local cluster and test login. |
 | Milestone execution | [Runner](../scripts/run.mjs) | Dispatch one worker per packet, check its handoff, run gates and record a checkpoint. |
 
 For board edits, the intended path is Kit editor → named Rust operation → PostgreSQL transaction → accepted value back to the editor. The draft remains view state. Add owner links as each boundary lands; avoid creating empty crates to match this diagram.
 
+## Browser client target owners (packets 53–57)
+
+The rows below are the decided owners for the wasm client. They are implemented by the listed packets; until then, the JavaScript rows above remain the current implementation. Packet 57 removes the preview completely — assets, router, mode, routes, feature, example and harness — so no dual browser path remains.
+
+| Boundary | Target owner | Responsibility |
+|---|---|---|
+| Web shell | `crates/web` (package `boardcraft-web`) | One GPUI window and canvas; embedded fonts and assets; HTTP reads and writes; no native windowing, `windows` crate or blocking PostgreSQL. |
+| Shared controls | [`boardcraft-ui`](../crates/boardcraft-ui/Cargo.toml) | Reusable GPUI controls consumed by desktop and the web client; must compile for `wasm32-unknown-unknown` with no desktop or database dependency. |
+| Browser session | `crates/web` plus [preview session table](../crates/mobile-edit-host/src/browser_session.rs) | Consume the host-owned HttpOnly cookie and exact-origin binding; the browser never holds the bearer. |
+| Browser workflow state | `crates/web` → host handlers → `crates/board` operations | Drafts, pending saves and recovery are view state; only committed results update the accepted board. |
+| Browser acceptance | `crates/mobile-edit-host/tests/web` and the host fixture | Drive the accessibility tree (role, name, state) and assert accepted state independently; no DOM selectors. |
+
 ## Custom GPUI controls
 
-When Kit cannot reproduce a required interaction, put the reusable control in `crates/boardcraft-ui` as a library and list it here. Its public API accepts display values, state and events; it must not depend on the desktop binary, domain entities, database, routing or services. The desktop caller maps control events to boardcraft operations. Include a minimal runnable example using synthetic values, document keyboard/focus behavior and test the interaction that justified the control. A consumer should be able to use the control as a path dependency in another GPUI app. Create the crate with the first real control.
+When Kit cannot reproduce a required interaction, extend GPUI in `crates/boardcraft-ui`; do not route around it. A change MUST NOT add HTML, CSS, JavaScript, React/TSX, a webview, an iframe or a DOM overlay to the wasm client, and MUST NOT keep a web-only control in `crates/web`. A native-only shortcut that leaves another client without the interaction is a missing shared control.
+
+Put the reusable control in `crates/boardcraft-ui` as a library. Its public API accepts display values, state and events; it MUST NOT depend on the desktop binary, domain entities, database, routing, services or fixtures. The calling client maps control events to boardcraft operations. Every control ships with a runnable synthetic example, an interaction test, documented keyboard, focus and accessibility behaviour and a note on the missing Kit capability. It MUST compile for the native targets and `wasm32-unknown-unknown`; record which targets were exercised. Controls here are kept upstream-ready: generic, domain-free and documented, so they can be shared or proposed later. An upstream contribution is not required in a packet. The register is [Shared GPUI components](gpui-components.md).
