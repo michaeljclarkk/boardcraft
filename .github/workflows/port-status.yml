@@ -22,7 +22,7 @@ jobs:
             git config user.email "status@users.noreply.github.com"
             git add README.md docs/port-status.svg
             git commit -m "chore: refresh port status [skip ci]"
-            git push
+            git push origin HEAD:main
           fi
       - name: Job summary
         run: cargo run --quiet --locked --manifest-path tools/Cargo.toml -- port-status --summary >> "$GITHUB_STEP_SUMMARY"
