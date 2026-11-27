@@ -14,6 +14,8 @@ pub struct MainTableRead {
 pub struct MainTableGroup {
     id: String,
     name: String,
+    colour: String,
+    revision: i64,
     collapsed: bool,
     items: Vec<SavedItem>,
 }
@@ -24,6 +26,12 @@ impl MainTableGroup {
     }
     pub fn name(&self) -> &str {
         &self.name
+    }
+    pub fn colour(&self) -> &str {
+        &self.colour
+    }
+    pub fn revision(&self) -> i64 {
+        self.revision
     }
     pub fn is_collapsed(&self) -> bool {
         self.collapsed
@@ -200,6 +208,11 @@ impl EditClient {
         if groups.iter().map(|g| g.items.len().max(1)).sum::<usize>() > 500
             || groups.iter().any(|g| {
                 g.id.trim().is_empty()
+                    || g.revision < 1
+                    || !g
+                        .colour
+                        .strip_prefix('#')
+                        .is_some_and(|s| s.len() == 6 && s.bytes().all(|b| b.is_ascii_hexdigit()))
                     || !ids.insert(&g.id)
                     || g.items
                         .iter()

@@ -582,6 +582,21 @@ fn main() {
                             | "--archive-refresh"
                             | "--archive-member"
                             | "--archive-viewer"
+                            | "--groups-fields"
+                            | "--groups-edit-conflict"
+                            | "--groups-create-conflict"
+                            | "--groups-edit-demoted"
+                            | "--groups-create-demoted"
+                            | "--groups-edit-ack"
+                            | "--groups-create-ack"
+                            | "--groups-create-absent"
+                            | "--groups-edit-refresh"
+                            | "--groups-create-refresh"
+                            | "--groups-edit-missing"
+                            | "--groups-edit-denied"
+                            | "--groups-create-session"
+                            | "--groups-member"
+                            | "--groups-viewer"
                     )
                 } else {
                     matches!(

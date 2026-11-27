@@ -99,6 +99,9 @@ pub(super) fn open(port: u16, board: Option<Uuid>, cx: &mut App) {
             } else if mode.starts_with("--archive-") {
                 cx.set_reduce_motion(true);
                 super::native_smoke::archive::install(_view, &mode, w);
+            } else if mode.starts_with("--groups-") {
+                cx.set_reduce_motion(true);
+                super::native_smoke::group_fields::install(_view, &mode, w);
             } else if let Some(board) = board {
                 super::native_smoke::login::install(board, mode == "--smoke-session", w);
             } else {

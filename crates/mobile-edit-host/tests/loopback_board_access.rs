@@ -14,8 +14,17 @@ mod grouped_entry_checks;
 mod native_archive;
 #[path = "fixture/native_archive_checks.rs"]
 mod native_archive_checks;
+#[path = "fixture/native_group_fields.rs"]
+mod native_group_fields;
+#[path = "fixture/native_group_fields_checks.rs"]
+mod native_group_fields_checks;
 #[path = "fixture/native_selection.rs"]
 mod native_selection;
+
+#[test]
+fn native_group_fields_check_current_owner() {
+    native_group_fields_checks::current_owner();
+}
 
 #[test]
 fn native_board_archive_checks_access_and_scope() {

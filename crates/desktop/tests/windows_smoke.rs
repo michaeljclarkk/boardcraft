@@ -24,6 +24,19 @@ mod fixture;
 mod group_create;
 #[path = "../../mobile-edit-host/tests/fixture/group_edit.rs"]
 mod group_edit;
+#[path = "windows/group_fields.rs"]
+mod group_fields;
+#[path = "../../mobile-edit-host/tests/fixture/native_group_fields.rs"]
+mod native_group_fields;
+
+#[test]
+fn windows_creates_and_edits_group_fields() {
+    group_fields::creates_and_edits();
+}
+#[test]
+fn windows_recovers_group_fields() {
+    group_fields::recovers();
+}
 #[path = "windows/grouped_entry.rs"]
 mod grouped_entry;
 #[path = "../../mobile-edit-host/tests/fixture/grouped_entry.rs"]

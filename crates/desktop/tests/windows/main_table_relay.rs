@@ -13,7 +13,7 @@ use std::{
 
 pub struct Relay {
     pub port: u16,
-    pub fault: Arc<AtomicUsize>, // 1: next table GET, 2: next POST acknowledgment
+    pub fault: Arc<AtomicUsize>, // 1: table GET, 2: save acknowledgment, 3: save before forwarding
     pub saves: Arc<AtomicUsize>,
     pub reads: Arc<AtomicUsize>,
     pub archive_reads: Arc<AtomicUsize>,
@@ -107,7 +107,7 @@ fn forward(
         archive_reads.fetch_add(1, SeqCst);
     }
     let entry = (first.starts_with("POST ") || first.starts_with("PUT "))
-        && (first.contains("/main-table/items") || first.contains("/main-table/groups/"));
+        && (first.contains("/main-table/items") || first.contains("/main-table/groups"));
     let save = (first.starts_with("POST ") && first.contains("/main-table-fold ")) || entry;
     let length = head
         .lines()
@@ -131,6 +131,17 @@ fn forward(
     }
     if save {
         saves.fetch_add(1, SeqCst);
+    }
+    if entry && fault.compare_exchange(3, 0, SeqCst, SeqCst).is_ok() {
+        let mut line = first.split_whitespace();
+        entries.lock().unwrap().push(EntryCall {
+            method: line.next().unwrap().to_owned(),
+            path: line.next().unwrap().to_owned(),
+            body: serde_json::from_slice(&bytes[head_end..head_end + length]).unwrap(),
+            status: 503,
+        });
+        child.write_all(refused()).unwrap();
+        return;
     }
     let mut upstream = TcpStream::connect((Ipv4Addr::LOCALHOST, host)).unwrap();
     upstream
