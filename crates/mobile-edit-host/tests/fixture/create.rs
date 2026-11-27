@@ -21,11 +21,11 @@ pub(super) fn login(port: u16, identifier: &str, password: &str) -> BrowserPair 
     let reply = send(
         port,
         "POST",
-        "/preview/api/session",
+        "/web/api/session",
         &authority,
         &[
             ("Origin", &format!("http://{authority}")),
-            ("Boardcraft-Preview", "login"),
+            ("Boardcraft-Web", "login"),
         ],
         &json!({"identifier":identifier,"password":password}).to_string(),
     );
@@ -53,7 +53,7 @@ impl Case {
         let member = f.seed_account("reader", &password, Role::Member);
         let catalog = Catalog::new(&f, member);
         selection::seed_groups(&f);
-        let host = Host::start_preview(&f.schema.config, BoardId::new(f.board).unwrap()).unwrap();
+        let host = Host::start_web_api(&f.schema.config, BoardId::new(f.board).unwrap()).unwrap();
         let pair = login(host.port, "reader", &password);
         let session = StoredSession::only(&f, member);
         Self {
@@ -89,7 +89,7 @@ impl Case {
         let mut fields = vec![("Origin", origin.as_str())];
         if let Some(p) = pair {
             fields.extend([
-                ("Boardcraft-Preview", p.binding.as_str()),
+                ("Boardcraft-Web", p.binding.as_str()),
                 ("Cookie", p.cookie.as_str()),
             ]);
         }
@@ -112,7 +112,7 @@ impl Case {
 }
 
 fn path() -> String {
-    format!("/preview/api/navigation/boards/{SELECTED}/items")
+    format!("/web/api/navigation/boards/{SELECTED}/items")
 }
 fn draft(id: Uuid, group: &str, title: &str) -> Value {
     json!({"id":id,"group_id":group,"title":title})
@@ -256,7 +256,7 @@ pub fn atomic() {
     let reply = c.request(
         Some(&c.pair),
         "GET",
-        &format!("/preview/api/navigation/boards/{SELECTED}"),
+        &format!("/web/api/navigation/boards/{SELECTED}"),
         &Value::Null,
     );
     assert_eq!(reply.status, 200);

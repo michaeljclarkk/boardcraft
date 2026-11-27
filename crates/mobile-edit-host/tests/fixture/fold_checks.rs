@@ -13,7 +13,7 @@ const A: &str = "g-old";
 const B: &str = "g-z";
 const C: &str = "g-end";
 fn path() -> String {
-    format!("/preview/api/navigation/boards/{SELECTED}")
+    format!("/web/api/navigation/boards/{SELECTED}")
 }
 fn draft(rev: i64, ids: &[&str], collapsed: bool) -> Value {
     json!({"view_revision":rev,"group_ids":ids,"collapsed":collapsed})
@@ -27,7 +27,7 @@ fn reads(c: &Case, client: &EditClient, order: &[&str], folded: &[&str]) {
         let reply = c.request(
             Some(&c.pair),
             "GET",
-            &format!("/preview/api/navigation/boards/{board}"),
+            &format!("/web/api/navigation/boards/{board}"),
             &Value::Null,
         );
         assert_eq!(reply.status, 200);

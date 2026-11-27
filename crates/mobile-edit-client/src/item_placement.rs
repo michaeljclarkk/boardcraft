@@ -1,7 +1,7 @@
 use super::*;
 
 /// One deliberate relative drop, captured from the accepted table snapshot.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ItemReorder {
     operation_id: Uuid,
     group_id: String,
@@ -11,7 +11,7 @@ pub struct ItemReorder {
     item_revision: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum Side {
     Before,
@@ -38,6 +38,7 @@ impl ItemReorder {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl EditClient {
     /// Save just the group field. Unlike toolbar append, this preserves position
     /// and creation order, and does not create a reorder receipt. Never retries.
@@ -48,11 +49,6 @@ impl EditClient {
         group: &str,
         expected_revision: i64,
     ) -> Result<SavedItem, EditError> {
-        #[derive(Serialize)]
-        struct Draft<'a> {
-            group_id: &'a str,
-            expected_revision: i64,
-        }
         #[derive(Deserialize)]
         struct Saved {
             group_id: String,
@@ -63,10 +59,12 @@ impl EditClient {
             "http://127.0.0.1:{}/navigation/boards/{board}/main-table/items/{item}/group",
             self.port
         );
-        let saved: Saved = decode(self.authorize(self.http.put(url)).send_json(Draft {
-            group_id: group,
-            expected_revision,
-        }))?;
+        let command = TableCommand::Move {
+            id: item,
+            group: group.into(),
+            revision: expected_revision,
+        };
+        let saved: Saved = decode(self.authorize(self.http.put(url)).send_json(command.body()))?;
         if saved.group_id != group
             || saved.item.id != item
             || saved.item.revision < expected_revision
@@ -84,23 +82,12 @@ impl EditClient {
         item: Uuid,
         command: &ItemReorder,
     ) -> Result<(), EditError> {
-        #[derive(Deserialize)]
-        struct Saved {
-            operation_id: Uuid,
-            board_id: Uuid,
-            item_id: Uuid,
-        }
-        let url = format!(
-            "http://127.0.0.1:{}/navigation/boards/{board}/main-table/items/{item}/reorder",
-            self.port
-        );
-        let saved: Saved = decode(self.authorize(self.http.post(url)).send_json(command))?;
-        if saved.operation_id != command.operation_id
-            || saved.board_id != board
-            || saved.item_id != item
-        {
-            return Err(EditError::Transport);
-        }
-        Ok(())
+        self.submit_table(
+            board,
+            TableCommand::Reorder {
+                id: item,
+                command: command.clone(),
+            },
+        )
     }
 }

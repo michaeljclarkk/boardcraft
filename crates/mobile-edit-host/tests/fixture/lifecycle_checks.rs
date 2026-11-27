@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 fn board() -> String {
-    format!("/preview/api/navigation/boards/{SELECTED}")
+    format!("/web/api/navigation/boards/{SELECTED}")
 }
 fn page() -> String {
     format!("{}/archive", board())
@@ -77,7 +77,7 @@ pub fn access() {
         );
         unchanged(&s, true, true);
         rejected(
-            c.request(Some(&c.pair), method, &path.replace("/preview/api", ""), &d),
+            c.request(Some(&c.pair), method, &path.replace("/web/api", ""), &d),
             403,
         );
         unchanged(&s, true, true);
@@ -144,7 +144,7 @@ pub fn replay() {
     let s = Snapshot::read(&c.f);
     let d = draft(1, 1);
     let post = |id, action, body| c.request(Some(&c.pair), "POST", &route(id, action), body);
-    let other = boardcraft_mobile_edit_host::Host::start_preview(
+    let other = boardcraft_mobile_edit_host::Host::start_web_api(
         &c.f.schema.config,
         boardcraft_board::BoardId::new(c.f.board).unwrap(),
     )

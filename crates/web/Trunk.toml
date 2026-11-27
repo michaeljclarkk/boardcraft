@@ -1,0 +1,14 @@
+trunk-version = "=0.22.2"
+
+[build]
+target = "index.html"
+dist = "dist"
+public_url = "/web/"
+locked = true
+filehash = true
+
+[tools]
+wasm_bindgen = "0.2.130"
+
+[serve]
+headers = { "Cross-Origin-Opener-Policy" = "same-origin", "Cross-Origin-Embedder-Policy" = "require-corp" }

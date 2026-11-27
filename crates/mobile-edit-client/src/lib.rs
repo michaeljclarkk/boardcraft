@@ -1,18 +1,27 @@
 //! Blocking loopback client. Call from a worker when loading or saving an editor.
+#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
+#[cfg(not(target_family = "wasm"))]
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+#[cfg(not(target_family = "wasm"))]
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 mod archive;
 mod group_fields;
+#[cfg(not(target_family = "wasm"))]
 mod group_order;
 mod item_placement;
 mod main_table;
+mod table_command;
+mod table_contract;
 pub use archive::{ArchiveRead, ArchivedGroup, ArchivedItem};
 pub use group_fields::GroupFields;
 pub use item_placement::ItemReorder;
-pub use main_table::{MainTableGroup, MainTableRead};
+pub use main_table::MainTableRead;
+pub use table_command::{RootAction, SelectionAction, TableCommand};
+pub use table_contract::MainTableGroup;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedItem {
@@ -63,6 +72,7 @@ pub struct Credentials {
     pub password: String,
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[derive(Clone)]
 pub struct EditClient {
     port: u16,
@@ -70,7 +80,24 @@ pub struct EditClient {
     authorization: Option<ureq::http::HeaderValue>,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl EditClient {
+    fn submit_table(&self, board: Uuid, command: TableCommand) -> Result<(), EditError> {
+        let url = format!(
+            "http://127.0.0.1:{}/navigation/boards/{board}{}",
+            self.port,
+            command.path()
+        );
+        let saved: serde_json::Value = if command.method() == "PUT" {
+            decode(self.authorize(self.http.put(url)).send_json(command.body()))?
+        } else {
+            decode(
+                self.authorize(self.http.post(url))
+                    .send_json(command.body()),
+            )?
+        };
+        command.acknowledge(board, &saved)
+    }
     pub fn new(port: u16) -> Self {
         let config = ureq::Agent::config_builder()
             .proxy(None)
@@ -181,11 +208,13 @@ impl EditClient {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn edit_hint(headers: &ureq::http::HeaderMap) -> bool {
     let mut hints = headers.get_all(BOARD_ACCESS_HEADER).iter();
     hints.next().is_some_and(|v| v == "edit") && hints.next().is_none()
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn decode<T: DeserializeOwned>(
     response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
 ) -> Result<T, EditError> {
@@ -196,6 +225,7 @@ fn decode<T: DeserializeOwned>(
         .map_err(|_| EditError::Transport)
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn request_error(error: ureq::Error) -> EditError {
     match error {
         ureq::Error::StatusCode(401) => EditError::SessionRejected,
@@ -209,7 +239,7 @@ fn request_error(error: ureq::Error) -> EditError {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
 

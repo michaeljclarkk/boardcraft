@@ -1,5 +1,5 @@
 use gpui_kit::{Bounds, Pixels, Point, SharedString, px};
-use std::time::{Duration, Instant};
+use web_time::{Duration, Instant};
 
 /// Frame-local, window-coordinate geometry supplied by the presentation owner.
 #[derive(Clone)]

@@ -25,7 +25,7 @@ Be honest about what this is. The port reads an approved reference source and wr
 
 ## Start a session
 
-1. Read your own [packets/<packet-id>.md](packets/) for the assigned packet and its acceptance criteria; [ROADMAP.md](ROADMAP.md) is an index only. `node scripts/run.mjs status` shows which packets passed in this checkout. Never edit verification markers to advance the queue.
+1. Read your own [packets/<packet-id>.md](packets/) for the assigned packet and its acceptance criteria; [ROADMAP.md](ROADMAP.md) is an index only. `cargo run --locked --manifest-path tools/Cargo.toml -- status` shows which packets passed in this checkout. Never edit verification markers to advance the queue.
 2. Inspect the current edits, the previous `handoffs/<packet-id>.json`, and the relevant entries in the [owner map](docs/architecture.md) and [workflow register](docs/workflows.md). Work only within the assigned packet, and preserve unfinished edits across retries.
 3. Use the [development runbook](docs/development.md) for tools and checks. For feature work load `boardcraft-feature` or read its [instructions](.opencode/skills/boardcraft-feature/SKILL.md). A fresh public checkout MUST build without private material.
 
@@ -54,6 +54,8 @@ For native UI work use the `gpui-kit` coding guides and `gpui-kit-design-guides`
 
 ## Tests
 
+**UI verification: GPUI Kit and Computer Use only.** Use Kit's Rust test support for control behavior and OpenCode Computer Use to try the running port and capture visuals. The viewer must work in an ordinary browser without a test driver. Do not add or restore a custom Chrome/CDP driver, OCR automation, accessibility mirror, or a substitute UI harness in any language. If Computer Use cannot reach a target, record that visual check as unverified. Keep ordinary Rust tests for business rules, authorization and persistence. Historical handoffs describing retired tooling are not instructions to rebuild it.
+
 1. A test SHOULD earn its place by guarding a behaviour a plausible change could break, and no other test catches. SHOULD NOT test wiring, constants or a library's own behaviour.
 2. Test at the boundary where a mistake would show: the store for persistence, the host for authorization, a running control for input, focus and recovery. Compilation does not verify keyboard input.
 3. Assert identity, order and outcome ("the second row kept its ID and changed only its title"). Assert exact chosen values only where the contract itself is the observation, such as a returned UUID, revision or HTTP status.
@@ -70,13 +72,6 @@ Run the focused success and failure tests for your change; leave the packet's fu
 Update the affected workflow row and its code/test links. Do not edit the owner map, `docs/architecture.md`, `docs/development.md`, `docs/README.md` or [ROADMAP.md](ROADMAP.md) during a packet; raise the change to the coordinator and let it land at milestone close. Avoid a second competing task list.
 
 Write `handoffs/<packet-id>.json` with `status` (`ready` or `blocked`), `summary`, `evidence` (array of actual checks and outcomes), and `next` (one concrete action). All except `evidence` are strings. A blocker gets a handoff too. Only the runner marks a packet verified, after its checks pass.
-
-## Pull requests
-
-1. A PR SHOULD cover one issue and change nothing the fix does not need. Moving code and changing behaviour SHOULD be separate PRs, so a move reviews as a move.
-2. You SHOULD NOT commit scratch files, build output or your agent tool's own files, and MUST NOT pass `--no-verify`.
-3. If two different attempts at the same failing check have not worked, stop, say what fails and what you tried, and hand it back. A failure that also happens on the base branch is not yours to fix.
-4. Merge the base branch into your PR only when a reviewer asks; a conflict alone is not a reason.
 
 ## Model roles
 
@@ -104,10 +99,11 @@ An empty runner queue is not completion: choose the next uncovered workflow from
 | `board` | Board rules, the PostgreSQL store and its migrations |
 | `boardcraft-ui` | Controls shared by more than one client |
 | `mobile-edit-client` | The HTTP client native and browser clients share |
-| `mobile-edit-host` | The loopback host, access policy and browser preview |
+| `mobile-edit-host` | The loopback host, access policy and Rust browser client's assets |
+| `web` | The Rust/WASM client, rendered with GPUI Kit |
 | `desktop` | GPUI Kit windows for Windows |
 
-`android/` is a separate workspace for the Android app, with its own `Cargo.toml` and its own `cargo fmt` check. `docs/` holds the shared documents, `packets/` one file per queued packet, `handoffs/` one JSON per attempt, and `scripts/` the runner, the local dev and PostgreSQL helpers and the operator gates.
+`android/` is a separate workspace for the Android app, with its own `Cargo.toml` and its own `cargo fmt` check. `docs/` holds the shared documents, `packets/` one file per queued packet, `handoffs/` one JSON per attempt, and `tools/` the runner, the local dev and PostgreSQL helpers and the operator gates.
 
 **Commands**, from the repository root, one build at a time:
 
@@ -117,11 +113,15 @@ cargo fmt --manifest-path android/Cargo.toml -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 cargo build --locked --workspace --bins
-node --test scripts/run.test.mjs
+cargo test --locked --manifest-path tools/Cargo.toml
+cargo test --locked --manifest-path tools/android/Cargo.toml
 ```
 
-Locally, `. .\scripts\dev.ps1` activates the toolchain in PowerShell and `& .\scripts\postgres.ps1 start` starts or reuses the disposable cluster and exports the URL. Then run the packet's named test target, for example `cargo test --locked -p boardcraft-desktop --features native-smoke --test windows_smoke -- --test-threads=1` in a graphical session. The runner is authoritative for which checks a packet needs; do not skip a test on a missing database.
+Prepare the workspace dependency with `cargo run --locked --manifest-path tools/Cargo.toml -- prepare-web`. On Windows `cargo run --locked --manifest-path tools/Cargo.toml -- postgres exec -- PROGRAM [ARG...]` starts or reuses the disposable cluster and passes its URL to the child. Use it to run the packet's named test command from the [runbook](docs/development.md). The runner is authoritative for which checks a packet needs; do not skip a test on a missing database.
 
 **Conventions.** rustfmt owns formatting in both workspaces; do not hand-format or move logic to satisfy it. No `unsafe` in workspace crates. Start with a stock GPUI Kit control and record a missing interaction in the feature entry before writing a custom one. Credentials come from the process environment, sessions stay in memory, and nothing is written to the Windows Credential Manager or to a saved desktop password or token. Fixtures are synthetic and disposable; never a real account, board, workspace or database. Keep database work off the UI thread and report a save only after the commit.
+
+**Language Rule:**
+All apps apps and commited source SHOULD be Rust only: no handwritten JavaScript or TypeScript, Tauri, Electron or webview.
 
 **Notes and progress.** [ROADMAP.md](ROADMAP.md) is the queue index, [docs/workflows.md](docs/workflows.md) the register of what is verified, `handoffs/<packet-id>.json` the last session's evidence, and [docs/README.md](docs/README.md) the map of which document answers which question. `plan/` is an optional gitignored notebook.

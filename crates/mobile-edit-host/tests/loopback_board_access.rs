@@ -90,38 +90,38 @@ mod group_edit_checks;
 mod group_order_checks;
 
 #[test]
-fn preview_group_collapse_checks_view_revision_and_scope() {
+fn web_group_collapse_checks_view_revision_and_scope() {
     fold_checks::scope();
 }
 #[test]
-fn preview_group_collapse_requires_write_access_and_commit() {
+fn web_group_collapse_requires_write_access_and_commit() {
     fold_checks::access();
 }
 
 #[test]
-fn preview_group_reorder_requires_current_owner() {
+fn web_group_reorder_requires_current_owner() {
     group_order_checks::access();
 }
 #[test]
-fn preview_group_reorder_checks_active_permutation_and_commit() {
+fn web_group_reorder_checks_active_permutation_and_commit() {
     group_order_checks::permutations();
 }
 
 #[test]
-fn preview_group_edit_requires_current_owner() {
+fn web_group_edit_requires_current_owner() {
     group_edit_checks::access();
 }
 #[test]
-fn preview_group_edit_checks_both_revisions_and_preserves_children() {
+fn web_group_edit_checks_both_revisions_and_preserves_children() {
     group_edit_checks::edits();
 }
 
 #[test]
-fn preview_group_create_requires_current_owner() {
+fn web_group_create_requires_current_owner() {
     group_create_checks::access();
 }
 #[test]
-fn preview_group_create_preserves_identity_and_order() {
+fn web_group_create_preserves_identity_and_order() {
     group_create_checks::round_trip();
 }
 #[path = "fixture/group_lifecycle_checks.rs"]
@@ -132,11 +132,11 @@ mod lifecycle;
 mod lifecycle_checks;
 
 #[test]
-fn preview_group_lifecycle_requires_current_owner() {
+fn web_group_lifecycle_requires_current_owner() {
     group_lifecycle_checks::access();
 }
 #[test]
-fn preview_group_lifecycle_preserves_children_and_order() {
+fn web_group_lifecycle_preserves_children_and_order() {
     group_lifecycle_checks::round_trip();
 }
 #[path = "fixture/move_checks.rs"]
@@ -149,11 +149,11 @@ mod reorder_checks;
 mod reorder_state;
 
 #[test]
-fn preview_root_lifecycle_requires_current_owner() {
+fn web_root_lifecycle_requires_current_owner() {
     lifecycle_checks::access();
 }
 #[test]
-fn preview_root_lifecycle_preserves_visibility_and_replay() {
+fn web_root_lifecycle_preserves_visibility_and_replay() {
     lifecycle_checks::replay();
     lifecycle_checks::migration();
 }
@@ -161,32 +161,32 @@ fn preview_root_lifecycle_preserves_visibility_and_replay() {
 mod selection_move_checks;
 
 #[test]
-fn preview_selection_move_requires_current_access_and_valid_roots() {
+fn web_selection_move_requires_current_access_and_valid_roots() {
     selection_move_checks::access();
 }
 #[test]
-fn preview_selection_move_is_atomic_and_replay_safe() {
+fn web_selection_move_is_atomic_and_replay_safe() {
     selection_move_checks::replay();
     selection_move_checks::migration();
 }
 
 #[test]
-fn preview_reorder_requires_current_access_and_anchor() {
+fn web_reorder_requires_current_access_and_anchor() {
     reorder_checks::access();
 }
 #[test]
-fn preview_reorder_checks_revisions_and_replay() {
+fn web_reorder_checks_revisions_and_replay() {
     reorder_checks::revision_and_replay();
     reorder_checks::migration();
 }
 
 #[test]
-fn preview_move_requires_current_group_access() {
+fn web_move_requires_current_group_access() {
     move_checks::access();
 }
 
 #[test]
-fn preview_move_checks_group_revision_and_order() {
+fn web_move_checks_group_revision_and_order() {
     move_checks::revision_and_order();
     move_checks::migration();
 }
@@ -201,22 +201,22 @@ mod selection;
 mod stored_session;
 
 #[test]
-fn preview_create_requires_current_group_access() {
+fn web_create_requires_current_group_access() {
     create::access();
 }
 
 #[test]
-fn preview_create_is_atomic_and_replay_safe() {
+fn web_create_is_atomic_and_replay_safe() {
     create::atomic();
 }
 
 #[test]
-fn preview_browser_session_is_origin_bound() {
+fn web_browser_session_is_origin_bound() {
     browser_transport::check();
 }
 
 #[test]
-fn preview_groups_require_active_membership() {
+fn web_groups_require_active_membership() {
     browser_transport::groups();
 }
 
@@ -387,7 +387,7 @@ fn list_visible_boards_in_navigation_order() {
 }
 
 #[test]
-fn preview_document_preserves_scoped_api() {
+fn web_transport_preserves_scoped_native_api() {
     use boardcraft_board::BoardId;
     use boardcraft_mobile_edit_host::Host;
     use std::io::{Read, Write};
@@ -412,31 +412,26 @@ fn preview_document_preserves_scoped_api() {
 
     let f = Fixture::start();
     let s = selection::Selection::new(&f);
-    let preview = Host::start_preview(&f.schema.config, BoardId::new(f.board).unwrap()).unwrap();
+    let web = Host::start_web_api(&f.schema.config, BoardId::new(f.board).unwrap()).unwrap();
     let target = format!("/boards/{}", f.board);
     let other = format!("/boards/{}", selection::SELECTED);
     let mode = "Sec-Fetch-Mode: navigate\r\n";
     let dest = "Sec-Fetch-Dest: document\r\n";
     let doc = format!("{mode}{dest}");
-    for path in [&target, &other] {
-        let (status, headers, body) = request(preview.port, "GET", path, &doc);
-        assert_eq!(status, 200);
-        for header in [
-            "content-type: text/html",
-            "cache-control: no-store",
-            "content-security-policy: default-src 'none'",
-        ] {
-            assert!(headers.contains(header));
-        }
-        assert_eq!(body, include_str!("../src/preview/index.html"));
-    }
+    // Documents no longer intercept native board routes. Asset routing and
+    // isolation have ordinary HTTP coverage in web_assets, without a UI driver.
     for metadata in [
+        doc.as_str(),
         "",
         mode,
         dest,
         "Sec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: iframe\r\n",
     ] {
-        assert_eq!(request(preview.port, "GET", &target, metadata).0, 401);
+        for path in [&target, &other] {
+            let (status, _, body) = request(web.port, "GET", path, metadata);
+            assert_eq!(status, 401);
+            assert!(body.is_empty());
+        }
     }
     for port in [s.host.port, f.host.port] {
         assert_eq!(request(port, "GET", &target, &doc).0, 401);
@@ -448,11 +443,11 @@ fn preview_document_preserves_scoped_api() {
         format!("/boards/{}", uuid::Uuid::nil()),
         format!("/boards/{:X}", selection::SELECTED.hyphenated()),
     ] {
-        let (status, _, body) = request(preview.port, "GET", &path, &doc);
+        let (status, _, body) = request(web.port, "GET", &path, &doc);
         assert!(status >= 400 && body.is_empty());
     }
-    assert_eq!(request(preview.port, "POST", &target, &doc).0, 404);
-    let client = EditClient::with_bearer(preview.port, s.token.encoded()).unwrap();
+    assert_eq!(request(web.port, "POST", &target, &doc).0, 404);
+    let client = EditClient::with_bearer(web.port, s.token.encoded()).unwrap();
     assert_eq!(client.read(f.board).unwrap(), rows("Review", 1));
     assert_eq!(client.read(selection::SELECTED), Err(EditError::Missing));
     assert_eq!(
@@ -463,12 +458,12 @@ fn preview_document_preserves_scoped_api() {
 }
 
 #[test]
-fn preview_selected_rename_requires_current_access() {
+fn web_selected_rename_requires_current_access() {
     use selection::{SELECTED, Selection};
     use std::io::{Read, Write};
     let f = Fixture::start();
     let s = Selection::new(&f);
-    let preview = boardcraft_mobile_edit_host::Host::start_preview(
+    let web = boardcraft_mobile_edit_host::Host::start_web_api(
         &f.schema.config,
         boardcraft_board::BoardId::new(f.board).unwrap(),
     )
@@ -496,31 +491,31 @@ fn preview_selected_rename_requires_current_access() {
         s.check_rows(&f, joined);
         f.check_store(&rows("Review", 1));
     };
-    denied(preview.port, &path, false, "401", true);
+    denied(web.port, &path, false, "401", true);
     for port in [f.host.port, s.host.port] {
         denied(port, &path, true, "404", true);
     }
     denied(
-        preview.port,
+        web.port,
         path.strip_prefix("/navigation").unwrap(),
         true,
         "404",
         true,
     );
-    denied(preview.port, &selected(f.board, SECOND), true, "403", true);
+    denied(web.port, &selected(f.board, SECOND), true, "403", true);
     denied(
-        preview.port,
+        web.port,
         &selected(SELECTED, uuid::Uuid::from_u128(62)),
         true,
         "404",
         true,
     );
     s.membership(&f, false);
-    denied(preview.port, &path, true, "403", false);
+    denied(web.port, &path, true, "403", false);
     s.check(&f, false);
     s.membership(&f, true);
     s.session.revoke(&f);
-    denied(preview.port, &path, true, "401", true);
+    denied(web.port, &path, true, "401", true);
 }
 
 #[test]

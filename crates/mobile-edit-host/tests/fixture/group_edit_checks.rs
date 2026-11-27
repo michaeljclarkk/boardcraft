@@ -17,7 +17,7 @@ pub(super) fn owner() -> Case {
     c
 }
 fn path(id: &str) -> String {
-    format!("/preview/api/navigation/boards/{SELECTED}/groups/{id}")
+    format!("/web/api/navigation/boards/{SELECTED}/groups/{id}")
 }
 fn draft(board: i64, group: i64, name: &str, colour: &str) -> Value {
     json!({"board_revision":board,"group_revision":group,"name":name,"colour":colour})
@@ -39,7 +39,7 @@ pub fn access() {
     for (method, path, status) in [
         ("POST", p.clone(), 404),
         ("PUT", p.replace("/navigation/boards", "/boards"), 404),
-        ("PUT", p.replace("/preview/api", ""), 403),
+        ("PUT", p.replace("/web/api", ""), 403),
         (
             "PUT",
             p.replace(&SELECTED.to_string(), &HIDDEN.to_string()),
@@ -143,7 +143,7 @@ pub fn edits() {
     check(&c, &s, true, true);
     db.batch_execute("DROP TRIGGER refuse_edit ON board_groups")
         .unwrap();
-    let rival = Host::start_preview(&c.f.schema.config, BoardId::new(c.f.board).unwrap()).unwrap();
+    let rival = Host::start_web_api(&c.f.schema.config, BoardId::new(c.f.board).unwrap()).unwrap();
     let pair = login(rival.port, "reader", &c.password);
     let barrier = std::sync::Barrier::new(2);
     let codes = std::thread::scope(|scope| {

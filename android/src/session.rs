@@ -1,8 +1,7 @@
 //! Platform storage boundary. Only pass validated bearers across JNI, never credentials.
-use super::Connection;
+use super::{Connection, session_store};
 use boardcraft_mobile_edit_client::{EditClient, EditError, SavedItem};
-use gpui_mobile::android::jni::{activity, find_app_class, get_string, with_env};
-use jni::{jni_sig, jni_str, objects::JValue};
+use gpui_mobile::android::jni::{activity, with_env};
 
 pub enum SessionError {
     Local,
@@ -29,42 +28,13 @@ fn storage(port: u16, op: Operation) -> Result<Option<String>, SessionError> {
     };
     with_env(|env| {
         let app = activity(env)?;
-        let class = find_app_class(env, "dev.boardcraft.kitfixture.SessionStore")?;
-        let app = JValue::Object(&app);
-        let port = JValue::Int(port.into());
-        let result = (|| -> jni::errors::Result<_> {
-            match op {
-                Operation::Load => {
-                    let value = env
-                        .call_static_method(
-                            &class,
-                            jni_str!("load"),
-                            jni_sig!("(Landroid/content/Context;I)Ljava/lang/String;"),
-                            &[app, port],
-                        )?
-                        .l()?;
-                    return Ok((!value.is_null()).then(|| get_string(env, &value)));
-                }
-                Operation::Save(encoded) => {
-                    let value = env.new_string(encoded)?;
-                    env.call_static_method(
-                        &class,
-                        jni_str!("save"),
-                        jni_sig!("(Landroid/content/Context;ILjava/lang/String;)V"),
-                        &[app, port, JValue::Object(&value)],
-                    )?;
-                }
-                Operation::Forget => {
-                    env.call_static_method(
-                        &class,
-                        jni_str!("forget"),
-                        jni_sig!("(Landroid/content/Context;I)V"),
-                        &[app, port],
-                    )?;
-                }
+        let result = match op {
+            Operation::Load => session_store::load(env, &app, port),
+            Operation::Save(encoded) => {
+                session_store::save(env, &app, port, encoded).map(|()| None)
             }
-            Ok(None)
-        })();
+            Operation::Forget => session_store::forget(env, &app, port).map(|()| None),
+        };
         result.map_err(|_| {
             env.exception_clear();
             "Session storage unavailable".to_owned()

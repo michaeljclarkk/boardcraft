@@ -1,0 +1,43 @@
+diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -71 +71 @@
+-gpui = { package = "gpui-pre", version = "=0.3.10", default-features = false }
++gpui = { package = "gpui-pre", version = "=0.3.14", default-features = false }
+@@ -94 +94 @@
+-gpui_wgpu = { package = "gpui-pre-wgpu", version = "=0.3.10", features = ["font-kit"] }
++gpui_wgpu = { package = "gpui-pre-wgpu", version = "=0.3.14", features = ["font-kit"] }
+@@ -125 +125 @@
+-gpui_wgpu = { package = "gpui-pre-wgpu", version = "=0.3.10" }
++gpui_wgpu = { package = "gpui-pre-wgpu", version = "=0.3.14" }
+@@ -137 +137 @@
+-gpui = { package = "gpui-pre", version = "=0.3.10", default-features = false, features = ["test-support"] }
++gpui = { package = "gpui-pre", version = "=0.3.14", default-features = false, features = ["test-support"] }
+diff --git a/src/android/window.rs b/src/android/window.rs
+--- a/src/android/window.rs
++++ b/src/android/window.rs
+@@ -1337,7 +1337,7 @@ impl AndroidWindow {
+         config: WgpuSurfaceConfig,
+         backends: wgpu::Backends,
+     ) -> std::result::Result<WgpuRenderer, FreshRendererError> {
+-        let context = Self::create_context(raw, backends).map_err(|error| FreshRendererError {
++        let context = Self::create_context(raw, &config, backends).map_err(|error| FreshRendererError {
+             backend: wgpu::Backend::Noop,
+             error,
+         })?;
+@@ -1382,6 +1382,7 @@ impl AndroidWindow {
+     /// A `WgpuContext` restricted to `backends`, probed against `raw`.
+     fn create_context(
+         raw: &RawAndroidWindow,
++        config: &WgpuSurfaceConfig,
+         backends: wgpu::Backends,
+     ) -> Result<gpui_wgpu::WgpuContext> {
+         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+@@ -1402,6 +1403,6 @@ impl AndroidWindow {
+         // releases the window before the renderer creates its own surface.
+         let surface = unsafe { instance.create_surface_unsafe(target) }
+             .context("failed to create a probe surface")?;
+-        gpui_wgpu::WgpuContext::new(instance, &surface, None)
++        gpui_wgpu::WgpuContext::new(instance, &surface, config, None)
+     }
+ }

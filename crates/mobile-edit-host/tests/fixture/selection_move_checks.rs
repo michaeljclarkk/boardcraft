@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 fn route() -> String {
-    format!("/preview/api/navigation/boards/{SELECTED}/items/move-selection")
+    format!("/web/api/navigation/boards/{SELECTED}/items/move-selection")
 }
 fn root(n: u128) -> Value {
     json!({"id":Uuid::from_u128(n),"revision":1})
@@ -86,7 +86,7 @@ pub fn access() {
             403,
         ),
         // Native paths reject browser transport headers before route dispatch.
-        (route().replace("/preview/api", ""), 403),
+        (route().replace("/web/api", ""), 403),
         (route().replace("/navigation/boards/", "/boards/"), 404),
         (
             route().replace(&SELECTED.to_string(), &c.f.board.to_string()),
@@ -101,7 +101,7 @@ pub fn access() {
     for port in [c.host.port, c.f.host.port, nav.port] {
         let path = route();
         for route in [
-            path.trim_start_matches("/preview/api"),
+            path.trim_start_matches("/web/api"),
             &format!("/boards/{}/items/move-selection", c.f.board),
         ] {
             rejected(
@@ -138,7 +138,7 @@ pub fn replay() {
     let c = Case::new();
     reorder_state::seed(&c.f, c.member);
     let original = Snapshot::read(&c.f);
-    let second = Host::start_preview(&c.f.schema.config, BoardId::new(c.f.board).unwrap()).unwrap();
+    let second = Host::start_web_api(&c.f.schema.config, BoardId::new(c.f.board).unwrap()).unwrap();
     let pair = login(second.port, "reader", &c.password);
     let a = draft();
     let b = draft();
@@ -218,7 +218,7 @@ pub fn replay() {
             Some(first),
             "POST",
             &format!(
-                "/preview/api/navigation/boards/{SELECTED}/items/{}/reorder",
+                "/web/api/navigation/boards/{SELECTED}/items/{}/reorder",
                 Uuid::from_u128(67)
             ),
             &anchor,

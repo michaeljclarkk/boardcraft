@@ -1,0 +1,6 @@
+# The locked GPUI wasm_thread dependency requires stdarch_wasm_atomic_wait.
+[toolchain]
+channel = "nightly-2026-10-31"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]

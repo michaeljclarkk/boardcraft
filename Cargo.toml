@@ -1,6 +1,17 @@
 [workspace]
-members = ["crates/account", "crates/board", "crates/boardcraft-ui", "crates/desktop", "crates/mobile-edit-client", "crates/mobile-edit-host"]
+members = ["crates/account", "crates/board", "crates/boardcraft-ui", "crates/desktop", "crates/mobile-edit-client", "crates/mobile-edit-host", "crates/web"]
 resolver = "3"
+
+[workspace.dependencies]
+gpui-kit = "=0.11.0"
+futures = "0.3"
+wasm-bindgen = "=0.2.130"
+wasm-bindgen-futures = "0.4.80"
+web-sys = "0.3.107"
+rpassword = "7.5.5"
+
+[patch.crates-io]
+gpui-pre-web = { path = "crates/web/.deps/gpui-pre-web" }
 
 [profile.dev]
 # Keep cold GPUI builds manageable on a developer workstation.

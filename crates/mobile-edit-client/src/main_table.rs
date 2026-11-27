@@ -10,38 +10,43 @@ pub struct MainTableRead {
     manageable: bool,
 }
 
-#[derive(Deserialize)]
-pub struct MainTableGroup {
-    id: String,
-    name: String,
-    colour: String,
-    revision: i64,
-    collapsed: bool,
-    items: Vec<SavedItem>,
-}
-
-impl MainTableGroup {
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-    pub fn colour(&self) -> &str {
-        &self.colour
-    }
-    pub fn revision(&self) -> i64 {
-        self.revision
-    }
-    pub fn is_collapsed(&self) -> bool {
-        self.collapsed
-    }
-    pub fn items(&self) -> &[SavedItem] {
-        &self.items
-    }
-}
-
 impl MainTableRead {
+    /// Validate a transport-neutral snapshot before it reaches a view.
+    pub fn from_response(
+        groups: Vec<MainTableGroup>,
+        revision: i64,
+        view_revision: i64,
+        editable: bool,
+        manageable: bool,
+    ) -> Result<Self, EditError> {
+        let mut ids = HashSet::new();
+        let mut items = HashSet::new();
+        if revision < 1
+            || view_revision < 1
+            || groups.iter().map(|g| g.items.len().max(1)).sum::<usize>() > 500
+            || groups.iter().any(|g| {
+                g.id.trim().is_empty()
+                    || g.revision < 1
+                    || !g
+                        .colour
+                        .strip_prefix('#')
+                        .is_some_and(|s| s.len() == 6 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+                    || !ids.insert(&g.id)
+                    || g.items
+                        .iter()
+                        .any(|r| r.id.is_nil() || r.revision < 1 || !items.insert(r.id))
+            })
+        {
+            return Err(EditError::Transport);
+        }
+        Ok(Self {
+            groups,
+            revision,
+            view_revision,
+            editable,
+            manageable,
+        })
+    }
     pub fn groups(&self) -> &[MainTableGroup] {
         &self.groups
     }
@@ -59,6 +64,7 @@ impl MainTableRead {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn revision(headers: &ureq::http::HeaderMap, key: &str) -> Result<i64, EditError> {
     let mut values = headers.get_all(key).iter();
     let value = values
@@ -73,6 +79,7 @@ fn revision(headers: &ureq::http::HeaderMap, key: &str) -> Result<i64, EditError
     Ok(value)
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl EditClient {
     /// Append roots in request order using the shared batch operation. Submit once;
     /// an uncertain acknowledgment requires an authorized read before another write.
@@ -84,49 +91,15 @@ impl EditClient {
         board_revision: i64,
         items: &[(Uuid, i64)],
     ) -> Result<(), EditError> {
-        #[derive(Serialize)]
-        struct Root {
-            id: Uuid,
-            revision: i64,
-        }
-        #[derive(Serialize)]
-        struct Draft<'a> {
-            operation_id: Uuid,
-            group_id: &'a str,
-            board_revision: i64,
-            items: Vec<Root>,
-        }
-        #[derive(Deserialize)]
-        struct Saved {
-            board_id: Uuid,
-            operation_id: Uuid,
-            affected_ids: Vec<Uuid>,
-        }
-        let url = format!(
-            "http://127.0.0.1:{}/navigation/boards/{board}/main-table/items/move-selection",
-            self.port
-        );
-        let saved: Saved = decode(
-            self.authorize(self.http.post(url)).send_json(Draft {
-                operation_id: operation,
-                group_id: group,
+        self.submit_table(
+            board,
+            TableCommand::Selection {
+                operation,
                 board_revision,
-                items: items
-                    .iter()
-                    .map(|&(id, revision)| Root { id, revision })
-                    .collect(),
-            }),
-        )?;
-        let affected: HashSet<_> = saved.affected_ids.iter().copied().collect();
-        if saved.board_id != board
-            || saved.operation_id != operation
-            || saved.affected_ids.len() != items.len()
-            || affected.len() != items.len()
-            || items.iter().any(|(id, _)| !affected.contains(id))
-        {
-            return Err(EditError::Transport);
-        }
-        Ok(())
+                items: items.to_vec(),
+                action: SelectionAction::Move(group.into()),
+            },
+        )
     }
 
     /// Native selected-board create. Never replay automatically after a failed acknowledgment.
@@ -137,12 +110,6 @@ impl EditClient {
         id: Uuid,
         title: &str,
     ) -> Result<SavedItem, EditError> {
-        #[derive(Serialize)]
-        struct Draft<'a> {
-            id: Uuid,
-            group_id: &'a str,
-            title: &'a str,
-        }
         #[derive(Deserialize)]
         struct Created {
             group_id: String,
@@ -153,11 +120,15 @@ impl EditClient {
             "http://127.0.0.1:{}/navigation/boards/{board}/main-table/items",
             self.port
         );
-        let saved: Created = decode(self.authorize(self.http.post(url)).send_json(Draft {
+        let command = TableCommand::Create {
             id,
-            group_id: group,
-            title,
-        }))?;
+            group: group.into(),
+            title: title.into(),
+        };
+        let saved: Created = decode(
+            self.authorize(self.http.post(url))
+                .send_json(command.body()),
+        )?;
         if saved.group_id != group || saved.item.id != id || saved.item.revision < 1 {
             return Err(EditError::Transport);
         }
@@ -203,31 +174,7 @@ impl EditClient {
             .body_mut()
             .read_json()
             .map_err(|_| EditError::Transport)?;
-        let mut ids = HashSet::new();
-        let mut items = HashSet::new();
-        if groups.iter().map(|g| g.items.len().max(1)).sum::<usize>() > 500
-            || groups.iter().any(|g| {
-                g.id.trim().is_empty()
-                    || g.revision < 1
-                    || !g
-                        .colour
-                        .strip_prefix('#')
-                        .is_some_and(|s| s.len() == 6 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-                    || !ids.insert(&g.id)
-                    || g.items
-                        .iter()
-                        .any(|r| r.id.is_nil() || r.revision < 1 || !items.insert(r.id))
-            })
-        {
-            return Err(EditError::Transport);
-        }
-        Ok(MainTableRead {
-            groups,
-            revision: board_revision,
-            view_revision,
-            editable,
-            manageable,
-        })
+        MainTableRead::from_response(groups, board_revision, view_revision, editable, manageable)
     }
 
     /// Submit once. A lost acknowledgment must be recovered by reading, not replaying.
@@ -238,34 +185,18 @@ impl EditClient {
         ids: &[String],
         collapsed: bool,
     ) -> Result<(), EditError> {
-        #[derive(Serialize)]
-        struct Draft<'a> {
-            view_revision: i64,
-            group_ids: &'a [String],
-            collapsed: bool,
-        }
-        #[derive(Deserialize)]
-        struct Saved {
-            board_id: Uuid,
-            view_revision: i64,
-        }
-        let url = format!(
-            "http://127.0.0.1:{}/navigation/boards/{board}/main-table-fold",
-            self.port
-        );
-        let saved: Saved = decode(self.authorize(self.http.post(url)).send_json(Draft {
-            view_revision,
-            group_ids: ids,
-            collapsed,
-        }))?;
-        if saved.board_id != board || view_revision.checked_add(1) != Some(saved.view_revision) {
-            return Err(EditError::Transport);
-        }
-        Ok(())
+        self.submit_table(
+            board,
+            TableCommand::Fold {
+                view_revision,
+                ids: ids.to_vec(),
+                collapsed,
+            },
+        )
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
 

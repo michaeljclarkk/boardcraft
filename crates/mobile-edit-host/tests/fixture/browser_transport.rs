@@ -71,7 +71,7 @@ pub(super) fn groups() {
     let member = f.seed_account("reader", &password, Role::Member);
     let catalog = selection::Catalog::new(&f, member);
     selection::seed_groups(&f);
-    let host = Host::start_preview(&f.schema.config, BoardId::new(f.board).unwrap()).unwrap();
+    let host = Host::start_web_api(&f.schema.config, BoardId::new(f.board).unwrap()).unwrap();
     let authority = format!("127.0.0.1:{}", host.port);
     let origin = format!("http://{authority}");
     let call = |method: &str, path: &str, fields: &[(&str, &str)], body: &str| {
@@ -79,16 +79,16 @@ pub(super) fn groups() {
     };
     let login = call(
         "POST",
-        "/preview/api/session",
-        &[("Origin", &origin), ("Boardcraft-Preview", "login")],
+        "/web/api/session",
+        &[("Origin", &origin), ("Boardcraft-Web", "login")],
         &json!({"identifier":"reader","password":password}).to_string(),
     );
     assert_eq!(login.status, 200);
     let binding: String = serde_json::from_str(&login.body).unwrap();
     let cookie = login.cookie.as_deref().unwrap().split(';').next().unwrap();
-    let pair = [("Cookie", cookie), ("Boardcraft-Preview", binding.as_str())];
+    let pair = [("Cookie", cookie), ("Boardcraft-Web", binding.as_str())];
     let session = StoredSession::only(&f, member);
-    let path = format!("/preview/api/navigation/boards/{SELECTED}");
+    let path = format!("/web/api/navigation/boards/{SELECTED}");
     for half in [&pair[0..1], &pair[1..2]] {
         let reply = call("GET", &path, half, "");
         assert!(matches!(reply.status, 401 | 403) && reply.body.is_empty());
@@ -168,14 +168,14 @@ pub(super) fn check() {
     let password = uuid::Uuid::new_v4().to_string();
     let member = f.seed_account("reader", &password, Role::Member);
     let catalog = selection::Catalog::new(&f, member);
-    let host = Host::start_preview(&f.schema.config, board).unwrap();
+    let host = Host::start_web_api(&f.schema.config, board).unwrap();
     let nav = Host::start_with_navigation(&f.schema.config, board).unwrap();
     let authority = format!("127.0.0.1:{}", host.port);
     let origin = format!("http://{authority}");
     let foreign = format!("http://127.0.0.1:{}", nav.port);
     let login = serde_json::json!({"identifier":"reader","password":password}).to_string();
-    let api = "/preview/api/session";
-    let binding = "Boardcraft-Preview";
+    let api = "/web/api/session";
+    let binding = "Boardcraft-Web";
     let exact = ("Origin", origin.as_str());
     let start = (binding, "login");
     let local = |method, path, fields: &[(&str, &str)], body| {
@@ -216,7 +216,7 @@ pub(super) fn check() {
         flags.len() == 3
             && flags.contains(&"HttpOnly")
             && flags.contains(&"SameSite=Strict")
-            && flags.contains(&"Path=/preview/api")
+            && flags.contains(&"Path=/web/api")
     );
     let key: String = serde_json::from_str(&reply.body).unwrap();
     let handle = cookie.split_once('=').unwrap().1;
@@ -250,12 +250,24 @@ pub(super) fn check() {
         ));
     }
     assert_eq!(local("GET", api, &pair, "").status, 200);
-    let selected = format!("/preview/api/navigation/boards/{}", selection::SELECTED);
+    // Cookies share the loopback host, not its port. Even both halves from this
+    // origin must not select a session in another web host's independent table.
+    let peer = Host::start_web_api(&f.schema.config, board).unwrap();
+    denied(send(
+        peer.port,
+        "GET",
+        api,
+        &format!("127.0.0.1:{}", peer.port),
+        &pair,
+        "",
+    ));
+    assert_eq!(local("GET", api, &pair, "").status, 200);
+    let selected = format!("/web/api/navigation/boards/{}", selection::SELECTED);
     assert_eq!(local("GET", &selected, &pair, "").status, 200);
     let edit = format!("{selected}/items/{}/name", uuid::Uuid::from_u128(61));
     for (method, path, body) in [
         ("PUT", edit.as_str(), r#"{"title":"Coral","revision":1}"#),
-        ("POST", "/preview/api/session/logout", ""),
+        ("POST", "/web/api/session/logout", ""),
     ] {
         for extra in [
             vec![],
@@ -298,7 +310,7 @@ pub(super) fn check() {
     assert_eq!(
         local(
             "POST",
-            "/preview/api/session/logout",
+            "/web/api/session/logout",
             &[pair[0], pair[1], exact],
             ""
         )

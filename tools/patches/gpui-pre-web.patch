@@ -1,0 +1,55 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -144,7 +144,7 @@
+     "FocusOptions",
+     "HtmlCanvasElement",
+     "HtmlElement",
+-    "HtmlTextAreaElement",
++    "HtmlInputElement",
+     "IdleDeadline",
+     "IdleRequestOptions",
+     "ImageData",
+--- a/src/ime_mirror.rs
++++ b/src/ime_mirror.rs
+@@ -54,7 +54,7 @@
+ /// module; other code interacts through read accessors, focus and
+ /// virtual-keyboard control, and [`ImeMirror::schedule_sync`].
+ pub(crate) struct ImeMirror {
+-    element: web_sys::HtmlTextAreaElement,
++    element: web_sys::HtmlInputElement,
+     /// The mirror text most recently synced to (or observed in) the hidden
+     /// element. `input` events diff the element's new value against this to
+     /// recover what edit the IME performed.
+@@ -89,14 +89,15 @@
+         body: &web_sys::HtmlElement,
+         touch_input: bool,
+     ) -> anyhow::Result<Self> {
+-        // A textarea rather than an input: single-line inputs silently strip
+-        // newlines from assigned values, which would make the mirror text
+-        // disagree with what was written into it.
+-        let element: web_sys::HtmlTextAreaElement = document
+-            .create_element("textarea")
++        // One protected keyboard/IME conduit, not a semantic control mirror.
++        // Current application inputs are single-line. Never expose their raw
++        // context as browser accessibility text or keyboard suggestions.
++        let element: web_sys::HtmlInputElement = document
++            .create_element("input")
+             .map_err(|e| anyhow::anyhow!("Failed to create textarea element: {e:?}"))?
+             .dyn_into()
+             .map_err(|e| anyhow::anyhow!("Created element is not a textarea: {e:?}"))?;
++        element.set_type("password");
+         let style = element.style();
+         style.set_property("position", "fixed").ok();
+         style.set_property("top", "0").ok();
+@@ -189,4 +190,4 @@
+-    fn focus_element(element: &web_sys::HtmlTextAreaElement) {
++    fn focus_element(element: &web_sys::HtmlInputElement) {
+         // The hidden mirror is not a scroll target: revealing its caret can
+         // pan Android Chrome's visual viewport when the keyboard opens.
+         let options = web_sys::FocusOptions::new();
+--- a/src/window.rs
++++ b/src/window.rs
+@@ -1008,2 +1008,3 @@
+         self.inner.state.borrow_mut().renderer.draw(scene);
++        ImeMirror::schedule_sync(&self.inner);
+     }

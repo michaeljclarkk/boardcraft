@@ -7,7 +7,7 @@ Documents answer questions. They are not a second task list.
 | Question | Read or update |
 |---|---|
 | What do I do next, and what counts as done? | [Roadmap index](../ROADMAP.md) plus your own file in [packets](../packets/). Read only your own packet. |
-| How do I build, start and recover the environment? | [Development](development.md). Keep commands runnable from the repository root. |
+| How do I open a board, run a packet or recover the environment? | [Rust browser viewer](development.md#browser-viewer), [queue commands](../README.md#run-the-queue) and [development runbook](development.md). Run commands from the repository root. |
 | Where does the behaviour live? | [Architecture and owner map](architecture.md). Link to the smallest useful implementation entry point. |
 | What stack does the browser client use? | [Browser client stack](web-client-stack.md). Decision, shared controls, migration packets and risks. |
 | What do I do when GPUI Kit lacks an interaction? | [Shared GPUI components](gpui-components.md). No-fallback rule, required artifacts and the control register. |

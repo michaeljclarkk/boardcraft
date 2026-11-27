@@ -30,6 +30,42 @@ pub struct ArchivedGroup {
     revision: i64,
 }
 impl ArchiveRead {
+    /// Check the same inventory contract for native and asynchronous transports.
+    pub fn checked(self, trash: bool, cursor: Option<(i64, i64)>) -> Result<Self, EditError> {
+        let mut items = HashSet::new();
+        let mut groups = HashSet::new();
+        if self.board_revision < 1
+            || self.total < self.items.len() as i64
+            || self.items.len() > 100
+            || self.groups.len() > 100
+            || self.has_more != (self.total > self.items.len() as i64)
+            || cursor.is_some_and(|(revision, _)| revision != self.board_revision)
+            || self
+                .next_group_offset
+                .is_some_and(|n| Some(n) != cursor.map_or(Some(100), |(_, n)| n.checked_add(100)))
+            || self.items.iter().any(|r| {
+                r.id.is_nil()
+                    || !items.insert(r.id)
+                    || r.revision < 1
+                    || r.effective_state != if trash { 2 } else { 1 }
+                    || !(if trash {
+                        &[0, 1, 2, 3][..]
+                    } else {
+                        &[0, 1, 3][..]
+                    })
+                    .contains(&r.state)
+                    || (r.group_active && r.state != if trash { 2 } else { 1 })
+                    || r.restorable != (self.can_manage && r.group_active)
+            })
+            || self
+                .groups
+                .iter()
+                .any(|g| g.id.trim().is_empty() || g.revision < 1 || !groups.insert(&g.id))
+        {
+            return Err(EditError::Transport);
+        }
+        Ok(self)
+    }
     pub fn revision(&self) -> i64 {
         self.board_revision
     }
@@ -84,6 +120,7 @@ impl ArchivedGroup {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl EditClient {
     /// One explicit selected-root command; recovery reads do not call this method.
     pub fn archive_main_table_selection(
@@ -112,30 +149,19 @@ impl EditClient {
         items: &[(Uuid, i64)],
         trash: bool,
     ) -> Result<(), EditError> {
-        let action = if trash {
-            "delete-selection"
-        } else {
-            "archive-selection"
-        };
-        let url = format!(
-            "http://127.0.0.1:{}/navigation/boards/{board}/main-table/items/{action}",
-            self.port
-        );
-        let draft = serde_json::json!({"operation_id":operation,"board_revision":board_revision,
-            "items":items.iter().map(|(id,revision)|serde_json::json!({"id":id,"revision":revision})).collect::<Vec<_>>()});
-        let saved: serde_json::Value =
-            decode(self.authorize(self.http.post(url)).send_json(draft))?;
-        let affected: Vec<Uuid> = serde_json::from_value(saved["affected_ids"].clone())
-            .map_err(|_| EditError::Transport)?;
-        let expected: HashSet<_> = items.iter().map(|(id, _)| *id).collect();
-        if saved["operation_id"] != serde_json::json!(operation)
-            || saved["board_id"] != serde_json::json!(board)
-            || affected.len() != items.len()
-            || affected.iter().copied().collect::<HashSet<_>>() != expected
-        {
-            return Err(EditError::Transport);
-        }
-        Ok(())
+        self.submit_table(
+            board,
+            TableCommand::Selection {
+                operation,
+                board_revision,
+                items: items.to_vec(),
+                action: if trash {
+                    SelectionAction::Delete
+                } else {
+                    SelectionAction::Archive
+                },
+            },
+        )
     }
     pub fn read_main_table_archive(
         &self,
@@ -162,39 +188,7 @@ impl EditClient {
             url += &format!("/groups/{revision}/{offset}");
         }
         let read: ArchiveRead = decode(self.authorize(self.http.get(url)).call())?;
-        let mut items = HashSet::new();
-        let mut groups = HashSet::new();
-        if read.board_revision < 1
-            || read.total < read.items.len() as i64
-            || read.items.len() > 100
-            || read.groups.len() > 100
-            || read.has_more != (read.total > read.items.len() as i64)
-            || cursor.is_some_and(|(revision, _)| revision != read.board_revision)
-            || read
-                .next_group_offset
-                .is_some_and(|n| Some(n) != cursor.map_or(Some(100), |(_, n)| n.checked_add(100)))
-            || read.items.iter().any(|r| {
-                r.id.is_nil()
-                    || !items.insert(r.id)
-                    || r.revision < 1
-                    || r.effective_state != if trash { 2 } else { 1 }
-                    || !(if trash {
-                        &[0, 1, 2, 3][..]
-                    } else {
-                        &[0, 1, 3][..]
-                    })
-                    .contains(&r.state)
-                    || (r.group_active && r.state != if trash { 2 } else { 1 })
-                    || r.restorable != (read.can_manage && r.group_active)
-            })
-            || read
-                .groups
-                .iter()
-                .any(|g| g.id.trim().is_empty() || g.revision < 1 || !groups.insert(&g.id))
-        {
-            return Err(EditError::Transport);
-        }
-        Ok(read)
+        read.checked(trash, cursor)
     }
 
     /// One explicit command. A lost acknowledgment is not permission to replay.
@@ -242,31 +236,20 @@ impl EditClient {
         item_revision: i64,
         action: &str,
     ) -> Result<(), EditError> {
-        #[derive(Serialize)]
-        struct Draft {
-            operation_id: Uuid,
-            board_revision: i64,
-            item_revision: i64,
-        }
-        #[derive(Deserialize)]
-        struct Saved {
-            operation_id: Uuid,
-            item_id: Uuid,
-            board_id: Uuid,
-        }
-        let url = format!(
-            "http://127.0.0.1:{}/navigation/boards/{board}/main-table/items/{item}/{action}",
-            self.port
-        );
-        let saved: Saved = decode(self.authorize(self.http.post(url)).send_json(Draft {
-            operation_id: operation,
-            board_revision,
-            item_revision,
-        }))?;
-        if saved.board_id != board || saved.item_id != item || saved.operation_id != operation {
-            return Err(EditError::Transport);
-        }
-        Ok(())
+        self.submit_table(
+            board,
+            TableCommand::Root {
+                id: item,
+                operation,
+                board_revision,
+                revision: item_revision,
+                action: match action {
+                    "archive" => RootAction::Archive,
+                    "restore-deleted" => RootAction::RestoreDeleted,
+                    _ => RootAction::Restore,
+                },
+            },
+        )
     }
 
     /// Undo and recovery Restore share this board-baselined group operation.
@@ -277,32 +260,13 @@ impl EditClient {
         board_revision: i64,
         restore: bool,
     ) -> Result<(), EditError> {
-        #[derive(Serialize)]
-        struct Draft {
-            board_revision: i64,
-        }
-        #[derive(Deserialize)]
-        struct Saved {
-            board_id: Uuid,
-            group_id: String,
-            board_revision: i64,
-        }
-        let action = if restore { "restore" } else { "archive" };
-        let group_path: String = group.bytes().map(|b| format!("%{b:02X}")).collect();
-        let url = format!(
-            "http://127.0.0.1:{}/navigation/boards/{board}/main-table/groups/{group_path}/{action}",
-            self.port
-        );
-        let saved: Saved = decode(
-            self.authorize(self.http.post(url))
-                .send_json(Draft { board_revision }),
-        )?;
-        if saved.board_id != board
-            || saved.group_id != group
-            || board_revision.checked_add(1) != Some(saved.board_revision)
-        {
-            return Err(EditError::Transport);
-        }
-        Ok(())
+        self.submit_table(
+            board,
+            TableCommand::Group {
+                id: group.into(),
+                board_revision,
+                restore,
+            },
+        )
     }
 }

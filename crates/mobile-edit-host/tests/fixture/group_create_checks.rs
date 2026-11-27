@@ -18,7 +18,7 @@ fn owner() -> Case {
     c
 }
 fn path(board: Uuid) -> String {
-    format!("/preview/api/navigation/boards/{board}/groups")
+    format!("/web/api/navigation/boards/{board}/groups")
 }
 fn draft() -> Value {
     json!({"id":format!("g-{}",Uuid::new_v4()),"name":"New group","colour":BLUE,"board_revision":1})
@@ -50,7 +50,7 @@ pub fn access() {
         404,
     );
     rejected(
-        c.request(Some(&c.pair), "POST", &p.replace("/preview/api", ""), &d),
+        c.request(Some(&c.pair), "POST", &p.replace("/web/api", ""), &d),
         403,
     );
     rejected(c.request(Some(&c.pair), "PUT", &p, &d), 404);
@@ -141,7 +141,7 @@ pub fn round_trip() {
     stale["board_revision"] = json!(2);
     rejected(post(&c, &stale), 409);
     check(&c, &s, true, true);
-    let rival = Host::start_preview(&c.f.schema.config, BoardId::new(c.f.board).unwrap()).unwrap();
+    let rival = Host::start_web_api(&c.f.schema.config, BoardId::new(c.f.board).unwrap()).unwrap();
     let pair = login(rival.port, "reader", &c.password);
     let barrier = std::sync::Barrier::new(2);
     let codes = std::thread::scope(|scope| {

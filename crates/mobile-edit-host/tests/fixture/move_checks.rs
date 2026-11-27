@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 fn path(id: u128) -> String {
     format!(
-        "/preview/api/navigation/boards/{SELECTED}/items/{}/group",
+        "/web/api/navigation/boards/{SELECTED}/items/{}/group",
         Uuid::from_u128(id)
     )
 }
@@ -61,7 +61,7 @@ pub fn access() {
         c.request(
             Some(&c.pair),
             "GET",
-            &format!("/preview/api/navigation/boards/{SELECTED}"),
+            &format!("/web/api/navigation/boards/{SELECTED}"),
             &Value::Null
         )
         .status,
@@ -83,7 +83,7 @@ pub fn access() {
         Host::start_with_navigation(&c.f.schema.config, BoardId::new(c.f.board).unwrap()).unwrap();
     for port in [nav.port, c.f.host.port, c.host.port] {
         let full = path(61);
-        let native = full.strip_prefix("/preview/api").unwrap();
+        let native = full.strip_prefix("/web/api").unwrap();
         let scoped = format!("/boards/{}/items/{}/group", c.f.board, Uuid::from_u128(17));
         for route in [native, &scoped, &full] {
             if port == c.host.port && route == full {
@@ -161,7 +161,7 @@ pub fn revision_and_order() {
         let reply = c.request(
             Some(&c.pair),
             "GET",
-            &format!("/preview/api/navigation/boards/{SELECTED}"),
+            &format!("/web/api/navigation/boards/{SELECTED}"),
             &Value::Null,
         );
         assert_eq!(reply.status, 200);
@@ -189,7 +189,7 @@ pub fn revision_and_order() {
     };
     order(&[61, 59]);
     // Retransmission is scoped to the original creation, not the new group.
-    let create_path = format!("/preview/api/navigation/boards/{SELECTED}/items");
+    let create_path = format!("/web/api/navigation/boards/{SELECTED}/items");
     let replay = |group: &str| {
         c.request(
             Some(&c.pair),
@@ -213,7 +213,7 @@ pub fn revision_and_order() {
     let append = c.request(
         Some(&c.pair),
         "POST",
-        &format!("/preview/api/navigation/boards/{SELECTED}/items"),
+        &format!("/web/api/navigation/boards/{SELECTED}/items"),
         &json!({"id":Uuid::from_u128(80),"group_id":"g-20","title":"New"}),
     );
     assert_eq!(append.status, 200);

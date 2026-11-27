@@ -1,7 +1,7 @@
 //! Single-board host for a disposable database. No database configuration crosses HTTP.
 mod access;
-mod browser_session;
-mod preview;
+mod web_assets;
+mod web_session;
 use std::{io::Read, sync::Arc, thread};
 
 use boardcraft_account::Token;
@@ -30,25 +30,43 @@ pub struct Host {
 enum Mode {
     Scoped,
     Navigation,
-    Preview,
+    Web,
 }
 
 impl Host {
     pub fn start(config: &Config, board: BoardId) -> Result<Self, &'static str> {
-        Self::listen(config, board, Mode::Scoped)
+        Self::listen(config, board, Mode::Scoped, None)
     }
 
     /// Advertise the caller's visible catalog. Item requests still target only `board`.
     pub fn start_with_navigation(config: &Config, board: BoardId) -> Result<Self, &'static str> {
-        Self::listen(config, board, Mode::Navigation)
+        Self::listen(config, board, Mode::Navigation, None)
     }
 
-    /// Serve the browser preview on the same ephemeral loopback origin as the API.
-    pub fn start_preview(config: &Config, board: BoardId) -> Result<Self, &'static str> {
-        Self::listen(config, board, Mode::Preview)
+    /// Serve the exact-origin web session API without a client asset bundle.
+    /// Useful for independent transport and store acceptance checks.
+    pub fn start_web_api(config: &Config, board: BoardId) -> Result<Self, &'static str> {
+        Self::listen(config, board, Mode::Web, None)
     }
 
-    fn listen(config: &Config, board: BoardId, mode: Mode) -> Result<Self, &'static str> {
+    /// Serve the single Trunk-built wasm client at `/web/` and its session API
+    /// at `/web/api` on the same ephemeral loopback origin.
+    /// Assets are snapshotted before listening; later filesystem edits are not served.
+    pub fn start_web(
+        config: &Config,
+        board: BoardId,
+        dist: &std::path::Path,
+    ) -> Result<Self, &'static str> {
+        let assets = web_assets::Assets::load(dist)?;
+        Self::listen(config, board, Mode::Web, Some(assets))
+    }
+
+    fn listen(
+        config: &Config,
+        board: BoardId,
+        mode: Mode,
+        web: Option<web_assets::Assets>,
+    ) -> Result<Self, &'static str> {
         let navigation = mode != Mode::Scoped;
         if config.get_dbname() != Some("rustday_test") {
             return Err("expected explicit rustday_test database");
@@ -66,12 +84,12 @@ impl Host {
         let listener = server.clone();
         let config = config.clone();
         let worker = thread::spawn(move || {
-            let mut sessions = browser_session::Sessions::new(port);
+            let mut sessions = web_session::Sessions::new(port);
             while let Ok(mut req) = listener.recv() {
-                let wrong_host = mode == Mode::Preview && !sessions.authority_matches(&req);
-                if mode == Mode::Preview
-                    && !wrong_host
-                    && let Some(response) = preview::asset(&req)
+                let wrong_host = mode == Mode::Web && !sessions.authority_matches(&req);
+                if !wrong_host
+                    && let Some(assets) = &web
+                    && let Some(response) = assets.response(&req)
                 {
                     let _ = req.respond(response);
                     continue;
@@ -80,14 +98,17 @@ impl Host {
                 let mut cookie = None;
                 let result = if wrong_host {
                     Err(403)
-                } else if let Some(route) = path.strip_prefix(browser_session::PREFIX) {
-                    if mode != Mode::Preview {
+                } else if let Some(route) = path
+                    .strip_prefix(web_session::PREFIX)
+                    .filter(|route| route.is_empty() || route.starts_with('/'))
+                {
+                    if mode != Mode::Web {
                         Err(404)
                     } else {
                         sessions.dispatch(&mut req, route, &config, &mut db, board, &mut cookie)
                     }
                 } else if req.headers().iter().any(|h| {
-                    h.field.equiv("Boardcraft-Preview")
+                    h.field.equiv("Boardcraft-Web")
                         || h.field.equiv("Origin")
                         || h.field.equiv("Cookie")
                         || (h.field.equiv("Sec-Fetch-Mode") && path == "/session")
@@ -200,7 +221,7 @@ fn wire(row: StoredItem) -> SavedItem {
 fn session(config: &Config, db: &mut Client, req: &mut Request) -> Result<Vec<u8>, u16> {
     match req.method() {
         Method::Post => {
-            if browser_session::one(req, "Authorization")?.is_some() {
+            if web_session::one(req, "Authorization")?.is_some() {
                 return Err(403);
             }
             let token = login(config, req)?;
@@ -212,7 +233,7 @@ fn session(config: &Config, db: &mut Client, req: &mut Request) -> Result<Vec<u8
 }
 
 fn login(config: &Config, req: &mut Request) -> Result<Token, u16> {
-    if browser_session::one(req, "Content-Type")?.and_then(|v| v.split(';').next())
+    if web_session::one(req, "Content-Type")?.and_then(|v| v.split(';').next())
         != Some("application/json")
     {
         return Err(415);
@@ -507,7 +528,7 @@ fn handle(
             (board, ScopedRename, Some(id))
         }
         (Method::Put, ["", "navigation", "boards", board, "items", id, "name"])
-            if mode == Mode::Preview =>
+            if mode == Mode::Web =>
         {
             (board, SelectedWrite, Some(id))
         }
@@ -887,7 +908,7 @@ fn handle(
         500u16
     })?;
     let hint = matches!(operation, ScopedRead)
-        || ((mode == Mode::Preview || revision.is_some()) && matches!(operation, SelectedRead));
+        || ((mode == Mode::Web || revision.is_some()) && matches!(operation, SelectedRead));
     Ok((
         body,
         hint.then_some(ReadMetadata {
@@ -1031,7 +1052,7 @@ fn read_json_limit<T: serde::de::DeserializeOwned>(
     req: &mut Request,
     limit: u64,
 ) -> Result<T, u16> {
-    if browser_session::one(req, "Content-Type")?.and_then(|v| v.split(';').next())
+    if web_session::one(req, "Content-Type")?.and_then(|v| v.split(';').next())
         != Some("application/json")
     {
         return Err(415);

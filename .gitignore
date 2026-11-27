@@ -3,6 +3,8 @@
 /.boardcraft/
 /.rustday/
 /.private/
+/plan/
+/.opencode/opencode.jsonc
 /LOCAL-REFERENCE.md
 .env
 .env.*

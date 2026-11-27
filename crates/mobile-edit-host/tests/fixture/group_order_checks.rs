@@ -10,7 +10,7 @@ use boardcraft_mobile_edit_host::Host;
 use serde_json::{Value, json};
 
 fn path() -> String {
-    format!("/preview/api/navigation/boards/{SELECTED}/group-order")
+    format!("/web/api/navigation/boards/{SELECTED}/group-order")
 }
 fn order(revision: i64, ids: &[&str]) -> Value {
     json!({"board_revision":revision,"group_ids":ids})
@@ -25,7 +25,7 @@ pub fn access() {
     for (method, route, status) in [
         ("PUT", p.clone(), 404),
         ("POST", p.replace("/navigation/boards", "/boards"), 404),
-        ("POST", p.replace("/preview/api", ""), 403),
+        ("POST", p.replace("/web/api", ""), 403),
         (
             "POST",
             p.replace(&SELECTED.to_string(), &HIDDEN.to_string()),
@@ -87,7 +87,7 @@ pub fn permutations() {
     assert_eq!(Snapshot::read(&c.f), s);
     db.batch_execute("DROP TRIGGER refuse_edit ON board_groups")
         .unwrap();
-    let peer = Host::start_preview(&c.f.schema.config, BoardId::new(c.f.board).unwrap()).unwrap();
+    let peer = Host::start_web_api(&c.f.schema.config, BoardId::new(c.f.board).unwrap()).unwrap();
     let pair = login(peer.port, "reader", &c.password);
     let barrier = std::sync::Barrier::new(2);
     let statuses = std::thread::scope(|scope| {

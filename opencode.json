@@ -15,7 +15,8 @@
   },
   "policies": [
     { "action": "mcp.use", "resource": "*", "effect": "deny" },
-    { "action": "mcp.use", "resource": "context7", "effect": "allow" }
+    { "action": "mcp.use", "resource": "context7", "effect": "allow" },
+    { "action": "mcp.use", "resource": "windows-computer-use", "effect": "allow" }
   ],
   "permissions": [
     { "action": "external_directory", "resource": "*", "effect": "deny" },

@@ -20,18 +20,10 @@ uuid = { version = "1", features = ["v4"] }
 ring = "0.17"
 tempfile = "3"
 wait-timeout = "0.2"
+rpassword.workspace = true
 
 [features]
 android-smoke = []
-browser-smoke = []
-
-[[test]]
-name = "browser_preview"
-required-features = ["browser-smoke"]
-
-[[example]]
-name = "browser_board_preview"
-required-features = ["browser-smoke"]
 
 [[test]]
 name = "android_emulator_edit"

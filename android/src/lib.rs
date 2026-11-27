@@ -1,7 +1,11 @@
+#![cfg(target_os = "android")]
+
 mod connection;
 mod login;
 mod navigation;
 mod session;
+mod session_record;
+mod session_store;
 
 use boardcraft_mobile_edit_client::{EditClient, EditError, NameEdit, SavedItem};
 use connection::{Connection, launch_connection};

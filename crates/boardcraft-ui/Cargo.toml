@@ -5,4 +5,5 @@ edition = "2024"
 publish = false
 
 [dependencies]
-gpui-kit = "=0.11.0"
+gpui-kit.workspace = true
+web-time = "1.1"

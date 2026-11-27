@@ -1,15 +1,19 @@
 # Local development
 
-Run commands from the boardcraft checkout. On Windows use x64 MSVC Rust (tested with 1.100), Visual Studio's **Desktop development with C++** workload and a Windows SDK, CMake, Node 22+, OpenCode v2.2.3+ and PostgreSQL 17 client/server binaries. Install Rust via [rustup](https://rustup.rs/) and `rustup component add rustfmt clippy`. The browser client (packets 53–57) additionally needs the `wasm32-unknown-unknown` target, a `wasm-bindgen-cli` matching the locked release, and Trunk ([decision](web-client-stack.md)). For other platforms see [Kit's native prerequisites](https://github.com/longbridge/gpui-kit/blob/v0.11.0/website/docs/installation.md).
+Run commands from the checkout root. On Windows use x64 MSVC Rust, Visual Studio's **Desktop development with C++** workload, a Windows SDK and CMake. Install Cargo via [rustup](https://rustup.rs/) and add `rustfmt` and `clippy`. Preparing the workspace uses Git, tar and (on a cache miss) curl. Database journeys need PostgreSQL 17 client/server binaries. Only queue dispatch requires OpenCode with a configured provider. See [browser viewer](#browser-viewer) for the web toolchain.
+
+`dev -- PROGRAM [ARG...]` prepares the workspace dependency and runs one child with the configured tool paths. On Windows, `postgres exec -- PROGRAM [ARG...]` also starts or reuses the local cluster and gives that child the disposable database URL. Neither changes the calling shell. For the examples below, define these PowerShell shortcuts once, or use their full Cargo commands:
 
 ```powershell
-. .\scripts\dev.ps1               # activate tools in this PowerShell
-& .\scripts\postgres.ps1 start    # start/reuse the test cluster; export URL
-cargo build --locked -p boardcraft-desktop
-$board = cargo run --locked -p boardcraft-desktop --example seed_board
+function bc { cargo run --locked --manifest-path tools/Cargo.toml -- @args }
+function bcdb { bc postgres exec -- @args }
+bc dev -- cargo build --locked -p boardcraft-desktop
+$board = bcdb cargo run --locked -p boardcraft-desktop --example seed_board
 $env:BOARDCRAFT_LOCAL_ACTOR = [guid]::NewGuid().ToString() # once per synthetic actor; reuse on reopen
-cargo run --locked -p boardcraft-desktop -- $board
+bcdb cargo run --locked -p boardcraft-desktop -- $board
 ```
+
+Only Computer Use and GPUI Kit tests verify UI. Use Computer Use for the live steps below; record the action and visible outcome. If an essential step cannot be observed, keep it pending. Builds, host requests and independent database reads answer different questions.
 
 ### Windows inline edit acceptance
 
@@ -44,14 +48,12 @@ To check an **unsubmitted** draft, reuse the same actor, board and directory. Do
 Run the ordinary native acceptance tests serially in a graphical Windows session. They exclude the two board-link clipboard journeys:
 
 ```powershell
-. .\scripts\dev.ps1
-& .\scripts\postgres.ps1 start
-cargo test --locked -p boardcraft-desktop --features native-smoke --test windows_smoke -- --test-threads=1 --nocapture
+bcdb cargo test --locked -p boardcraft-desktop --features native-smoke --test windows_smoke -- --test-threads=1 --nocapture
 ```
 
 The board-link journeys replace the system clipboard and paste through Kit inputs. Run them only in a dedicated graphical session with a fixture-only clipboard or during an agreed foreground and clipboard handoff for that run. Do not inspect or save previous clipboard contents. With that setup, use `cargo test --locked -p boardcraft-desktop --features attended-clipboard --test windows_smoke -- board_link --ignored --test-threads=1`.
 
-The five developer [`windows_smoke`](../crates/desktop/tests/windows_smoke.rs) cases create two `Review` rows (IDs 42 and 17) in a fresh `rustday_test` schema. The [in-app driver](../crates/desktop/src/native_smoke.rs) dispatches pointer and keyboard events to the displayed controls. It waits for the parent to check both IDs, order, spelling and revisions on a fresh connection before advancing. A submission count distinguishes an unchanged exit from a no-op transaction. The recovery case rejects `Coral` with a fixture-only constraint, removes it and locks the second row. While `Saving…` is visible the display includes the submitted padding and the stored title is still `Review`. The reopen case checks the committed spelling in a second process. The connected login case instead starts the shared loopback host with `Review sketch` and `Ink`; the parent checks the session count, account and board independently. Normal builds exclude the drivers. This checks GPUI event routing and frames, not physical device input or pixel fidelity.
+The existing [`windows_smoke`](../crates/desktop/tests/windows_smoke.rs) tests exercise pointer and keyboard events on Kit controls. The name-edit fixture has two `Review` rows (IDs 42 and 17); fresh database connections check their identity, order, spelling and revisions. Submission counts distinguish an unchanged exit from a no-op transaction. These checks cover GPUI event routing, not physical input or pixel fidelity.
 
 For a manual check, the `seed_board` example above creates a **new** synthetic board containing two rows titled `Review` and prints its UUID. To reopen, reuse `$board`; do not rerun the seed command.
 
@@ -59,7 +61,7 @@ For a manual check, the `seed_board` example above creates a **new** synthetic b
 2. Double-click the second `Review`. Replace it with ` Review artwork `, including the surrounding spaces, and press Enter. Check that the editor closes and the row shows `Saved` and `Review artwork` without the spaces. A fast commit may make `Saving…` too brief to observe; record only what you see.
 3. Close the window normally. Run the desktop command again with the same `$board`; check that the two rows read `Review`, then `Review artwork`. Close the window before rebuilding on Windows.
 
-With normal tools on PATH the activation script needs no configuration. To place large builds on another drive, create ignored `.private/dev.json` with `toolHome` pointing to a directory containing the rustup `rustup/` and `cargo/` homes. It also places `target/` there. An optional `postgresBin` points to the folder containing `pg_ctl.exe`, `initdb.exe` and `psql.exe`.
+With tools on PATH no configuration file is needed. To place child builds on another drive, create ignored `.private/dev.json` with `toolHome` pointing to a directory containing the rustup `rustup/` and `cargo/` homes. It also places `target/` there unless `CARGO_TARGET_DIR` is set. An optional `postgresBin` points to the folder containing `pg_ctl.exe`, `initdb.exe` and `psql.exe`.
 
 ### Loopback mobile edit service
 
@@ -75,17 +77,26 @@ For multi-board discovery, start `Host::start_with_navigation(config, target)` a
 
 In Windows browse, open a board and choose **Share** for its Board address. **Copy link** copies it to the clipboard. **Open in new window** reads that board independently. A recipient pastes the address into their own browse window and chooses **Open board link**. The connected origin must match and the recipient must already have access. After a denial, they can submit the same address again if access changes.
 
-### Browser client toolchain (GPUI wasm, packets 53–57)
+### Browser viewer
 
-The JavaScript preview below is transitional; new browser work belongs to `crates/web` and must build for the browser rather than being interpreted. The decided stack is [GPUI on WebAssembly](web-client-stack.md).
+Install the [web crate's pinned nightly and wasm target](../crates/web/rust-toolchain.toml), [Trunk and matching wasm-bindgen](../crates/web/Trunk.toml). Launch the [Rust viewer](../crates/mobile-edit-host/examples/web_board_view.rs) in a terminal:
 
 ```powershell
-rustup target add wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version <locked wasm-bindgen release> --locked
-cargo build --locked -p boardcraft-web --target wasm32-unknown-unknown
+rustup toolchain install nightly-2026-10-31 --target wasm32-unknown-unknown
+cargo install trunk --version 0.22.2 --locked
+cargo install wasm-bindgen-cli --version 0.2.130 --locked
+cargo run --locked --manifest-path tools/Cargo.toml -- viewer
 ```
 
-Trunk serves the generated page during development. The host route ships with cross-origin isolation (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp`) on a secure origin. The shell has one canvas window, embedded fonts and assets, no filesystem and no PostgreSQL client; board reads and writes go through the existing host HTTP routes. Exact versions and commands land with packet 53; do not add a second web build path.
+Choose disposable credentials at the viewer's console prompts. Open its printed loopback URL in your normal browser, sign in and open **Review**. Keep the terminal open while using the board. Press Enter there to stop the host and drop its fixture. After a source change, rerun `viewer` and open the new URL: the host snapshots assets at startup.
+
+For a live check, use Computer Use to rename the second of the two **Review** items, reopen the board and compare both names. Use GPUI Kit tests for control behavior. For authorization, scope, commits and rollback run the existing host tests against the disposable database:
+
+```powershell
+bcdb cargo test --locked -p boardcraft-mobile-edit-host --test loopback_board_access
+```
+
+The `pending` browser outcomes in the [runner inventory](../tools/tests/cutover-gates.tsv) are observations still needed on the current client, not test targets. Do not recreate a browser driver, use OCR or CDP, or substitute another GUI harness. The earlier browser suites are historical.
 
 ### Shared component work
 
@@ -94,64 +105,20 @@ When an interaction is missing, add it to `crates/boardcraft-ui` rather than to 
 ```powershell
 cargo test --locked -p boardcraft-ui
 cargo run --locked -p boardcraft-ui --example heading_drag
-cargo build --locked -p boardcraft-ui --target wasm32-unknown-unknown
+cargo +nightly-2026-10-31 build --locked -p boardcraft-ui --target wasm32-unknown-unknown
 ```
 
 Record the control in [the register](gpui-components.md). Do not embed HTML/CSS/JS/React/TSX, a webview or a DOM overlay to avoid the shared work.
 
-### Browser board preview (transitional JavaScript client)
-
-This client is scheduled for complete removal — assets, routes, feature, example and harness — in packet 57. Its DOM test harness is deleted, not ported. It remains the working browser client only until packets 54–56 pass, and no fallback route or second client is kept afterwards.
-
-With the disposable `rustday_test` database active, run this **opt-in foreground** command:
-
-```powershell
-cargo run --locked -p boardcraft-mobile-edit-host --features browser-smoke --example browser_board_preview
-```
-
-It opens `/preview/` in a new, temporary Chromium profile, enters a generated Viewer's credentials through the actual form, and leaves the signed-in list visible. Close that window to release the browser, profile, host and fixture schema. No password entry or clipboard handoff is needed. Node 22+ and installed Chromium are required. On Windows the driver looks for Edge or Chrome; to select a different installation, set `BOARDCRAFT_CHROMIUM` to its executable path.
-
-For the unattended check, activate the environment, then set the process-local `CARGO_TARGET_DIR` to the separate `target-browser-packets` directory. Run `cargo test --locked -p boardcraft-mobile-edit-host --features browser-smoke --test browser_preview -- --test-threads=1`. Each journey owns its private Chromium pipe and profile. No foreground window is needed.
-
-Reload or open another tab at a board address on the **same preview origin**. A signed-in tab checks the session before requesting that board. **Retry connection** retries an unavailable session check; **Retry destination** rechecks board access. Rejected sessions and acknowledged logout return the tabs to sign-in at their own addresses. A failed logout leaves the list and its Log out action available.
-
-Only the Rust preview holds the account bearer. Relative requests under `/preview/api` use a host-only HttpOnly session cookie and a separate exact-origin IndexedDB binding. Neither half works alone. Another loopback port may receive the cookie, but has a different binding store and preview table. A broadcast contains no session data. A fresh profile with no binding makes no session request. This is a plain HTTP loopback fixture; browser/host restart and HTTPS deployment are outside this workflow.
-
-Click a board link or focus it and press Enter to open `/boards/{uuid}`. A direct visit to that address keeps you there through sign-in and opens the board after session resolution. **Back to boards** opens `/preview/`, even after direct entry. Browser Back and Forward fetch the current list or board again. If access has changed, **Destination unavailable** offers **Retry destination** at the same address. Returning to an empty list shows **No boards**; use **Refresh** after access is restored.
-
-On a selected preview board with edit access, double-click a name or focus it and press F2 or Enter. Escape cancels. Enter or leaving the field submits a changed spelling. A rejected name returns to its accepted spelling: **Retry change** reads the board before submitting the original draft and revision again; **Dismiss** clears the failure. These actions last only for this visit. The browser PUT at `/preview/api/navigation/boards/{board}/items/{item}/name` checks current role, board access and workspace access regardless of the earlier read-time hint.
-
-The browser detail GET returns ordered `{id, name, items}` groups, including empty active groups. The limit is 500 active item rows, counting each empty group as one row. Above it the preview shows **Board too large for this preview** (HTTP 413) instead of partial counts. Native detail reads still return a flat item array. For compatibility, the migration and `create_board` give each flat board one active group with board-local ID `main`, heading `Items`, and position zero. An empty snapshot has an empty section and no item rows.
-
-An Owner can open **New item options → New group of items** and save the default name or enter a name and choose a colour. Escape or Cancel discards the dialog. If the board has changed, **Review latest board**, then **Keep my draft and use this revision**; only **Save group** submits. If the post-commit refresh fails, **Reload board** retries the read.
-
-To edit an active group as Owner, double-click its name, or choose **Rename group** or **Change group colour** from its menu. Explicit Save advances the group and board revisions even if neither field changed. On conflict, review the accepted group by ID, name, colour and revisions before adopting; Save is a separate action. If the group has disappeared, the draft cannot replace another heading. **Reload board** after an uncertain save reads the accepted state without repeating the command.
-
-To move a physical group as Owner, open its heading menu and choose **Move group up** or **Move group down**. The choice saves immediately. If the order changed or the result could not be confirmed, choose **Reload board**, then decide whether to move the group relative to its current neighbour.
-
-On an editable board, type in **Add item to <group>** and press Enter or choose **+ Add item**. Escape clears the draft; leaving the field does not save. A rejected title stays in that group for correction. After a successful create the preview reads the groups again. If the outcome is uncertain, **Retry destination** reads the board without resubmitting the item.
-
-To move an existing row on that board, open **More options** beside its name, choose **Move to**, select the destination group and **Confirm**. A move preserves the item's position and creation time. If saving fails, **Review move** reads the current source and requested destination, including their IDs. **Apply reviewed move** submits once at the reviewed revision; **Dismiss** discards the failed request.
-
-To reorder within a group, drag a row by its grip. After six pixels of travel, the upper or lower half of another row marks where to drop. Escape cancels. A drop keeps the saved order visible until the host commits and the preview reads the group again. If the order cannot be confirmed, **Reload board** reads the current order. Drag again only if a change is still needed.
-
-Members and Viewers can check individual rows, check a group, or Shift-click to extend a selection across groups. **Clear item selection** clears every check but keeps the last ordinary row toggle as the range anchor. Reload clears both. If a selection read fails, the previous checks stay in place; repeat the gesture to retry, or choose **Reload board** if the displayed rows have changed.
-
-To move checked rows, choose **Move to** in **Selected item actions**. Confirm appends the checked rows to the group in selection order, even if some already belong to that group. Escape or Cancel keeps the checks. If another edit wins, choose **Review latest items**, compare the original IDs and revisions, then **Use these revisions and keep my choices**. Confirm separately to save. An unavailable row prevents adoption; a Viewer can select and clear rows but cannot move them.
-
-An Owner with access to the selected board can choose **More options → Archive** on one root and confirm. Open **Archived & deleted content → Archive** to inspect archived items. **Restore item** returns a root to its saved place; an item hidden by its group requires group recovery first. Members and Viewers can inspect the list. On a restore conflict, **Reload recovery list** only reads; click **Restore item** again to submit at the new revision.
-
 ### Android native host
 
-Kit's [v0.11.0 mobile guide](https://github.com/longbridge/gpui-kit/blob/v0.11.0/website/docs/mobile.md) describes limited Android testing of chat controls including Input. Android uses the mobile activity/surface host, not the desktop window entry point. The guide's [example build](https://github.com/longbridge/gpui-mobile/blob/0b882efdac7f524e0bb0b1d4c886b2aa752f9f20/example/build.sh) packages an arm64 Rust library via cargo-ndk and Gradle. Its documented GPUI baseline is 0.3.4; even the [mobile fork revision inspected](https://github.com/longbridge/gpui-mobile/blob/7548ebc4b24f00494af9976af8852c7163ded9ce/Cargo.toml) pins core and Android renderer to 0.3.10. boardcraft's Kit 0.11.0 locks core at **0.3.14**. There is an experimental host, but no demonstrated matching set here.
-
-The [06 frame gate](#android-kit-frame-gate) uses a matching **Android-only** release set. Use build-only packaging and explicit emulator serial selection: the example's install step uses unqualified adb even in emulator mode.
+Android uses Kit `=0.11.0` with the [pinned mobile host and compatibility patch](../android/patches/README.md). A packaged APK is not live UI evidence. The frame, edit, browse and cross-client reopen drivers are retired. For a live check use Computer Use on the visible dedicated emulator; keep authorization and store readbacks separate.
 
 ### Android emulator edit gate
 
 Planning preflight (2026-11-26): the installed API 36.1 x86_64 image booted on a fresh, isolated AVD with WHPX. The Rust target plus NDK r27c API 28 linker produced a runnable Android executable. A temporary read-only caller of the existing `EditClient` read through `adb reverse` to the production 04 host; PostgreSQL independently returned the same two ordered IDs, titles and revisions. The mapping, device probe and schema were removed. This did not exercise a save or any Kit UI.
 
-On Windows, activate `scripts/dev.ps1` and start `scripts/postgres.ps1 start` as above. Install `rustup target add x86_64-linux-android`. Set `ANDROID_HOME` to the SDK with the image and emulator (SDK roots can differ); put **that SDK's** `platform-tools` on PATH. Set `CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER` to the NDK's `toolchains/llvm/prebuilt/windows-x86_64/bin/x86_64-linux-android28-clang.cmd`. NDK and emulator need not be in the same SDK. No cargo-ndk, Gradle, signing or network deployment is needed here. Use the SDK manager with existing licenses only; stop on a new license prompt.
+For the non-UI packet 05 probe, install `rustup target add x86_64-linux-android`. Set `ANDROID_HOME` to the SDK with the image and emulator (SDK roots can differ); put **that SDK's** `platform-tools` on PATH. Set `CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER` to the NDK's `toolchains/llvm/prebuilt/windows-x86_64/bin/x86_64-linux-android28-clang.cmd`. NDK and emulator need not be in the same SDK. No cargo-ndk, Gradle, signing or network deployment is needed here. Use existing licenses only.
 
 Create `Rustday_Edit_X64` **once** in a separate `ANDROID_AVD_HOME` on a volume with space; use the installed x86_64 image, no account or personal data. Example: `avdmanager create avd -n Rustday_Edit_X64 -k "system-images;android-36.1;google_apis_playstore;x86_64"`. Do not overwrite an existing AVD.
 
@@ -168,84 +135,41 @@ if ($LASTEXITCODE) { throw 'Private adb startup failed' }
 Start-Process emulator -ArgumentList '-avd Rustday_Edit_X64 -ports 5682,5683 -no-window -no-audio -no-snapshot -gpu swiftshader_indirect -no-boot-anim'
 ```
 
-Allow up to three minutes for boot. In this same environment, use `adb -s $env:RUSTDAY_ANDROID_SERIAL` for device commands. Check `emu avd name`, `shell getprop sys.boot_completed` and `shell getprop ro.product.cpu.abi` for the exact name, `1` and `x86_64`. Keep both processes running through `node scripts/run.mjs run 1`. Afterwards, confirm the AVD name before issuing `emu kill`, and confirm the private server port and listener ownership before using `adb -P 5039 kill-server`. Never stop the shared daemon.
+Allow up to three minutes for boot. In this same environment, use `adb -s $env:RUSTDAY_ANDROID_SERIAL` for device commands. Check `emu avd name`, `shell getprop sys.boot_completed` and `shell getprop ro.product.cpu.abi` for the exact name, `1` and `x86_64`. Keep both processes running through the probe. Afterwards, confirm the AVD name before issuing `emu kill`, and confirm the private server port and listener ownership before using `adb -P 5039 kill-server`. Never stop the shared daemon.
 
 On Windows, platform-tools 36.0.0 and 37.0.3 both aborted on the second `reverse --no-rebind tcp:0` fixture: the device allocated a new listener, but the server still associated literal `tcp:0` with the first host port. After removing the actual listener and executable, the test checks that there are no remaining mappings, reconnects **only the selected transport**, repeats that emulator's registration on the private loopback server, and revalidates the AVD. No probe is replayed. To capture a server failure, start the private server in a second identically activated shell with `adb -L tcp:5039 nodaemon server` instead of `start-server` and inspect its stderr alongside Windows Application Error events.
 
 Packet 05 commands: the host test signs in a fixture Member with access and pipes its session to each probe via non-PTY stdin. No bearer is in adb arguments, the executable or a device file.
 
 ```powershell
-cargo build --locked -p boardcraft-mobile-edit-client --bin android-edit-probe --target x86_64-linux-android
-cargo test --locked -p boardcraft-mobile-edit-host --features android-smoke --test android_emulator_edit -- --test-threads=1
+bc dev -- cargo build --locked -p boardcraft-mobile-edit-client --bin android-edit-probe --target x86_64-linux-android
+bcdb cargo test --locked -p boardcraft-mobile-edit-host --features android-smoke --test android_emulator_edit -- --test-threads=1
 ```
 
 Use the cross-target debug executable from Cargo's target directory, never a host build. The runner gives each adb preflight 10 seconds and the focused host suite 10 minutes including compilation. The test itself must time out and reap hung adb children, parse successful **device** results, and fail if prerequisites disappear. It must not boot, wipe or stop any emulator. [05 acceptance](../packets/05-android-emulator-edit.md) specifies both journeys.
 
-### Android Kit frame gate
+### Historical Android Kit journeys
 
-Planning experiment (2026-11-26), compiled and installed on `Rustday_Edit_X64`, API 36.1/x86_64:
-
-- With desktop Kit `=0.11.0` and the unmodified [Longbridge mobile host at `7548ebc`](https://github.com/longbridge/gpui-mobile/tree/7548ebc4b24f00494af9976af8852c7163ded9ce), Cargo refused to resolve `gpui-pre` (`=0.3.14` versus `=0.3.10`). Repinning the host alone in scratch built the 0.3.14 WGPU crate but failed at `android/window.rs:1405`: `WgpuContext::new` now requires a surface configuration. Don't repin or downgrade the desktop workspace for 06.
-- An independent scratch `cdylib` using **`gpui-kit = "=0.8.1"`** (`default-features = false`, `features = ["component"]`), unmodified `gpui-pre-mobile` at the above git SHA (`default-features = false`, alias `gpui-mobile`) and `android-activity` 0.6 with `native-activity` resolved **one** core and renderer, both 0.3.10. `cargo build --locked --lib --target x86_64-linux-android` linked. No vendored renderer, upstream demos, fonts or Java screens needed. Keep the Android lockfile and run `cargo fmt --manifest-path android/Cargo.toml -- --check` as well as workspace fmt.
-- The signed x86_64 APK used the system `android.app.NativeActivity` with `android.app.lib_name` set to the cdylib stem. Follow the [upstream Android entry point](https://github.com/longbridge/gpui-mobile/blob/7548ebc4b24f00494af9976af8852c7163ded9ce/example/src/lib.rs#L83-L128): `android_main` initializes `jni::init_platform(&app)` and runs `Application::with_platform` with the shared platform. After `InitWindow`, call `gpui_kit::init`, `cx.open_window` and wrap the view in `component::Root`. The platform owns the native window and WGPU surface; Kit owns the pixels and hit testing.
-- Stock Vulkan initialization crashed in the emulator's `vulkan.ranchu.so` (`vk_common_SetDebugUtilsObjectNameEXT`) with both SwiftShader and host GPU. Disabling debug assertions **only for `wgpu-types`** got past adapter selection on host Vulkan, but first submission crashed in `ResourceTracker::on_vkQueueSubmit`. A successful `am start -W` and “window opened” log preceded failure. They are not frame evidence.
-- **Working configuration:** boot this AVD with `-gpu host` instead of `-gpu swiftshader_indirect`; set `gpui_mobile::android::host::set_gpu_backend(GpuBackend::Gl)` before platform initialization. Tested with `[profile.dev.package.wgpu-types] debug-assertions = false`, native library debug info omitted, debuggable APK. WGPU selected the emulator OpenGL ES translator. Windows OCR read `Native sample` from a fresh `adb -s <serial> exec-out screencap -p`; tapping the Kit button at the recognized position (311,191 on that run) produced `Touch received` in a second capture. **Only the generic button was prototyped**; no board, Input, save or IME acceptance inferred.
-
-Use the [05 private server/AVD procedure](#android-emulator-edit-gate) with the host GPU option above. Windows PowerShell 5.1 with English Windows OCR, JDK, SDK platform `android-35`, build-tools `35.0.0`, NDK r27c and the Rust x86_64 Android target were used. In addition to the 05 linker, set `CC_x86_64_linux_android`, `CXX_x86_64_linux_android` and `AR_x86_64_linux_android` to the NDK's `x86_64-linux-android28-clang.cmd`, `x86_64-linux-android28-clang++.cmd` and `llvm-ar.exe` respectively. Use Cargo metadata's target directory for the `.so`. Package it under `lib/x86_64/` (the simple manifest can set `android:hasCode="false"`, `android:extractNativeLibs="true"`, `android:debuggable="true"`); `aapt package`, `zipalign -P 16` and `apksigner sign` with a local debug key worked without Gradle. Never publish keys or APKs. A fresh checkout must not depend on a scratch clone or developer paths.
-
-Worker build contract: `android/build-debug.ps1 -OutputApk <new absolute path>` must build the locked Rust app from current sources, sign the debug fixture, propagate failures and leave that APK at the requested path. No adb or emulator startup. Test on the already booted, unlocked, exclusive AVD:
-
-```powershell
-node scripts/android-kit-frame.mjs       # build, install, screen → tap → screen, uninstall
-node --test scripts/run.test.mjs        # gate regressions, not emulator evidence
-```
-
-The [frame gate](../scripts/android-kit-frame.mjs) checks package ID/ABI/debug flag before install and refuses to replace an existing package. It observes the foreground activity, captures PNG bytes directly, recognizes ordered text and derives touch coordinates from the first frame. It fails on missing frames, wrong order, stale frames and timeouts. Do not use a static screenshot or draw a second copy of the Input value for OCR. Keep observed strings legible and away from the system bars. Keyboard and lifecycle need their own checks; in particular the mobile host [documents the NativeActivity recreation limitation and host-driven alternative](https://github.com/longbridge/gpui-mobile/blob/7548ebc4b24f00494af9976af8852c7163ded9ce/src/android/host.rs#L1-L51). If blocked on another renderer/driver, preserve the error, package/version tuple and actual last frame; independent source work is the Windows display-to-editor transition (double-click/F2 → draft → Escape restores the accepted name, no revision change). Do not pass 06 with that separate interaction.
-
-### Android Kit edit gate
-
-Connected launches supply only the board UUID and loopback port. The driver generates a fixture password in memory, sends it to `kit_edit_fixture` on stdin before startup JSON, and enters it through the masked Kit input. The `rejected` and `signed-in` checkpoints verify zero and one sessions respectively, along with both original rows. A cold launch resolves the stored session for that port. The no-arguments frame gate needs no credentials or host.
-
-Use the frame gate's dedicated AVD and host GPU setup, with `rustday_test` active in the operator shell. Use a JDK with `javac --release 8` support. The build packages the Keystore helper and `GpuiInputActivity.java` from the locked mobile host checkout alongside the Rust library. The activity's transparent input connection forwards keyboard edits to the focused GPUI handler.
-
-```powershell
-node scripts/android-kit-frame.mjs       # no extras: original offline fixture
-node --test scripts/run.test.mjs
-node scripts/android-kit-edit.mjs        # live Kit input and independent store readbacks
-node scripts/android-kit-edit.mjs --logout # disconnect, edit after failure, log out and sign in again
-node scripts/android-kit-edit.mjs --browse # authenticated board taps, Android Back and stale membership
-```
-
-The edit gate starts [`kit_edit_fixture`](../crates/mobile-edit-host/examples/kit_edit_fixture.rs) against a fresh schema. Only a board UUID and reversed loopback port go into the activity intent. The fixture's stdin replies reflect new store connections; EOF stops the host and drops the schema. Record the live gate outcomes in the handoff before runner verification.
-
-For the board picker, the driver passes `-a dev.boardcraft.BROWSE --ei port <port>` instead. It uses a navigation-enabled host, signs in through the same masked Kit input and checks each selected board's displayed rows against independent store reads. Passing a board UUID with the browse action is invalid. A port alone without that action is not a browse request.
-
-### Cross-client reopen gate
-
-Run `node scripts/cross-client-reopen.mjs` in a graphical Windows session with the Android Kit edit prerequisites above. The gate continues the live edit on the same fixture: it backgrounds and resumes the unsaved `Amber` editor, opens the Windows binary with `--smoke-delivery` and the fixture schema, then force-stops and reopens the Android package. The Windows driver reports the two visible name button labels with their bound IDs and checks that neither editor is mounted; `saved` readbacks check the committed titles and revisions separately.
-
-For packet 17, `node scripts/cross-client-reopen.mjs --restore` checks new Android processes on two device ports, the retry-only screen after disconnection, and offline cold launches after rejection and logout. The ordinary delivery journey revokes its session before testing cold reauthentication. Both use fresh PostgreSQL connections for the accepted rows; the restore checkpoints compare the session verifier in memory.
-
-For a storage fault check, use a separate disposable install on the dedicated AVD. With the process stopped, truncate only the selected origin's synthetic record in `no_backup` without displaying its contents. Relaunch: expect `Could not read stored session` and `Retry storage`, with no board or login form. An unreadable record should give the same result; removing it and tapping `Retry storage` should show identifier entry without contacting the host. Do not use this fault injection during the continuity gate.
+The [frame](../handoffs/06-android-kit-frame.json), [edit](../handoffs/07-android-kit-edit.json) and [cross-client reopen](../handoffs/08-cross-client-reopen.json) handoffs describe earlier runs. For current acceptance, use Computer Use to observe the second item's editor, blank-name rejection, correction and save, then compare the resumed draft and the cold-reopened board with independent stored rows. A headless device probe cannot verify any of these screens.
 
 ### Disposable PostgreSQL
 
 The product rename does not migrate PostgreSQL. Keep the existing cluster path, `rustday_admin` and `rustday_test` roles, database name and `RUSTDAY_TEST_DATABASE_URL`. The `rustday_migrations` table and `rustday.board.migrations` advisory lock are shared with earlier binaries so they see the same applied versions and serialize migrations. Do not create a second cluster or rename these identifiers. The ignored `.private/dev.json` tool settings are unchanged. Historical handoffs keep the command and package names actually tested at the time.
 
-The helper uses `127.0.0.1:55437`, `%LOCALAPPDATA%\Rustday\postgres-dev`, SCRAM authentication and a non-superuser test login. It prints the connected database and role, never the URL. Rerun `start` in each fresh shell to export `RUSTDAY_TEST_DATABASE_URL`. Use `& .\scripts\postgres.ps1 stop` when done; stopping preserves data. On startup failure inspect `server.log` in the cluster directory rather than deleting data or stopping another server. On other platforms supply the URL of a dedicated disposable PostgreSQL database directly.
+The helper uses `127.0.0.1:55437`, `%LOCALAPPDATA%\Rustday\postgres-dev`, SCRAM authentication and a non-superuser test login. Use `bcdb` to pass the database URL to the child and `bc postgres stop` when done; stopping preserves data. On startup failure inspect `server.log` in the cluster directory rather than deleting data or stopping another server. On other platforms supply the URL of a dedicated disposable PostgreSQL database directly.
 
 The persistence test requires `RUSTDAY_TEST_DATABASE_URL` to explicitly name the dedicated `rustday_test` database. Its login must be able to create a schema. Each run uses a fresh schema and drops it on success; no fallback URL is used.
 
 ```powershell
-cargo test --locked --workspace --test postgres_board
+bcdb cargo test --locked --workspace --test postgres_board
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo test --locked --workspace
-node --test scripts/run.test.mjs
-node scripts/run.mjs status
+bcdb cargo test --locked --workspace
+cargo test --locked --manifest-path tools/Cargo.toml
+bc status
 ```
 
-Start one feature session with `node scripts/run.mjs run 1` in the activated shell. The [runner guide](../README.md#run-the-migration) explains restarts.
+Start one feature session with `bcdb cargo run --locked --manifest-path tools/Cargo.toml -- run 1`. The [runner guide](../README.md#run-the-queue) explains restarts.
 
 ## Change size
 

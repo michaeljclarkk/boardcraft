@@ -17,7 +17,7 @@ fn owner() -> Case {
     c
 }
 fn board() -> String {
-    format!("/preview/api/navigation/boards/{SELECTED}")
+    format!("/web/api/navigation/boards/{SELECTED}")
 }
 fn path(id: &str, action: &str) -> String {
     format!("{}/groups/{id}/{action}", board())
@@ -80,7 +80,7 @@ pub fn access() {
         );
         check(&c, &s, true, true);
         rejected(
-            c.request(Some(&c.pair), m, &p.replace("/preview/api", ""), &draft),
+            c.request(Some(&c.pair), m, &p.replace("/web/api", ""), &draft),
             403,
         );
         check(&c, &s, true, true);
@@ -153,7 +153,7 @@ pub fn round_trip() {
             &json!({"board_revision":b}),
         )
     };
-    let rival = boardcraft_mobile_edit_host::Host::start_preview(
+    let rival = boardcraft_mobile_edit_host::Host::start_web_api(
         &c.f.schema.config,
         BoardId::new(c.f.board).unwrap(),
     )

@@ -1,0 +1,154 @@
+13	account_session::rejected_credentials_then_sign_in
+13	account_session::resolve_retry_and_revoke
+5,15-17	adb -s emulator-5582 emu avd name
+5,15-17	adb -s emulator-5582 shell getprop ro.product.cpu.abi
+5,15-17	adb -s emulator-5582 shell getprop sys.boot_completed
+5,15-17	android_emulator_edit::emulator_reject_then_correct
+5,15-17	android_emulator_edit::emulator_rename_then_reopen
+25-26	board address::connected::board_link::tests::only_a_canonical_board_at_the_connected_origin
+38-43,51-52,55-56	pending::browser_archives_and_restores_one_group
+37-43,51-52,55-56	pending::browser_archives_and_restores_one_root
+51-52,55-56	pending::browser_archives_selected_roots
+42-43,51-52,55-56	pending::browser_cancels_group_heading_drag
+43,51-52,55-56	pending::browser_collapses_all_and_preserves_order
+43,51-52,55-56	pending::browser_collapses_physical_groups_by_id
+39-43,51-52,55-56	pending::browser_creates_duplicate_group_in_position_order
+32-43,51-52,55-56	pending::browser_creates_item_in_selected_group
+52,55-56	pending::browser_deletes_and_restores_board_roots
+37-43,51-52,55-56	pending::browser_demoted_member_cannot_restore_root
+39-43,51-52,55-56	pending::browser_demoted_owner_cannot_create_group
+40-43,51-52,55-56	pending::browser_demoted_owner_cannot_edit_group
+41-43,51-52,55-56	pending::browser_demoted_owner_cannot_reorder_groups
+38-43,51-52,55-56	pending::browser_demoted_owner_cannot_restore_group
+32-43,51-52,55-56	pending::browser_demoted_viewer_cannot_create_item
+33-43,51-52,55-56	pending::browser_demoted_viewer_cannot_move_item
+36-43,51-52,55-56	pending::browser_demoted_viewer_cannot_move_selection
+29-43,51-52,54-56	pending::browser_demoted_viewer_cannot_rename
+34-43,51-52,55-56	pending::browser_demoted_viewer_cannot_reorder
+28-43,51-52,54-56	pending::browser_direct_board_survives_sign_in
+42-43,51-52,55-56	pending::browser_drags_group_across_sections
+40-43,51-52,55-56	pending::browser_edits_existing_group_by_id
+26-43,51-52,54-56	pending::browser_empty_unavailable_then_retry
+34-43,51-52,55-56	pending::browser_failed_reorder_rolls_back_then_redrags
+31-43,51-52,55-56	pending::browser_grouped_board_rechecks_membership
+28-43,51-52,54-56	pending::browser_history_rechecks_board_access
+29-43,51-52,54-56	pending::browser_member_recovers_selected_name
+41-43,51-52,55-56	pending::browser_moves_group_one_place_from_menu
+33-43,51-52,55-56	pending::browser_moves_item_by_group_id
+36-43,51-52,55-56	pending::browser_moves_toolbar_selection_in_request_order
+31-43,51-52,55-56	pending::browser_opens_and_edits_grouped_board
+27-43,51-52,54-56	pending::browser_opens_selected_board_by_id
+38-43,51-52,55-56	pending::browser_recovers_failed_group_lifecycle
+37-43,51-52,55-56	pending::browser_recovers_failed_root_lifecycle
+42-43,51-52,55-56	pending::browser_recovers_group_drag_after_refusal
+43,51-52,55-56	pending::browser_recovers_group_presentation_save
+26-43,51-52,54-56	pending::browser_reject_correct_list_logout
+30-43,51-52,54-56	pending::browser_reload_and_independent_tab_resume
+41-43,51-52,55-56	pending::browser_reloads_order_before_moving_group_again
+34-43,51-52,55-56	pending::browser_reorders_duplicate_rows_by_pointer
+40-43,51-52,55-56	pending::browser_reviews_conflicting_group_edit
+36-43,51-52,55-56	pending::browser_reviews_conflicting_selection_move
+39-43,51-52,55-56	pending::browser_reviews_failed_group_create
+33-43,51-52,55-56	pending::browser_reviews_failed_group_move
+27-43,51-52,54-56	pending::browser_revoked_membership_blocks_selection
+42-43,51-52,55-56	pending::browser_scrolls_to_group_drop_target
+35-43,51-52,55-56	pending::browser_selects_duplicate_rows_and_groups
+35-43,51-52,55-56	pending::browser_shift_selects_roots_across_groups
+30-43,51-52,54-56	pending::browser_unavailable_then_rejected_resume
+43,51-52,55-56	pending::browser_viewer_temporarily_expands_groups
+53	pending::shell_session_resolve_retry_and_rejection
+3	pending::desktop_save_close_and_reopen
+6-10,15-17,24	pending::live_android_kit_journey
+25-26	pending::attended_clipboard_share_and_open
+26-43,51-56	cargo +nightly-2026-10-31 build --locked --target wasm32-unknown-unknown -p boardcraft-ui -p boardcraft-web
+3,10	cargo build --locked --workspace --bins
+5,15-17	cargo build --locked -p boardcraft-mobile-edit-client --bin android-edit-probe --target x86_64-linux-android
+1-56	cargo fmt --all -- --check
+6-10,15-17,24	cargo fmt --manifest-path android/Cargo.toml -- --check
+7-12,15-56	cargo test --locked --manifest-path tools/Cargo.toml
+7-12,15-56	cargo test --locked --manifest-path tools/android/Cargo.toml
+1-10,13-17,20-56	cargo test --locked --workspace
+13	cargo test --locked --workspace --test account_session
+1	cargo test --locked --workspace --test board_edit
+3	cargo test --locked --workspace --test desktop_edit
+14-17,20-56	cargo test --locked --workspace --test loopback_board_access
+4	cargo test --locked --workspace --test mobile_edit_service
+2	cargo test --locked --workspace --test postgres_board
+11-12,18-19	cargo test --locked -p boardcraft-desktop
+25-26	cargo test --locked -p boardcraft-desktop --bin boardcraft-desktop connected::board_link::tests::only_a_canonical_board_at_the_connected_origin -- --exact
+8,15-17	cargo test --locked -p boardcraft-desktop --features native-smoke --test windows_smoke
+9-12,18-26,44-52	cargo test --locked -p boardcraft-desktop --features native-smoke --test windows_smoke -- --test-threads=1
+5,15-17	cargo test --locked -p boardcraft-mobile-edit-host --features android-smoke --test android_emulator_edit -- --test-threads=1
+15-17	loopback_board_access::connected_member_sign_in_reject_then_correct
+17	loopback_board_access::stored_bearer_reopens_only_while_authorized
+16-17,21-52,54-56	loopback_board_access::explicit_logout_isolates_sessions
+31-43,51-52,55-56	loopback_board_access::group_migration_preserves_flat_boards
+22-52,54-56	loopback_board_access::list_visible_boards_in_navigation_order
+14,20-52,54-56	loopback_board_access::member_edits_within_scope
+47-52,55-56	loopback_board_access::native_board_archive_checks_access_and_scope
+48-52,55-56	loopback_board_access::native_group_fields_check_current_owner
+49-52,55-56	loopback_board_access::native_group_order_checks_current_owner
+45-52,55-56	loopback_board_access::native_grouped_item_entry_checks_current_access
+44-52,55-56	loopback_board_access::native_main_table_resolves_current_access
+46-52,55-56	loopback_board_access::native_selection_move_checks_access_and_order
+50-52,55-56	loopback_board_access::native_single_root_placement_checks_access
+30-43,51-56	loopback_board_access::web_browser_session_is_origin_bound
+32-43,51-52,55-56	loopback_board_access::web_create_is_atomic_and_replay_safe
+32-43,51-52,55-56	loopback_board_access::web_create_requires_current_group_access
+28-43,51-52,54-56	loopback_board_access::web_transport_preserves_scoped_native_api
+43,51-52,55-56	loopback_board_access::web_group_collapse_checks_view_revision_and_scope
+43,51-52,55-56	loopback_board_access::web_group_collapse_requires_write_access_and_commit
+39-43,51-52,55-56	loopback_board_access::web_group_create_preserves_identity_and_order
+39-43,51-52,55-56	loopback_board_access::web_group_create_requires_current_owner
+40-43,51-52,55-56	loopback_board_access::web_group_edit_checks_both_revisions_and_preserves_children
+40-43,51-52,55-56	loopback_board_access::web_group_edit_requires_current_owner
+38-43,51-52,55-56	loopback_board_access::web_group_lifecycle_preserves_children_and_order
+38-43,51-52,55-56	loopback_board_access::web_group_lifecycle_requires_current_owner
+41-43,51-52,55-56	loopback_board_access::web_group_reorder_checks_active_permutation_and_commit
+41-43,51-52,55-56	loopback_board_access::web_group_reorder_requires_current_owner
+31-43,51-52,55-56	loopback_board_access::web_groups_require_active_membership
+33-43,51-52,55-56	loopback_board_access::web_move_checks_group_revision_and_order
+33-43,51-52,55-56	loopback_board_access::web_move_requires_current_group_access
+34-43,51-52,55-56	loopback_board_access::web_reorder_checks_revisions_and_replay
+34-43,51-52,55-56	loopback_board_access::web_reorder_requires_current_access_and_anchor
+37-43,51-52,55-56	loopback_board_access::web_root_lifecycle_preserves_visibility_and_replay
+37-43,51-52,55-56	loopback_board_access::web_root_lifecycle_requires_current_owner
+29-43,51-52,54-56	loopback_board_access::web_selected_rename_requires_current_access
+36-43,51-52,55-56	loopback_board_access::web_selection_move_is_atomic_and_replay_safe
+36-43,51-52,55-56	loopback_board_access::web_selection_move_requires_current_access_and_valid_roots
+23-52,54-56	loopback_board_access::selected_board_read_checks_current_membership
+51-52,55-56	loopback_board_access::selected_root_archive_is_atomic_and_authorized
+52,55-56	loopback_board_access::selected_root_trash_is_atomic_and_authorized
+14,20-52,54-56	loopback_board_access::viewer_reads_but_cannot_rename
+22-52,54-56	loopback_board_access::workspace_membership_changes_refresh_list_and_access
+4	mobile_edit_service::reject_then_retry
+4	mobile_edit_service::rename_then_reconnect
+21-26,44-52	windows_smoke::configured_logout_failure_then_retry
+20-26,44-52	windows_smoke::connected_member_renames_then_reopens
+20-26,44-52	windows_smoke::connected_viewer_cannot_rename
+9-12,18-26,44-52	windows_smoke::display_edit_cancel_blur_and_enter
+11-12,18-26,44-52	windows_smoke::failed_name_reopens_only_for_actor_and_board
+21-26,44-52	windows_smoke::interactive_viewer_logs_out
+23-26,44-52	windows_smoke::opens_selected_board_by_id
+10-12,18-26,44-52	windows_smoke::parent_failure_retry_dismiss_and_commit
+9-12,18-26,44-52	windows_smoke::rejected_edit_then_save_close_and_reopen
+23-26,44-52	windows_smoke::revoked_membership_blocks_board_selection
+12,18-26,44-52	windows_smoke::unsubmitted_name_reopens_with_entry_baseline
+47-52	windows_smoke::windows_archives_and_restores_board_content
+51-52	windows_smoke::windows_archives_selected_roots
+48-52	windows_smoke::windows_creates_and_edits_group_fields
+45-52	windows_smoke::windows_creates_and_renames_grouped_root
+52	windows_smoke::windows_deletes_and_restores_board_roots
+19-26,44-52	windows_smoke::windows_env_session_is_origin_scoped
+18-26,44-52	windows_smoke::windows_login_reject_retry
+50-52	windows_smoke::windows_moves_and_reorders_single_roots
+46-52	windows_smoke::windows_moves_selected_roots_to_group
+44-52	windows_smoke::windows_opens_and_folds_main_table
+47-52	windows_smoke::windows_recovers_board_archive
+48-52	windows_smoke::windows_recovers_group_fields
+49-52	windows_smoke::windows_recovers_group_reorder
+45-52	windows_smoke::windows_recovers_grouped_item_entry
+44-52	windows_smoke::windows_recovers_main_table_fold
+50-52	windows_smoke::windows_recovers_single_root_placement
+49-52	windows_smoke::windows_reorders_physical_groups
+46-52	windows_smoke::windows_reviews_selected_move

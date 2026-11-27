@@ -1,6 +1,6 @@
 # 57-delete-js-preview
 
-Completely remove the JavaScript browser preview after packets 54–56 pass. The end state is one browser client: the GPUI wasm shell in `crates/web`. There is no fallback route, feature flag, redirect, parallel page or temporary second client after this packet.
+Keep one browser client: the GPUI wasm shell in `crates/web`. Removal of the JavaScript preview from the checkout does not verify the replacement workflows in packets 53–56.
 
 **Remove every part of the preview.**
 
@@ -18,13 +18,4 @@ Completely remove the JavaScript browser preview after packets 54–56 pass. The
 - Migrate host-contract tests that currently use `Host::start_preview` or `/preview/api` to the wasm client's route. Rename `preview_*` tests to the client or operation they cover; do not delete their coverage.
 - Keep the minimal Trunk bootstrap page and `wasm-bindgen` glue for `crates/web`; neither contains product logic.
 
-**Blocked, not dual.** If a workflow cannot be verified on the wasm client, the packet stays blocked and the migration stays incomplete. Do not keep the preview as a permanent second client, do not hide it behind a flag and do not redirect the old route to keep it alive. The preview may remain only while the packet is blocked; it is never an accepted end state.
-
-**Runner gate.** The `browser_preview` gate in `scripts/run.mjs` and its cases in `scripts/run.test.mjs` are coordinator-owned. They must be retired or rewired in the same milestone. A worker packet must not edit the runner.
-
-**Required gates** (planned, not passing evidence):
-
-- `preview_is_completely_removed`: repository search finds no `Mode::Preview`, `start_preview`, `browser-smoke`, `browser_preview`, `browser_board_preview`, `/preview` route, `src/preview` asset or DOM harness. A remaining `preview_*` name is a migrated test with new semantics, not the old client.
-- `no_hand_written_browser_app_javascript`: no product JavaScript exists outside the generated wasm bootstrap and `wasm-bindgen` glue.
-- `web_browser_suite_passes_after_deletion`: the full wasm browser suite runs against the host with independent reads.
-- `workspace_and_native_suites_unchanged`: locked workspace checks, desktop and Android suites still pass.
+**Acceptance.** Check the active source and build wiring for removal; leave historical packet IDs and handoffs alone. Keep the locked workspace, GPUI Kit and non-UI host/store checks. Launch the [normal viewer](../docs/development.md#browser-viewer), try the `/web/` client with Computer Use and record the actual visible outcomes, including after rebuilding and restarting the host. Keep captures local and credential-free. Without observations for the required journeys, leave acceptance pending. Do not restore a driver or the preview to close the packet.

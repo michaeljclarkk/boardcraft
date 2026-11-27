@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 fn path(item: u128) -> String {
     format!(
-        "/preview/api/navigation/boards/{SELECTED}/items/{}/reorder",
+        "/web/api/navigation/boards/{SELECTED}/items/{}/reorder",
         Uuid::from_u128(item)
     )
 }
@@ -78,7 +78,7 @@ pub fn access() {
             c.f.board,
             Uuid::from_u128(17)
         );
-        for route in [full.strip_prefix("/preview/api").unwrap(), &scoped, &full] {
+        for route in [full.strip_prefix("/web/api").unwrap(), &scoped, &full] {
             if port == c.host.port && route == full {
                 continue;
             }
@@ -101,7 +101,7 @@ pub fn access() {
         c.request(
             Some(&c.pair),
             "GET",
-            &format!("/preview/api/navigation/boards/{SELECTED}"),
+            &format!("/web/api/navigation/boards/{SELECTED}"),
             &Value::Null
         )
         .status,
@@ -128,7 +128,7 @@ pub fn revision_and_replay() {
     let c = Case::new();
     reorder_state::seed(&c.f, c.member);
     let initial = Snapshot::read(&c.f);
-    let second = Host::start_preview(&c.f.schema.config, BoardId::new(c.f.board).unwrap()).unwrap();
+    let second = Host::start_web_api(&c.f.schema.config, BoardId::new(c.f.board).unwrap()).unwrap();
     let pair = login(second.port, "reader", &c.password);
     // Separate host connections compete at the database, not in one HTTP queue.
     let route = path(67);

@@ -2,7 +2,7 @@
 
 **Goal:** a user can perform every supported workflow with the same inputs, controls, permissions and results, including after a failed save, a disconnect or an upgrade. Persisted records, shared links, API clients and background work are part of that contract. Rust owns the rules, PostgreSQL owns durable state, and Longbridge GPUI Kit supplies the desktop controls.
 
-The numbered packets below are the executable queue; later phases are planned. Use `node scripts/run.mjs status` for verified checkpoints in this checkout.
+The numbered packets below are the milestone index. Use `cargo run --locked --manifest-path tools/Cargo.toml -- status` for registered packets and local checkpoints. A checkpoint from the former browser client is historical; wasm parity needs its own evidence.
 
 **Windows desktop and Android are the active targets.** After the first desktop slice, verify the edit on Android: edit an item, background and reopen the app, then confirm the saved value on Windows. Check keyboard and mouse on Windows, and touch, keyboard dismissal, system Back and suspend/resume on Android.
 
@@ -10,13 +10,13 @@ The numbered packets below are the executable queue; later phases are planned. U
 
 ## Decided stack change (2026-11-27)
 
-The browser client moves to GPUI on WebAssembly and shares `boardcraft-ui` with desktop and Android. [Browser client stack](docs/web-client-stack.md) records the decision, the unified `gpui-kit = "=0.11.0"` target, the wasm shell, the acceptance mechanism and the risks. Missing Kit interactions become documented `boardcraft-ui` controls, not HTML/CSS/JS or React/TSX fallbacks ([shared GPUI components](docs/gpui-components.md)). The JavaScript preview is transitional, closed to new workflows, and is removed completely — assets, router, mode, routes, feature, example and harness — not retained behind a flag once packets 54–56 pass. The old DOM test harness is deleted, not ported. Packets 53–57 are queued below and need their runner gates registered by the coordinator before dispatch.
+The browser client is GPUI on WebAssembly. [Launch the Rust viewer](docs/development.md#browser-viewer) and open the printed URL in an ordinary browser. Use Computer Use for live journeys and GPUI Kit tests for control behavior. The [runner](tools/src/packets.rs) registers packets through 56, retains the host/store checks and leaves unobserved live outcomes pending. Packet 57's deletion acceptance remains pending.
 
 ## Packet index
 
-Each packet inherits the previous one's behavior. Run Cargo from the repository root. The named integration test targets must contain enabled assertions. Record any uncovered contract in the [workflow register](docs/workflows.md).
+Each packet inherits the applicable earlier workflows. The browser preview and Android frame/edit/reopen entries below describe historical milestones; their old driver commands are retired. Run Cargo from the repository root. Record any uncovered contract in the [workflow register](docs/workflows.md).
 
-Each packet is one file under [packets](packets/) and is loaded only when dispatched. Read your own packet file, not the whole queue; a full-queue read costs more tokens than the code the packet produces. `node scripts/run.mjs status` lists verified packets.
+Each packet is one file under [packets](packets/) and is loaded only when dispatched. Read your own packet file, not the whole queue; a full-queue read costs more tokens than the code the packet produces.
 
 - [01-board](packets/01-board.md) — Add the board model to the existing Rust workspace.
 - [02-postgres](packets/02-postgres.md) — Add migrations and persist the board operation in PostgreSQL.
@@ -73,7 +73,7 @@ Each packet is one file under [packets](packets/) and is loaded only when dispat
 - [53-web-shell](packets/53-web-shell.md) — Build the GPUI wasm shell in `crates/web` and serve it from the loopback host.
 - [54-web-auth-board](packets/54-web-auth-board.md) — Sign in, list, open, rename and recover a rejected save in the wasm client.
 - [55-web-groups](packets/55-web-groups.md) — Groups, create, move, reorder, selection, archive and Trash in the wasm client.
-- [56-web-test-harness](packets/56-web-test-harness.md) — Replace the DOM browser driver with accessibility-tree acceptance.
+- [56-web-test-harness](packets/56-web-test-harness.md) — Observe the live canvas with Computer Use and compare the results with independent host/store checks.
 - [57-delete-js-preview](packets/57-delete-js-preview.md) — Completely remove the JavaScript preview, its routes, feature, example and harness after parity is verified.
 
 ## Delivery phases after the first slice
@@ -104,5 +104,5 @@ Each row is a group of independently testable packets. For each area, inventory 
 - Every inventoried workflow has a row with a reproducible fixture, expected outcome, passing check and evidence for each applicable client. Label gaps **unknown**, **planned**, **implemented** or **verified**; only the last counts toward completion. A deliberate behavior difference stays visible as a difference.
 - Exercise complete journeys as well as isolated features: import → edit → save a view → share a link; submit a form → run an automation → open the notification; lose connection during an edit → reconnect → resolve and reopen. Check permissions and durable state at each boundary.
 - Verify interactive fidelity in running clients: layout, keyboard and pointer actions, touch where supported, focus, scrolling, loading, empty, error and recovery states. A passing Rust test alone cannot close a UI row.
-- Browser rows are verified against the GPUI wasm client after packet 57; evidence captured against the JavaScript preview is transitional and does not close the row.
+- Browser rows require Computer Use observations on the GPUI wasm client. Evidence captured with a retired driver is historical and does not close the row.
 - Reconcile the final workflow, platform, API, data-format and delivery inventories. Any missing row, unresolved discrepancy or untested applicable client keeps the parity milestone open.

@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = [".deps/gpui-mobile"]
 
 [package]
 name = "boardcraft-kit-fixture"
@@ -10,15 +11,22 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
-[dependencies]
+[target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6", features = ["native-activity"] }
 boardcraft-mobile-edit-client = { path = "../crates/mobile-edit-client" }
 jni = "0.22"
 uuid = { version = "1", features = ["serde"] }
-gpui-kit = { version = "=0.8.1", default-features = false, features = ["component"] }
+gpui-kit = { version = "=0.11.0", default-features = false, features = ["component"] }
 gpui-mobile = { package = "gpui-pre-mobile", git = "https://github.com/longbridge/gpui-mobile", rev = "7548ebc4b24f00494af9976af8852c7163ded9ce", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[target.'cfg(not(target_os = "android"))'.dev-dependencies]
+tempfile = "3"
+
+# Run the Rust Android tool's prepare-mobile before direct Cargo commands.
+[patch."https://github.com/longbridge/gpui-mobile"]
+gpui-pre-mobile = { path = ".deps/gpui-mobile" }
 
 [profile.dev]
 debug = 0

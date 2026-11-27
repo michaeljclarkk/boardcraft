@@ -1,4 +1,4 @@
-//! Native bearer and matched preview requests share one atomic lifecycle owner.
+//! Native bearer and matched web requests share one atomic lifecycle owner.
 use crate::{
     browser_transport::{Reply, send},
     create::Case,
@@ -28,7 +28,7 @@ pub fn trash_atomic_and_authorized() {
     let before = Snapshot::read(&c.f);
     let op = Uuid::new_v4();
     let body = draft(op, 1, &[(67, 1)]);
-    let path = format!("/preview/api/navigation/boards/{SELECTED}/items/delete-selection");
+    let path = format!("/web/api/navigation/boards/{SELECTED}/items/delete-selection");
     assert_eq!(c.request(Some(&c.pair), "POST", &path, &body).status, 200);
     let saved = before.deleted_selection(&c.f, c.member, op, &[67]);
     assert_eq!(c.request(Some(&c.pair), "POST", &path, &body).status, 200);
@@ -55,7 +55,7 @@ fn check(trash: bool) {
             if native {
                 "/navigation/boards/"
             } else {
-                "/preview/api/navigation/boards/"
+                "/web/api/navigation/boards/"
             },
             if native { "main-table" } else { "" },
             if trash {
@@ -216,7 +216,7 @@ fn check(trash: bool) {
     c.f.connect()
         .batch_execute("DROP TRIGGER refuse_selected_archive ON group_reorder_receipts")
         .unwrap();
-    // Independent native/preview sessions contend at the same board baseline.
+    // Independent native/web sessions contend at the same board baseline.
     let rival_op = Uuid::new_v4();
     let rival = draft(rival_op, 1, selected);
     let start = std::sync::Barrier::new(2);
@@ -376,7 +376,7 @@ fn check(trash: bool) {
         c.request(
             Some(&c.pair),
             "POST",
-            "/preview/api/session/logout",
+            "/web/api/session/logout",
             &Value::Null
         )
         .status,
@@ -396,7 +396,7 @@ fn check(trash: bool) {
             c.request(
                 Some(&c.pair),
                 "GET",
-                &format!("/preview/api/navigation/boards/{SELECTED}/trash"),
+                &format!("/web/api/navigation/boards/{SELECTED}/trash"),
                 &Value::Null
             )
             .status,
@@ -418,7 +418,7 @@ fn trash_recovery() {
         Host::start_with_navigation(&c.f.schema.config, BoardId::new(SELECTED).unwrap()).unwrap();
     let token = boardcraft_account::sign_in(&c.f.schema.config, "reader", &c.password).unwrap();
     let client = EditClient::with_bearer(host.port, token.encoded()).unwrap();
-    let path = format!("/preview/api/navigation/boards/{SELECTED}");
+    let path = format!("/web/api/navigation/boards/{SELECTED}");
     let get = |suffix: &str| {
         c.request(
             Some(&c.pair),
