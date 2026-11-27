@@ -11,7 +11,7 @@ use std::{
 
 #[cfg(not(windows))]
 const URL: &str = "RUSTDAY_TEST_DATABASE_URL";
-const USAGE: &str = "boardcraft-tools prepare-web | dev -- PROGRAM [ARG...] | postgres start|stop|exec -- PROGRAM [ARG...] | viewer [--for-seconds N]";
+const USAGE: &str = "boardcraft-tools port-status [--check|--summary] | prepare-web | dev -- PROGRAM [ARG...] | postgres start|stop|exec -- PROGRAM [ARG...] | viewer [--for-seconds N]";
 
 pub(crate) fn run() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
@@ -24,6 +24,15 @@ pub(crate) fn run() -> Result<()> {
     }
     let dev = Dev::load(root)?;
     match args.as_slice() {
+        [op] if op == "port-status" => {
+            crate::port_status::run(root, crate::port_status::Mode::Write)
+        }
+        [op, mode] if op == "port-status" && mode == "--check" => {
+            crate::port_status::run(root, crate::port_status::Mode::Check)
+        }
+        [op, mode] if op == "port-status" && mode == "--summary" => {
+            crate::port_status::run(root, crate::port_status::Mode::Summary)
+        }
         [op] if op == "prepare-web" => crate::web_platform::prepare(&dev),
         [op, separator, bin, args @ ..] if op == "dev" && separator == "--" => {
             crate::web_platform::prepare(&dev)?;

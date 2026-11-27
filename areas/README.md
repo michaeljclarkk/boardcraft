@@ -14,6 +14,6 @@ Rules:
 - Change `percent` only after verifying behaviour in the running app. 0 = not started; 100 = every workflow matches on every active client, behaviour and UI.
 - Never count code written, tests or scaffolding.
 - Put new code under the `code` path listed in the area. Create the module when the first real workflow lands, not before.
-- Regenerate the README table and chart with `node tools/port-status.mjs`. The pre-commit hook does it automatically.
+- Regenerate the README table and chart with `cargo run --locked --manifest-path tools/Cargo.toml -- port-status`. The pre-commit hook and CI do it automatically.
 
 The table and chart are generated. Do not edit them by hand.

@@ -1,5 +1,6 @@
 mod cli;
 mod dev;
+mod port_status;
 #[cfg(windows)]
 mod postgres;
 mod web_platform;

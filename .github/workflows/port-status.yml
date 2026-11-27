@@ -12,11 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
       - name: Regenerate table and chart
-        run: node tools/port-status.mjs
+        run: cargo run --quiet --locked --manifest-path tools/Cargo.toml -- port-status
       - name: Commit if stale
         run: |
           if ! git diff --quiet; then
@@ -27,4 +25,4 @@ jobs:
             git push
           fi
       - name: Job summary
-        run: node tools/port-status.mjs --summary >> "$GITHUB_STEP_SUMMARY"
+        run: cargo run --quiet --locked --manifest-path tools/Cargo.toml -- port-status --summary >> "$GITHUB_STEP_SUMMARY"

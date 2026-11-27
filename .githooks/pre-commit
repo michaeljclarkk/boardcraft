@@ -1,7 +1,7 @@
 #!/bin/sh
 # Regenerate the port-status table and chart before checking the diff size.
-if command -v node >/dev/null 2>&1 && [ -f tools/port-status.mjs ]; then
-  node tools/port-status.mjs || exit 1
+if command -v cargo >/dev/null 2>&1 && [ -f tools/Cargo.toml ]; then
+  cargo run --quiet --locked --manifest-path tools/Cargo.toml -- port-status || exit 1
   git add README.md docs/port-status.svg
 fi
 
