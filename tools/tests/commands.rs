@@ -26,17 +26,32 @@ fn dev_passes_literal_arguments_to_the_executable() {
 }
 
 #[test]
-fn bad_counts_and_unconsumed_arguments_fail_before_dispatch() {
+fn retired_queue_commands_are_rejected() {
     for args in [
-        &["run", "+1"][..],
-        &["run", "1", "extra"],
-        &["status", "1"],
-        &["dev", "--"],
-        &["postgres", "exec", "tool"],
+        &["run", "1"][..],
+        &["next", "1"],
+        &["status"],
     ] {
         assert!(
             !tools().args(args).output().unwrap().status.success(),
             "{args:?}"
         );
+    }
+}
+
+#[test]
+fn invalid_viewer_deadlines_fail_before_starting_a_fixture() {
+    for args in [
+        &["--for-seconds"][..],
+        &["--for-seconds", "0"],
+        &["--for-seconds", "901"],
+        &["--for-seconds", "+1"],
+        &["--for-seconds", "1.5"],
+        &["--for-seconds", "1", "extra"],
+    ] {
+        let output = tools().arg("viewer").args(args).output().unwrap();
+        assert!(!output.status.success(), "{args:?}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("--for-seconds"));
+        assert!(output.stdout.is_empty());
     }
 }

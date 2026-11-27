@@ -1,6 +1,6 @@
 # Local development
 
-Run commands from the checkout root. On Windows use x64 MSVC Rust, Visual Studio's **Desktop development with C++** workload, a Windows SDK and CMake. Install Cargo via [rustup](https://rustup.rs/) and add `rustfmt` and `clippy`. Preparing the workspace uses Git, tar and (on a cache miss) curl. Database journeys need PostgreSQL 17 client/server binaries. Only queue dispatch requires OpenCode with a configured provider. See [browser viewer](#browser-viewer) for the web toolchain.
+Run commands from the checkout root. On Windows use x64 MSVC Rust, Visual Studio's **Desktop development with C++** workload, a Windows SDK and CMake. Install Cargo via [rustup](https://rustup.rs/) and add `rustfmt` and `clippy`. Preparing the workspace uses Git, tar and (on a cache miss) curl. Database journeys need PostgreSQL 17 client/server binaries. See [browser viewer](#browser-viewer) for the web toolchain.
 
 `dev -- PROGRAM [ARG...]` prepares the workspace dependency and runs one child with the configured tool paths. On Windows, `postgres exec -- PROGRAM [ARG...]` also starts or reuses the local cluster and gives that child the disposable database URL. Neither changes the calling shell. For the examples below, define these PowerShell shortcuts once, or use their full Cargo commands:
 
@@ -90,13 +90,17 @@ cargo run --locked --manifest-path tools/Cargo.toml -- viewer
 
 The viewer opens the board list in your default browser as the fixed local owner. Choose **Review** (two Work groups and an empty Reserve) or **Backlog** (no items). The terminal also prints the loopback URL for another browser. Refreshing or opening a new tab uses that same identity. To verify persistence across client restarts, close the tab and reopen its board URL while the host is still running. Press Enter in the terminal to stop the host and drop its fixture. After a source change, stop the old viewer and rerun `viewer`: the host snapshots assets at startup.
 
-For a live check, use Computer Use to rename the second of the two **Review** items, reopen the board and compare both names. Use GPUI Kit tests for control behavior. For authorization, scope, commits and rollback run the existing host tests against the disposable database:
+For a failed-save check in Chrome, open the second Review for editing. Set only the viewer tab offline in DevTools, submit a new name and check that its previous label returns. Restore networking: no save should happen by itself. Click **Retry change** and reopen the board in a new tab. The sibling should still be Review. A retry reads `GET /web/api/navigation/boards/{board}/items/{item}/name` before submitting the retained spelling. A read-only or missing row must not be written.
+
+For an unattended live check, launch `cargo run --locked --manifest-path tools/Cargo.toml -- viewer --for-seconds 180` in a background terminal. After setup it prints the loopback URL and serves for the requested 1–900 seconds, even with stdin closed. It does not open the default browser. Open the URL in Chrome while the viewer is running; let it exit and drop its synthetic schema. Never terminate processes by name or wildcard: the parent runner may be using the same executable.
+
+Use Chrome DevTools MCP or Computer Use to rename the second of the two **Review** items, reopen the board and compare both names. If visual tools are unavailable, record the missing observation. A URL or successful exit is not evidence of what was on screen. Use GPUI Kit tests for control behavior. For authorization, scope, commits and rollback run the existing host tests against the disposable database:
 
 ```powershell
 bcdb cargo test --locked -p boardcraft-mobile-edit-host --test loopback_board_access
 ```
 
-The `pending` browser outcomes in the [runner inventory](../tools/tests/cutover-gates.tsv) are observations still needed on the current client, not test targets. Do not recreate a browser driver, use OCR or CDP, or substitute another GUI harness. The earlier browser suites are historical.
+The `pending` browser outcomes recorded in the older packet notes are observations still needed on the current client, not test targets. Do not recreate a CDP driver, use OCR or substitute another GUI harness. The earlier browser suites are historical.
 
 ### Shared component work
 
@@ -118,7 +122,7 @@ Android uses Kit `=0.11.0` with the [pinned mobile host and compatibility patch]
 
 Planning preflight (2026-11-26): the installed API 36.1 x86_64 image booted on a fresh, isolated AVD with WHPX. The Rust target plus NDK r27c API 28 linker produced a runnable Android executable. A temporary read-only caller of the existing `EditClient` read through `adb reverse` to the production 04 host; PostgreSQL independently returned the same two ordered IDs, titles and revisions. The mapping, device probe and schema were removed. This did not exercise a save or any Kit UI.
 
-For the non-UI packet 05 probe, install `rustup target add x86_64-linux-android`. Set `ANDROID_HOME` to the SDK with the image and emulator (SDK roots can differ); put **that SDK's** `platform-tools` on PATH. Set `CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER` to the NDK's `toolchains/llvm/prebuilt/windows-x86_64/bin/x86_64-linux-android28-clang.cmd`. NDK and emulator need not be in the same SDK. No cargo-ndk, Gradle, signing or network deployment is needed here. Use existing licenses only.
+For the non-UI Android emulator probe, install `rustup target add x86_64-linux-android`. Set `ANDROID_HOME` to the SDK with the image and emulator (SDK roots can differ); put **that SDK's** `platform-tools` on PATH. Set `CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER` to the NDK's `toolchains/llvm/prebuilt/windows-x86_64/bin/x86_64-linux-android28-clang.cmd`. NDK and emulator need not be in the same SDK. No cargo-ndk, Gradle, signing or network deployment is needed here. Use existing licenses only.
 
 Create `Rustday_Edit_X64` **once** in a separate `ANDROID_AVD_HOME` on a volume with space; use the installed x86_64 image, no account or personal data. Example: `avdmanager create avd -n Rustday_Edit_X64 -k "system-images;android-36.1;google_apis_playstore;x86_64"`. Do not overwrite an existing AVD.
 
@@ -139,14 +143,14 @@ Allow up to three minutes for boot. In this same environment, use `adb -s $env:R
 
 On Windows, platform-tools 36.0.0 and 37.0.3 both aborted on the second `reverse --no-rebind tcp:0` fixture: the device allocated a new listener, but the server still associated literal `tcp:0` with the first host port. After removing the actual listener and executable, the test checks that there are no remaining mappings, reconnects **only the selected transport**, repeats that emulator's registration on the private loopback server, and revalidates the AVD. No probe is replayed. To capture a server failure, start the private server in a second identically activated shell with `adb -L tcp:5039 nodaemon server` instead of `start-server` and inspect its stderr alongside Windows Application Error events.
 
-Packet 05 commands: the host test signs in a fixture Member with access and pipes its session to each probe via non-PTY stdin. No bearer is in adb arguments, the executable or a device file.
+Android emulator commands: the host test signs in a fixture Member with access and pipes its session to each probe via non-PTY stdin. No bearer is in adb arguments, the executable or a device file.
 
 ```powershell
 bc dev -- cargo build --locked -p boardcraft-mobile-edit-client --bin android-edit-probe --target x86_64-linux-android
 bcdb cargo test --locked -p boardcraft-mobile-edit-host --features android-smoke --test android_emulator_edit -- --test-threads=1
 ```
 
-Use the cross-target debug executable from Cargo's target directory, never a host build. The runner gives each adb preflight 10 seconds and the focused host suite 10 minutes including compilation. The test itself must time out and reap hung adb children, parse successful **device** results, and fail if prerequisites disappear. It must not boot, wipe or stop any emulator. [05 acceptance](../packets/05-android-emulator-edit.md) specifies both journeys.
+Use the cross-target debug executable from Cargo's target directory, never a host build. The runner gives each adb preflight 10 seconds and the focused host suite 10 minutes including compilation. The test itself must time out and reap hung adb children, parse successful **device** results, and fail if prerequisites disappear. It must not boot, wipe or stop any emulator. 05 acceptance specifies both journeys.
 
 ### Historical Android Kit journeys
 
@@ -166,10 +170,9 @@ cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 bcdb cargo test --locked --workspace
 cargo test --locked --manifest-path tools/Cargo.toml
-bc status
 ```
 
-Normal development does not use the runner. Build and test directly, or start a feature session only when Michael asks for queue dispatch with `bcdb cargo run --locked --manifest-path tools/Cargo.toml -- run 1`. The [optional runner guide](../README.md#optional-packet-runner) explains restarts.
+Build and test directly. The queue runner and unattended dispatch were removed; there is no `run`, `next` or `status` command to start.
 
 ## Change size
 

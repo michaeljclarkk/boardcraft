@@ -4,7 +4,7 @@ Updated 2026-11-28. This is the short list of what is not done or not verified. 
 
 ## UI parity
 
-- WASM now shows the board list, selected title and grouped name column. The [live rename/reopen check](workflows.md) passed in Chrome. Next: place failed-rename recovery at board level and compare conflict and retry; configured columns, view toolbar and same-fixture visual comparison are still open.
+- [Live Chrome checks](workflows.md) covered workspace search, sidebar collapse/reopen, rename persistence and offline retry. The collapsed-rail temporary hover flyout (`hover_navigation`, 140ms enter / 220ms leave, `(hover: hover)`, Escape dismiss, pin toggle, no table shift, board/URL/search retained) is implemented in the WASM shell and passes WASM Clippy + native tests, but **live mouse + keyboard verification on the disposable viewer was not run in this session** (Chrome DevTools MCP / Computer Use unavailable), so it stays unverified. Remaining differences: no 300ms animated transition / `prefers-reduced-motion`; no `aria-controls`; no document-level `pointerover` rescan + menu/dialog exclusions; no compact/overlay mode. Workspace scoping, configured columns, view toolbar, concurrent-edit and same-fixture visual comparisons remain open.
 
 - The desktop board journey has not been compared with the internal tool yet. Record every difference — layout, controls, labels, density, states, keyboard/focus, pointer/touch — in [workflows.md](workflows.md).
 - Stock GPUI Kit coverage of the internal tool's table, group menu and drag behaviour is unmeasured. Build a control only when the screen needs it.

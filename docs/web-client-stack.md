@@ -18,8 +18,8 @@ Keep the locked wasm build and the [non-UI contract tests](../crates/mobile-edit
 
 | Packet | Acceptance target |
 |---|---|
-| [53](../packets/53-web-shell.md) | Load the shell and resolve, retry or reject a session. |
-| [54](../packets/54-web-auth-board.md) | Sign in, navigate, rename and recover; revisit a board in a second tab. |
-| [55](../packets/55-web-groups.md) | Exercise group, selection, ordering, Archive and Trash workflows. |
-| [56](../packets/56-web-test-harness.md) | Recheck canvas input, focus, identity and recovery against the workflow register. The historical packet name does not authorize a harness. |
-| [57](../packets/57-delete-js-preview.md) | Keep one client with no preview assets, routes, feature flag or fallback. Deletion alone does not establish parity. |
+| 53 | Load the shell and resolve, retry or reject a session. |
+| 54 | Sign in, navigate, rename and recover; revisit a board in a second tab. |
+| 55 | Exercise group, selection, ordering, Archive and Trash workflows. |
+| 56 | Recheck canvas input, focus, identity and recovery against the workflow register. The historical packet name does not authorize a harness. |
+| 57 | Keep one client with no preview assets, routes, feature flag or fallback. Deletion alone does not establish parity. |

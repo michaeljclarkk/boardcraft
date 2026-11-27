@@ -5,6 +5,8 @@ description: 'Use when designing, building, testing or reviewing a Rust product 
 
 # Rust Product Engineering
 
+**Scope override:** boardcraft's only job is the 1:1 Rust port. Do not add a crate, layer, dependency, module or abstraction unless the screen you are porting cannot be built without it. This skill describes how to write the code inside that port; it is not permission to grow the architecture.
+
 ## Priority Order
 
 Four demands, in this order when they conflict:

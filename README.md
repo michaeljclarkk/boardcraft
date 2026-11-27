@@ -1,8 +1,10 @@
 # boardcraft
 
-boardcraft is an independent native workspace for organizing work on boards. It rebuilds, in Rust, the board workflows our team relies on — items, groups, sessions, permissions and failure recovery — without a third-party product in the loop.
+boardcraft is the native Rust port of the internal tool: its entire C# and React/TSX surface rebuilt in Rust with Longbridge GPUI Kit and PostgreSQL. The whole product is the scope.
 
-Everything here is our own work: our schema, our rules, our controls, our names and our fixtures. This repository contains no other product's code, assets or wording, and its files must not name one. [AGENTS.md](AGENTS.md#independence) states the rule that applies to every change.
+**The only job is to get boardcraft running 1:1 with the internal tool, in Rust only. Write Rust code, run it, and test the UI with Computer Use and GPUI Kit tests. No extra harnesses or infrastructure.**
+
+Everything here is our own work: our schema, our rules, our controls, our names and our fixtures. This repository contains no other product's code, assets or wording. See [AGENTS.md](AGENTS.md) for the rule that applies to every change.
 
 **First workflow:** Two items on a board are both called “Review”. Rename the second one to “Review artwork”, close the app, then reopen the board. The first row should still say “Review”; the second should keep its new name. The edit targets the item's ID, so matching titles never decide which row changes.
 
@@ -20,29 +22,26 @@ cargo run --locked --manifest-path tools/Cargo.toml -- viewer
 
 The Rust viewer builds the GPUI WebAssembly client and opens the board list in your default browser as the local owner. Choose **Review** to try the rename journey, or **Backlog** for an empty board. No username or password is needed. Press Enter in the terminal to stop the host and discard the fixture. See the [UI port checklist](plan/ui-port-checklist.md) and [viewer setup](docs/development.md#browser-viewer).
 
+For unattended viewer checks, run `cargo run --locked --manifest-path tools/Cargo.toml -- viewer --for-seconds 180`. Open the printed URL in Chrome. The fixture expires automatically; no terminal input or process cleanup is needed.
+
 ## Requirements
 
-Install Rust with Cargo, rustfmt and clippy. Only worker dispatch needs OpenCode v2 with a configured provider. Desktop packets add Visual Studio's **Desktop development with C++** workload, the Windows SDK, CMake and a graphical session. PostgreSQL packets need PostgreSQL 17 and a disposable database of their own. Cargo build scripts and tests run with your account's permissions, so use a checkout and development account that hold no production credentials. A fresh public checkout must build without private material; the [development runbook](docs/development.md) names the tools and environment variables.
+Install Rust with Cargo, rustfmt and clippy. Desktop work adds Visual Studio's **Desktop development with C++** workload, the Windows SDK, CMake and a graphical session. PostgreSQL journeys need PostgreSQL 17 and a disposable database of their own. Cargo build scripts and tests run with your account's permissions, so use a checkout and development account that hold no production credentials. A fresh public checkout must build without private material; the [development runbook](docs/development.md) names the tools and environment variables.
 
-## Optional packet runner
+## Developer commands
 
-Normal work is direct: pick the current delivery step from [ROADMAP.md](ROADMAP.md), build it, run it, and report what you saw. You do not need the runner, a packet or a handoff to start.
-
-The queue is kept as bookkeeping for historical packets and for unattended dispatch when Michael asks for it:
+Work directly from the checkout: pick the current delivery step, build it, run it, and report what you saw. The tools binary only prepares, builds and runs:
 
 ```sh
-cargo test --locked --manifest-path tools/Cargo.toml
-cargo run --locked --manifest-path tools/Cargo.toml -- status
-cargo run --locked --manifest-path tools/Cargo.toml -- postgres exec -- cargo run --locked --manifest-path tools/Cargo.toml -- run 3
+cargo run --locked --manifest-path tools/Cargo.toml -- viewer [--for-seconds N]
+cargo run --locked --manifest-path tools/Cargo.toml -- dev -- cargo build --locked -p boardcraft-desktop
+cargo run --locked --manifest-path tools/Cargo.toml -- postgres start|stop|exec -- PROGRAM [ARG...]
+cargo run --locked --manifest-path tools/Cargo.toml -- prepare-web
 ```
 
-`run 3` processes up to three pending packets in fresh `opencode run` sessions. The runner checks each handoff and records a local checkpoint. It is not an acceptance gate and does not decide what counts as done; the running app and the owner do.
+The queue runner and unattended dispatch were removed. Do not rebuild them.
 
 Use Computer Use for live UI observations and GPUI Kit tests for control behavior. The former browser and Android UI drivers are historical; do not rebuild them.
-
-**Resume (only if a queue run was started):** inspect the terminal error, fix the blocker, and run the same command in the same checkout. Partial edits remain on disk. New checkouts keep runner state in `.boardcraft/`; existing `.rustday/` state is reused in place. If both directories exist, the runner stops. After an abrupt shutdown, confirm the runner and worker have exited before removing a stale `lock`.
-
-**Extending the queue (optional):** register the packet and its inherited outcomes in [tools/src/packets.rs](tools/src/packets.rs) and update the [gate inventory](tools/tests/cutover-gates.tsv). Run the tools tests and check `status` before dispatch. A historical checkpoint does not verify a replacement client.
 
 ## Where to read next
 

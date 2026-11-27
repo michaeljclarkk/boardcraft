@@ -5,10 +5,12 @@ description: Build or review a boardcraft workflow so it ships end to end with b
 
 Start with the user action. What does the user click, what record changes, what do they see, and what happens when the save fails? Finish that journey in the running app before widening scope.
 
+**The only job is a 1:1 Rust port: write code, run it, test the UI with Computer Use and GPUI Kit tests. No harnesses, orchestrators or new infrastructure.** If something is not needed for the screen in front of you, do not add it.
+
 ## Order of work
 
 1. Run the app and the same screen in the internal tool side by side.
-2. Build the smallest vertical slice: control → named Rust operation → PostgreSQL commit → accepted result back in the view.
+2. Build the Rust needed for that screen: control → named Rust operation → PostgreSQL commit → accepted result back in the view. Translate the C#/TSX behaviour, not a subset of it.
 3. Exercise it in the running app, restart, and check the saved state.
 4. Match the internal tool's UI, then record any remaining difference.
 

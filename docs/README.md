@@ -11,21 +11,21 @@ Documents answer questions. They are not a second task list.
 | What happened last, and what did it leave? | [Progress log](../ROADMAP.md#progress-log). Newest first, one dated entry per delivery. |
 | How do I open a board or recover the environment? | [Rust browser viewer](development.md#browser-viewer) and [development runbook](development.md). Run commands from the repository root. |
 | Where does the behaviour live? | [Architecture and owner map](architecture.md). Link to the smallest useful implementation entry point. |
-| What stack does the browser client use? | [Browser client stack](web-client-stack.md). Decision, shared controls, migration packets and risks. |
+| What stack does the browser client use? | [Browser client stack](web-client-stack.md). Decision, shared controls, migration notes and risks. |
 | What do I do when GPUI Kit lacks an interaction? | [Shared GPUI components](gpui-components.md). No-fallback rule, required artifacts and the control register. |
 | What is implemented, verified or unknown? | [Workflow register](workflows.md). Track automated checks, desktop observations and unresolved questions separately. |
 | How must a worker behave? | [AGENTS.md](../AGENTS.md). |
 
 ## Rules
 
-1. **One owner per question.** A fact lives in one document and the others link to it. Do not restate the queue in a feature note, or the workflow register in a packet.
+1. **One owner per question.** A fact lives in one document and the others link to it. Do not restate the delivery order in a feature note, or the workflow register in a scratch note.
 2. **Three statuses only:** implemented, verified, unknown. A row may be implemented and unverified; it may never be verified without a named check or observation behind it.
-3. **Evidence next to the claim.** Link the test, packet or observation that proves a row. A check that did not run is `unknown`, never `verified`.
+3. **Evidence next to the claim.** Link the test or observation that proves a row. A check that did not run is `unknown`, never `verified`.
 4. **One place per delivery.** Do not write a second task list. A delivery gets a dated progress-log entry plus its workflow row; once it outgrows a row, a feature note.
 5. **Feature notes on growth, not on creation.** When a workflow outgrows its register row, add `docs/features/<workflow>.md` and link it from the register. Describe the user action, the success and recoverable failure, the rule owner, and how to reproduce the check with synthetic data.
 6. **Decisions live beside their behaviour.** Record a consequential design decision in the document that explains that behaviour and date it. Replace obsolete guidance in place; never leave two versions.
 7. **Name only what we own.** The internal tool is our own product. Do not name it, its files or its screenshots in a committed document; local details stay in `plan/internal-tool.md` (ignored). Do not name, link or copy a third-party product's assets, code, wording or screenshots either.
-8. **Private material stays private.** Captures, records, transcripts, absolute paths and credentials never enter `docs/` or `packets/`. `plan/` is the gitignored notebook.
+8. **Private material stays private.** Captures, records, transcripts, absolute paths and credentials never enter `docs/`. `plan/` is the gitignored notebook.
 9. **Keep documents small.** Shorter than the code they describe, and a table row with a link beats a restated paragraph.
 
 ## Ownership
