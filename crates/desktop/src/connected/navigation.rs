@@ -1,14 +1,23 @@
 use super::main_table::MainTable;
 use super::*;
-use boardcraft_mobile_edit_client::{BoardSummary, MainTableRead};
+use boardcraft_mobile_edit_client::{BoardSummary, DirectoryUser, MainTableRead};
+use gpui_kit::component::input::InputEvent;
 
 enum ReadPage {
     List(Vec<BoardSummary>),
     Table(MainTableRead),
 }
 
+pub(super) struct PeoplePage {
+    pub(super) users: Vec<DirectoryUser>,
+    pub(super) query: Entity<InputState>,
+    pub(super) pending: bool,
+    pub(super) message: &'static str,
+}
+
 pub(super) enum Page {
     List(Vec<BoardSummary>),
+    People(PeoplePage),
     Items(Uuid, Box<MainTable>),
     Recover(Uuid, FocusHandle),
     Unavailable,
@@ -19,6 +28,7 @@ pub(super) struct Navigation {
     pub(super) client: EditClient,
     pub(super) page: Page,
     pub(super) share: Option<Entity<InputState>>,
+    pub(super) _people_events: Vec<Subscription>,
 }
 
 impl Connected {
@@ -76,6 +86,7 @@ impl Connected {
                         client,
                         page,
                         share: None,
+                        _people_events: Vec::new(),
                     });
                 }
                 cx.notify();
@@ -95,6 +106,102 @@ impl Connected {
             return;
         }
         self.navigate(nav.client.clone(), board, w, cx);
+    }
+
+    fn open_people(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        let Screen::Navigation(nav) = &self.screen else {
+            return;
+        };
+        let client = nav.client.clone();
+        let query = cx.new(|cx| InputState::new(w, cx).placeholder("Search people"));
+        let events = cx.subscribe_in(&query, w, |view, _, event, w, cx| {
+            if matches!(event, InputEvent::PressEnter { .. }) {
+                view.search_people(w, cx);
+            }
+        });
+        let Screen::Navigation(nav) = &mut self.screen else {
+            return;
+        };
+        nav._people_events = vec![events];
+        nav.page = Page::People(PeoplePage {
+            users: Vec::new(),
+            query: query.clone(),
+            pending: true,
+            message: "",
+        });
+        query.update(cx, |input, cx| input.focus(w, cx));
+        self.load_people(client, "", w, cx);
+    }
+
+    fn search_people(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        let (client, query) = {
+            let Screen::Navigation(nav) = &mut self.screen else {
+                return;
+            };
+            let Page::People(page) = &mut nav.page else {
+                return;
+            };
+            if page.pending {
+                return;
+            }
+            page.pending = true;
+            page.message = "";
+            (nav.client.clone(), page.query.read(cx).value().to_string())
+        };
+        self.load_people(client, &query, w, cx);
+    }
+
+    fn load_people(
+        &mut self,
+        client: EditClient,
+        query: &str,
+        w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let query = query.to_owned();
+        let request = self.navigation_request;
+        self.message = "";
+        let work = cx
+            .background_executor()
+            .spawn(async move { client.list_users(&query) });
+        cx.spawn_in(w, async move |view, cx| {
+            let result = work.await;
+            _ = view.update_in(cx, |view, w, cx| {
+                if request != view.navigation_request {
+                    return;
+                }
+                let Screen::Navigation(nav) = &mut view.screen else {
+                    return;
+                };
+                let Page::People(page) = &mut nav.page else {
+                    return;
+                };
+                match result {
+                    Ok(users) => {
+                        page.users = users;
+                        page.pending = false;
+                        page.message = if page.users.is_empty() {
+                            "No people found"
+                        } else {
+                            ""
+                        };
+                    }
+                    Err(EditError::SessionRejected) => {
+                        view.link_input = None;
+                        view.message = "Session expired. Sign in again.";
+                        view.screen = Self::identifier(w, cx);
+                        return;
+                    }
+                    Err(_) => {
+                        page.pending = false;
+                        page.message = "Could not load people.";
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     fn reload_main_table(&mut self, board: Uuid, w: &mut Window, cx: &mut Context<Self>) {
@@ -184,6 +291,14 @@ impl Connected {
     }
 }
 
+fn role_label(role: &str) -> String {
+    let mut chars = role.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
 impl Navigation {
     pub(super) fn render(&self, cx: &mut Context<Connected>) -> impl IntoElement {
         let mut column = div().flex().flex_col().gap_3();
@@ -204,7 +319,51 @@ impl Navigation {
                             ),
                     );
                 }
+                column = column.child(
+                    Button::new("people")
+                        .label("People")
+                        .on_click(cx.listener(|view, _, w, cx| view.open_people(w, cx))),
+                );
                 "Refresh"
+            }
+            Page::People(people) => {
+                column = column.child(Label::new("People")).child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(Input::new(&people.query).id("people-search"))
+                        .child(
+                            Button::new("people-search-go")
+                                .label("Search")
+                                .disabled(people.pending)
+                                .on_click(cx.listener(|view, _, w, cx| view.search_people(w, cx))),
+                        ),
+                );
+                if people.pending {
+                    column = column.child(Label::new("Loading people…"));
+                }
+                if !people.message.is_empty() {
+                    column = column.child(Label::new(people.message));
+                }
+                for user in &people.users {
+                    let mut line = format!(
+                        "{} · {} · {}",
+                        user.username,
+                        user.email,
+                        role_label(&user.role)
+                    );
+                    if !user.active {
+                        line.push_str(" · Inactive");
+                    }
+                    if !user.teams.is_empty() {
+                        line.push_str(&format!(" · {}", user.teams.join(", ")));
+                    }
+                    column = column.child(
+                        Label::new(line).id(SharedString::from(format!("person-{}", user.id))),
+                    );
+                }
+                "Back to boards"
             }
             Page::Items(id, table) => {
                 let id = *id;

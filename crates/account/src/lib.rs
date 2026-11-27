@@ -1,6 +1,7 @@
 //! Blocking operations for a trusted local caller. There is no account creation path.
 mod client;
 pub use client::{PasswordStep, SessionClient};
+pub mod users;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use postgres::{Config, NoTls};
@@ -17,7 +18,7 @@ pub enum Error {
     Unavailable,
 }
 
-fn unavailable<E>(operation: &'static str) -> impl FnOnce(E) -> Error {
+pub(crate) fn unavailable<E>(operation: &'static str) -> impl FnOnce(E) -> Error {
     move |_| {
         // Database diagnostics can include parameter/row values.
         log::error!("account {operation} unavailable");
@@ -36,6 +37,15 @@ impl Role {
     /// A role restriction, not an authorization check for any particular board.
     pub fn is_read_only(self) -> bool {
         self == Self::Viewer
+    }
+
+    /// The value the catalogue stores and the directory returns.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Member => "member",
+            Self::Viewer => "viewer",
+        }
     }
 }
 
@@ -85,7 +95,9 @@ pub fn migrate(config: &Config) -> Result<(), Error> {
     db.batch_execute(concat!(
         include_str!("../migrations/0001_account_session.sql"),
         "\n",
-        include_str!("../migrations/0002_owner.sql")
+        include_str!("../migrations/0002_owner.sql"),
+        "\n",
+        include_str!("../migrations/0003_teams.sql")
     ))
     .map_err(unavailable("migrate"))
 }

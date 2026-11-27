@@ -9,6 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 mod archive;
+mod directory;
 mod group_fields;
 #[cfg(not(target_family = "wasm"))]
 mod group_order;
@@ -17,6 +18,7 @@ mod main_table;
 mod table_command;
 mod table_contract;
 pub use archive::{ArchiveRead, ArchivedGroup, ArchivedItem};
+pub use directory::DirectoryUser;
 pub use group_fields::GroupFields;
 pub use item_placement::ItemReorder;
 pub use main_table::MainTableRead;

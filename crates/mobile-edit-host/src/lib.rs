@@ -1,5 +1,6 @@
 //! Single-board host for a disposable database. No database configuration crosses HTTP.
 mod access;
+mod directory;
 mod web_assets;
 mod web_session;
 use std::{io::Read, sync::Arc, thread};
@@ -142,6 +143,15 @@ impl Host {
                             access::bearer(&req).map(access::Actor::Session),
                         )
                         .map(|body| (body, None)),
+                        _ if navigation && path.split('?').next() == Some("/navigation/users") => {
+                            directory::route(
+                                &mut db,
+                                &req,
+                                &path,
+                                access::bearer(&req).map(access::Actor::Session),
+                            )
+                            .expect("directory route")
+                        }
                         _ => {
                             let token = access::bearer(&req);
                             handle(
