@@ -1,6 +1,6 @@
-# boardcraft roadmap: the internal tool parity
+# boardcraft roadmap: internal-tool parity
 
-**Goal:** a user can perform every supported the internal tool workflow in boardcraft with the same inputs, controls, layout, permissions and results, including after a failed save, a disconnect or an upgrade. Both workflow parity and UI parity are acceptance criteria. Rust owns the rules, PostgreSQL owns durable state, and Longbridge GPUI Kit supplies the desktop controls.
+**Goal:** a user can perform every supported internal-tool workflow in boardcraft with the same inputs, controls, layout, permissions and results, including after a failed save, a disconnect or an upgrade. Both workflow parity and UI parity are acceptance criteria. Rust owns the rules, PostgreSQL owns durable state, and Longbridge GPUI Kit supplies the desktop controls.
 
 ## Delivery order (owner direction, 2026-11-28)
 
@@ -12,15 +12,17 @@ Ship one vertical desktop journey at a time. Do not start the next until the cur
 4. **Auth.** Sign-in, resolve, logout and session restore. This comes after the board works and only matters before shared deployment.
 5. **Other clients.** Android and the browser mirror the desktop journey once desktop is right.
 
-Packets 01–57 are the historical port index below; they are reference material, not gates. The runner, gates and handoffs are optional bookkeeping. Packets 13–21 (auth) and 26–56 (browser and the retired test harness) are out of delivery order and stay closed until steps 4 and 5. Handoffs that mention harnesses, drivers or OCR describe retired tooling; do not rebuild them.
+Packets 01–57 are the historical port index below; they are reference material, not gates. The runner remains optional; earlier handoff files were removed. Packets 13–21 (auth) and 26–56 (browser and the retired test harness) are out of delivery order and stay closed until steps 4 and 5. Handoffs that mention harnesses, drivers or OCR describe retired tooling; do not rebuild them.
 
 ## Current task
 
-**Desktop board journey.** With the internal tool in a second window for comparison, make the desktop app open a board list, open a board and rename an item, then restart and show the saved value. Record the UI differences in [docs/workflows.md](docs/workflows.md) and close them before moving to groups. Details and acceptance: [docs/roadmap.md](docs/roadmap.md#next-task).
+**Board journey.** The current owner request targets Rust GPUI/WASM. Open a board from the list, rename an item, then restart the client and show the saved value. Use the [UI port checklist](plan/ui-port-checklist.md) and record differences in [docs/workflows.md](docs/workflows.md). Desktop acceptance is still open. Details: [docs/roadmap.md](docs/roadmap.md#next-task).
 
 ## Progress log
 
 Newest first. After each delivery, add one dated entry: what changed, what you saw in the app, what stayed unverified, and the next action. Link the feature note or files. This is the project's memory; do not move it into chat.
+
+**2026-11-28 — WASM board list → rename → reopen.** The viewer opens a two-board list with persistent navigation, a selected title and compact grouped name cells. In Chrome the second Review kept its new name after closing and reopening the tab; the first Review and Sketch stayed unchanged. F2 and whitespace rejection on blur worked. The debug viewer initially trapped while laying out a board; optimizing the web crate made the same journey render. Three GPUI tests, four board-domain tests and 43 host/DB tests passed. Next: match board-level rename recovery and compare conflict/retry on the same fixture. [Workflow evidence and remaining layout gaps](docs/workflows.md).
 
 **2026-11-28 — Agent setup reset.** Rustday now runs on the internal tool's agent model: direct owner authority, workflow **and** UI parity as equal acceptance, 100% Rust restated, optional runner, no custom UI harness, and a delivery order that starts with the desktop board journey. Changed `AGENTS.md`, `opencode.json`, `ROADMAP.md`, `README.md`, `docs/README.md`, `docs/workflows.md`, `docs/roadmap.md`, `docs/gaps.md` and the project skills. No application code changed. Next: build the desktop board journey.
 
@@ -99,28 +101,11 @@ Each packet is one file under [packets](packets/) and is loaded only when dispat
 - [56-web-test-harness](packets/56-web-test-harness.md) — Observe the live canvas with Computer Use and compare the results with independent host/store checks.
 - [57-delete-js-preview](packets/57-delete-js-preview.md) — Completely remove the JavaScript preview, its routes, feature, example and harness after parity is verified.
 
-## Delivery phases after the first slice
+## Longer-term shape
 
-Each row is a group of independently testable packets. For each area, inventory the user actions, persisted settings, contracts and supported clients **before** estimating it. Add newly identified behavior to the register even if it falls between phases. The exit scenarios below are representative gates, not the entire inventory.
+After the desktop journey, follow the [delivery order](#delivery-order-owner-direction-2026-11-28): groups and items, then board chrome, then auth, then Android and the browser. Later areas - columns, views, imports, collaboration and automations - enter the order as the desktop app reaches them, always with the same rule: one visible journey, the internal tool open beside it, workflow and UI parity together.
 
-| Order | Deliver in this order | Exit scenario |
-|---|---|---|
-| 1. Identity, access and navigation | Sign-in and sessions → users, roles and teams → workspace/board access → sidebar, stable destinations, Back/Forward and copy-link actions. | Two users open the same deep link. Each sees exactly what their role allows. Following a link does not grant access; a denied write leaves the board unchanged. |
-| 2. Board structure and grid | Workspaces and folders → boards, groups, items and subitems → selection, ordering, moves, bulk actions and lifecycle operations. Match grid density, scroll position, keyboard focus, menus, drag targets and draft retention. | Move a mixed selection, reload, then open an item by its original link. Verify IDs, order and focus; exercise an unavailable destination and a conflicting edit. |
-| 3. Columns and relationships | Inventory every column type. Implement setup, defaults, validation, editors and display; then formulas, linked records, derived values and file cells. Reuse the same rules for direct edits, batch writes and imports. | For every type, create, edit, clear and reload a value. Include empty versus zero, date boundaries, renamed labels and unavailable linked items where applicable. Verify stored and displayed results separately. |
-| 4. Views, charts and forms | Saved layouts → filtering, sorting and grouping → chart settings and drill-down → form configuration, validation and submission. Preserve shared versus personal settings. | Two users reopen a configured view and see the intended rows, ordering and settings. A valid form creates the expected item once; an invalid submission preserves input without creating an item. |
-| 5. Imports, exports and history | Spreadsheet and archive formats → URL acquisition → mapping and relationship resolution → preview, progress, cancellation, retry and publication. Preserve historical values separately from editable current state. | Import a synthetic board with duplicate labels, attachments and cross-board links. Interrupt and retry it; verify row counts, identities, history and links. Reject a malformed file without exposing partial results. Check export/reimport for each supported round trip. |
-| 6. Collaboration and discovery | Item conversations, replies, mentions and files → workspace chat and activity → inbox and notifications → personal work, quick search, global search and preferences. | Mention a teammate, open the notification on another client, and navigate to the intended item. Check read state after reconnect, file preview failure, and search visibility for a user without access. |
-| 7. Automations and integrations | Triggers, conditions, action graphs and configuration → durable scheduling and retries → provider adapters, inbound events and delivery status → assistant conversations, tools and recovery. | Commit a change, restart the worker, and redeliver the same synthetic event. Verify the intended effect occurs once where guaranteed. Show a failed or ambiguous delivery distinctly from the saved edit; recover an interrupted assistant operation. |
-| 8. Client and API completion | Verify each applicable workflow on desktop, web, mobile and programmatic clients as it lands. Close remaining gaps in GraphQL operations, compatibility APIs, tool contracts, live refresh, mobile navigation, drafts, files and settings. | Run the same synthetic journey through each supported entry point. Compare values, IDs, errors, access decisions and side effects. Include concurrent edits, an independent tab, and a disconnected mobile client returning with a draft. Browser work targets the GPUI wasm client in `crates/web`; evidence from the JavaScript preview is transitional ([decision](docs/web-client-stack.md)). |
-| 9. Upgrade and delivery | Database migrations, configuration, backup/restore → desktop installation and update → hosted service and mobile packages → final regression run. | Upgrade a populated synthetic installation. Reopen saved views and links, verify identities, attachments and pending work, then restore a backup into a clean instance and rerun the critical journeys. |
-
-## Turn a phase into runnable work
-
-1. Pick the smallest unfinished user journey whose dependencies are verified. Give it a stable packet ID, synthetic fixture, expected visible **and** stored outcome, failure case and named check. For example, split column work by behavior family rather than attempting the entire column catalogue in one chat.
-2. Write its acceptance criteria in `packets/<packet-id>.md` and add its gate to the runner before dispatch. Use one fresh session per packet. Aim for 10,000–20,000 changed lines for large commits; split earlier at a tested boundary and never exceed 20,000. Merge specs smaller than one workflow instead of dispatching them separately.
-3. Start with a Kit control. If it cannot support a required interaction, put the reusable control in its own crate with a public API, synthetic example and interaction test. Keep board operations and persistence in the app.
-4. Finish with a handoff linking the rule owner, fixture, checks run, observed results, remaining gaps and one next action. A blocked packet remains open. Re-run affected earlier journeys when a shared rule changes.
+Do not maintain a second phase table or convert areas into packets. The next task lives in [docs/roadmap.md](docs/roadmap.md#next-task); the history lives in the [progress log](#progress-log).
 
 ## Release gate: when can we call it 1:1?
 

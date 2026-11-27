@@ -1,8 +1,8 @@
 # Working on boardcraft
 
-boardcraft is the native Rust port of the internal tool: the same board workflows and the same interface, rebuilt in Rust with Longbridge GPUI Kit and PostgreSQL. Scope is the workflows and ui the internal tool actually uses, not every feature any board product has ever shipped.
+boardcraft is the native Rust port of the internal tool: the same board workflows and the same interface, rebuilt in Rust with Longbridge GPUI Kit and PostgreSQL. Scope is the workflows and UI it actually uses, not every feature any board product has ever shipped.
 
-**Owner direction (2026-11-28):** port the internal tool. the internal tool is our own product, so its code, screens, names and screenshots are the reference for both workflow and UI parity.
+**Owner direction (2026-11-28):** port the internal tool. It is our own product, so its code, screens, names and screenshots are the reference for both workflow and UI parity. Local details live in `plan/internal-tool.md`; that file is ignored and never committed.
 
 ## Authority
 
@@ -16,7 +16,7 @@ boardcraft is the native Rust port of the internal tool: the same board workflow
 
 1. Read [the next task](docs/roadmap.md#next-task), the [current gaps](docs/gaps.md) and the [delivery order](ROADMAP.md#delivery-order-owner-direction-2026-11-28). Open the one or two docs that feature needs; do not read the whole queue.
 2. Run the app before changing it, and again after. See [development](docs/development.md). If it does not run, fixing that is the task.
-3. `plan/` and `out/` are optional scratch space. Work without them.
+3. `plan/` holds local reference notes (ignored) and `out/` scratch output. Work without them; never commit `plan/`.
 4. After a delivery, add a dated entry to the [progress log](ROADMAP.md#progress-log): what changed, what you saw, what stayed unverified, next action. Update the workflow row and [gaps](docs/gaps.md) in the same pass.
 
 ## Delivery first
@@ -26,7 +26,7 @@ boardcraft is the native Rust port of the internal tool: the same board workflow
 - Add layers, tables, jobs and abstractions when a feature needs them. No speculative scaffolding and no auth before the workflow it protects.
 - Unauthenticated prototypes stay loopback-only. Add sign-in, sessions and access control before shared deployment, not before the board works.
 - Make small changes, run the focused checks, keep going. Do not batch 10,000-line packets or wait for a runner to tell you the work is real.
-- Packets, gates, the runner and handoffs are optional bookkeeping. Use them when they help; they never block a change the owner asked for.
+- Packets, gates, the runner and `handoffs/*.json` are historical bookkeeping, not part of normal work. Do not create a new handoff, packet or runner marker: the dated progress-log entry replaces it. Use the runner only when Michael explicitly asks for unattended dispatch.
 
 ## Parity: workflow and UI
 
@@ -38,13 +38,13 @@ boardcraft is the native Rust port of the internal tool: the same board workflow
 - Check side by side: the internal tool in one window, boardcraft in the other, same fixture. Use the running desktop app and Computer Use for native windows; use Chrome and the `chrome-devtools` MCP for the browser client.
 - Record every remaining difference in the [workflow register](docs/workflows.md). A workflow with an open UI gap stays open; do not claim parity from a passing test.
 
-## Build it the the internal tool way
+## Build it the reference way
 
 - One named Rust operation owns each business rule; UI actions, imports and jobs call it. Stable IDs, explicit inputs, typed outcomes.
 - Persist related writes in one transaction and report success only after commit. Keep reads bounded and ordered. Keep database work off the UI thread.
 - Distinguish validation, missing records and real faults. Keep drafts on failure and give the user retry, reload or recovery.
 - Start with stock GPUI Kit controls. If one is missing, add the smallest working control in `boardcraft-ui`, use it in the app, then improve it. Do not block a feature on docs, examples, interaction tests or accessibility gates; add them once the screen works.
-- **100% Rust.** Application logic, desktop, browser and Android are Rust. the internal tool's C# and React are behaviour and UI reference only: translate the intent into Rust, never copy its code, JavaScript, TypeScript, XAML or CSS. Do not add Electron, Tauri, a webview, a second view layer or handwritten JS/TS. Keep the wasm GPUI browser shell.
+- **100% Rust.** Application logic, desktop, browser and Android are Rust. Its C# and React are behaviour and UI reference only: translate the intent into Rust, never copy its code, JavaScript, TypeScript, XAML or CSS. Do not add Electron, Tauri, a webview, a second view layer or handwritten JS/TS. Keep the wasm GPUI browser shell.
 - Credentials come from the process environment; sessions stay in memory. Never write passwords or tokens to disk or a credential manager.
 - One direction of crate dependencies, as in the [architecture](docs/architecture.md). No `unsafe` in workspace crates.
 

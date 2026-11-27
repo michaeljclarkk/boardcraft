@@ -18,7 +18,7 @@ From the checkout root on Windows:
 cargo run --locked --manifest-path tools/Cargo.toml -- viewer
 ```
 
-The Rust viewer builds the GPUI WebAssembly client and opens **Review** in your default browser as the local owner. No username or password is needed. The terminal also prints the board address. Press Enter there to stop the host and discard the fixture. See [viewer setup and rebuilds](docs/development.md#browser-viewer).
+The Rust viewer builds the GPUI WebAssembly client and opens the board list in your default browser as the local owner. Choose **Review** to try the rename journey, or **Backlog** for an empty board. No username or password is needed. Press Enter in the terminal to stop the host and discard the fixture. See the [UI port checklist](plan/ui-port-checklist.md) and [viewer setup](docs/development.md#browser-viewer).
 
 ## Requirements
 
@@ -40,7 +40,7 @@ cargo run --locked --manifest-path tools/Cargo.toml -- postgres exec -- cargo ru
 
 Use Computer Use for live UI observations and GPUI Kit tests for control behavior. The former browser and Android UI drivers are historical; do not rebuild them.
 
-**Resume (only if a queue run was started):** inspect the last handoff and terminal error, fix the blocker, and run the same command in the same checkout. Partial edits remain on disk. New checkouts keep runner state in `.boardcraft/`; existing `.rustday/` state is reused in place. If both directories exist, the runner stops. After an abrupt shutdown, confirm the runner and worker have exited before removing a stale `lock`. Verification markers are local to this checkout.
+**Resume (only if a queue run was started):** inspect the terminal error, fix the blocker, and run the same command in the same checkout. Partial edits remain on disk. New checkouts keep runner state in `.boardcraft/`; existing `.rustday/` state is reused in place. If both directories exist, the runner stops. After an abrupt shutdown, confirm the runner and worker have exited before removing a stale `lock`.
 
 **Extending the queue (optional):** register the packet and its inherited outcomes in [tools/src/packets.rs](tools/src/packets.rs) and update the [gate inventory](tools/tests/cutover-gates.tsv). Run the tools tests and check `status` before dispatch. A historical checkpoint does not verify a replacement client.
 

@@ -4,7 +4,7 @@ Updated 2026-11-28. This file holds the one task to work on next. The delivery o
 
 ## Next task
 
-**Desktop board journey.** With the internal tool open in a second window, make the boardcraft desktop app open the board list, open a board and rename an item, then restart and show the saved value.
+**Board journey, Rust GPUI/WASM first for this pass.** Use the local UI port checklist in `plan/` (ignored, never commit) with the internal tool open beside the viewer: open the board list, open a board and rename an item, then close the client and show the saved value on reopen. Native desktop acceptance remains separate.
 
 Acceptance:
 
@@ -15,7 +15,7 @@ Acceptance:
 - Failure states (validation, unavailable, conflict, retry) look and behave like the internal tool.
 - Any remaining difference is written in [workflows.md](workflows.md), not left in chat.
 
-Do not start groups, auth, Android or the browser until this journey is demoable.
+Finish this journey before starting group management, auth or Android.
 
 ## Recently delivered
 

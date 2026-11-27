@@ -33,7 +33,7 @@ The [GPUI WebAssembly client](web-client-stack.md) is the browser UI. The JavaSc
 | Android fixture board editor | [`BoardView`](../android/src/lib.rs), [launch arguments](../android/src/connection.rs), [APK build](../tools/android/src/package.rs) | One Kit Root owns the board view and input. Without arguments it opens the offline fixture. UUID and port select a connected host but supply no session: the protected host rejects the read until a native session is available. |
 | Framework versions | [Workspace](../Cargo.toml) and [Android package](../android/Cargo.toml) | Select Kit `=0.11.0` as a unit; use its GPUI re-exports rather than adding an independent GPUI revision. |
 | Development database | [Rust helper](../tools/src/postgres.rs) | Own the disposable local cluster and test login. |
-| Milestone execution | [Rust runner](../tools/src/queue.rs) and [gates](../tools/src/gates.rs) | Dispatch a worker, check the handoff and required suites, and keep a packet pending when an essential live check lacks a Computer Use observation. |
+| Milestone execution | [Rust runner](../tools/src/queue.rs) and [gates](../tools/src/gates.rs) | Optional unattended dispatch. Normal work follows the delivery order and records a dated progress-log entry. |
 
 For board edits, the intended path is Kit editor → named Rust operation → PostgreSQL transaction → accepted value back to the editor. The draft remains view state. Add owner links as each boundary lands; avoid creating empty crates to match this diagram.
 

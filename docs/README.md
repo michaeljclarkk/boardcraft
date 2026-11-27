@@ -24,8 +24,8 @@ Documents answer questions. They are not a second task list.
 4. **One place per delivery.** Do not write a second task list. A delivery gets a dated progress-log entry plus its workflow row; once it outgrows a row, a feature note.
 5. **Feature notes on growth, not on creation.** When a workflow outgrows its register row, add `docs/features/<workflow>.md` and link it from the register. Describe the user action, the success and recoverable failure, the rule owner, and how to reproduce the check with synthetic data.
 6. **Decisions live beside their behaviour.** Record a consequential design decision in the document that explains that behaviour and date it. Replace obsolete guidance in place; never leave two versions.
-7. **Name only what we own.** the internal tool is our product and may be named as the porting reference. Do not name, link or copy a third-party product's assets, code, wording or screenshots.
-8. **Private material stays private.** Captures, records, transcripts, absolute paths and credentials never enter `docs/`, `packets/` or `handoffs/`. `plan/` is the gitignored notebook.
+7. **Name only what we own.** The internal tool is our own product. Do not name it, its files or its screenshots in a committed document; local details stay in `plan/internal-tool.md` (ignored). Do not name, link or copy a third-party product's assets, code, wording or screenshots either.
+8. **Private material stays private.** Captures, records, transcripts, absolute paths and credentials never enter `docs/` or `packets/`. `plan/` is the gitignored notebook.
 9. **Keep documents small.** Shorter than the code they describe, and a table row with a link beats a restated paragraph.
 
 ## Ownership

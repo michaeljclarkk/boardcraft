@@ -4,6 +4,8 @@ Updated 2026-11-28. This is the short list of what is not done or not verified. 
 
 ## UI parity
 
+- WASM now shows the board list, selected title and grouped name column. The [live rename/reopen check](workflows.md) passed in Chrome. Next: place failed-rename recovery at board level and compare conflict and retry; configured columns, view toolbar and same-fixture visual comparison are still open.
+
 - The desktop board journey has not been compared with the internal tool yet. Record every difference — layout, controls, labels, density, states, keyboard/focus, pointer/touch — in [workflows.md](workflows.md).
 - Stock GPUI Kit coverage of the internal tool's table, group menu and drag behaviour is unmeasured. Build a control only when the screen needs it.
 
