@@ -2,6 +2,7 @@
 use super::navigation::Page;
 use super::*;
 use boardcraft_mobile_edit_client::MainTableRead;
+use gpui_kit::base::ElementExt;
 use gpui_kit::component::{
     ActiveTheme, IconName, Sizable,
     button::ButtonVariants,
@@ -10,6 +11,7 @@ use gpui_kit::component::{
 };
 mod archive;
 mod group_fields;
+mod group_order;
 mod item_entry;
 mod selection;
 mod selection_move;
@@ -54,6 +56,7 @@ pub(super) struct MainTable {
     archive_triggers: std::collections::HashMap<Uuid, FocusHandle>,
     root_command: Option<RootCommand>,
     undo: Option<Undo>,
+    drag: std::rc::Rc<std::cell::RefCell<boardcraft_ui::HeadingDrag>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -80,7 +83,7 @@ impl MainTable {
     ) -> Self {
         let editable = read.is_editable();
         let mut subscriptions = Vec::new();
-        let headings =
+        let headings: Vec<Heading> =
             read.groups()
                 .iter()
                 .map(|g| {
@@ -197,6 +200,9 @@ impl MainTable {
             })
             .collect();
         Self {
+            drag: std::rc::Rc::new(std::cell::RefCell::new(boardcraft_ui::HeadingDrag::new(
+                headings.iter().map(|h| h.id.clone()),
+            ))),
             revision: read.view_revision(),
             board_revision: read.revision(),
             editable,
@@ -295,9 +301,60 @@ impl MainTable {
         if self.headings.is_empty() {
             column = column.child(Label::new("Empty board"));
         }
+        let drag = self.drag.clone();
+        let mut groups = div()
+            .id("physical-groups")
+            .relative()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .on_prepaint(move |bounds, w, _| {
+                drag.borrow_mut()
+                    .set_viewport(bounds.intersect(&w.visual_viewport_bounds()));
+            })
+            .capture_key_down(cx.listener(|v, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape"
+                    && let Screen::Navigation(nav) = &mut v.screen
+                    && let Page::Items(_, table) = &mut nav.page
+                    && table.drag.borrow().is_held()
+                {
+                    table.drag.borrow_mut().cancel();
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }));
         for h in &self.headings {
-            column = column.child(self.render_heading(h, cx));
+            groups = groups.child(self.render_heading(h, cx));
         }
+        if let Some(marker) = self.drag.borrow().marker() {
+            let offset = marker.origin - self.drag.borrow().surface_origin();
+            // Resolved window geometry translated to this positioned surface, not layout constants.
+            groups = groups.child(
+                div()
+                    .id("group-order-marker")
+                    .test_support()
+                    .absolute()
+                    .left(offset.x)
+                    .top(offset.y)
+                    .w(marker.size.width)
+                    .h(marker.size.height)
+                    .bg(cx.theme().primary),
+            );
+        }
+        if let Some(id) = self.drag.borrow().moving_id()
+            && let Some(h) = self.headings.iter().find(|h| h.id.as_ref() == id)
+        {
+            groups = groups.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .bg(cx.theme().popover)
+                    .px_2()
+                    .child(Label::new(format!("Moving {}", h.name))),
+            );
+        }
+        column = column.child(groups.child(self.group_drag_events(cx)));
         column
     }
 
@@ -308,7 +365,19 @@ impl MainTable {
         let group_empty = h.rows.is_empty();
         let view = cx.weak_entity();
         let manageable = self.manageable;
-        let mut header = div().flex().items_center().gap_2();
+        let up = self.headings.first().is_some_and(|first| first.id != h.id);
+        let down = self.headings.last().is_some_and(|last| last.id != h.id);
+        let geometry = self.drag.clone();
+        let geometry_id = h.id.clone();
+        let mut header = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .on_prepaint(move |bounds, _, _| {
+                if let Some(s) = geometry.borrow_mut().section_mut(&geometry_id) {
+                    s.set_heading(bounds);
+                }
+            });
         header = header.child(
             Button::new(SharedString::from(format!("fold-{id}")))
                 .small()
@@ -341,6 +410,21 @@ impl MainTable {
                 .disabled(self.pending || self.reconcile)
                 .dropdown_menu(move |menu, _, _| {
                     let mut menu = menu;
+                    for (label, delta, enabled) in
+                        [("Move group up", -1, up), ("Move group down", 1, down)]
+                    {
+                        let view = view.clone();
+                        let id = menu_id.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new(label)
+                                .disabled(!manageable || !enabled)
+                                .on_click(move |_, w, cx| {
+                                    _ = view.update(cx, |v, cx| {
+                                        v.move_main_table_group(&id, delta, w, cx)
+                                    });
+                                }),
+                        );
+                    }
                     for label in ["Rename group…", "Change group colour…"] {
                         let view = view.clone();
                         let id = menu_id.clone();
@@ -391,11 +475,18 @@ impl MainTable {
 
     fn render_heading(&self, h: &Heading, cx: &mut Context<Connected>) -> impl IntoElement {
         let expanded = !h.collapsed;
+        let geometry = self.drag.clone();
+        let id = h.id.clone();
         let mut section = div()
             .id(SharedString::from(format!("group-{}", h.id)))
             .flex()
             .flex_col()
             .gap_2()
+            .on_prepaint(move |bounds, _, _| {
+                if let Some(s) = geometry.borrow_mut().section_mut(&id) {
+                    s.set_section(bounds);
+                }
+            })
             .child(self.render_heading_header(h, cx));
         if expanded {
             section = section.child(self.render_heading_body(h, cx));

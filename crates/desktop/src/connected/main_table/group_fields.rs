@@ -191,17 +191,27 @@ impl MainTable {
     }
     pub(super) fn group_name(&self, h: &Heading, cx: &mut Context<Connected>) -> AnyElement {
         let id = h.id.clone();
-        Button::new(SharedString::from(format!("group-name-{id}")))
-            .small()
-            .ghost()
-            .label(h.name.clone())
-            .track_focus(&h.name_focus)
-            .disabled(self.pending || self.reconcile || !self.manageable)
-            .on_click(cx.listener(move |v, event: &ClickEvent, w, cx| {
-                if event.click_count() == 2 {
-                    v.open_group_fields(Some(&id), w, cx);
+        let geometry = self.drag.clone();
+        let geometry_id = id.clone();
+        div()
+            .on_prepaint(move |bounds, _, _| {
+                if let Some(s) = geometry.borrow_mut().section_mut(&geometry_id) {
+                    s.set_name(bounds);
                 }
-            }))
+            })
+            .child(
+                Button::new(SharedString::from(format!("group-name-{id}")))
+                    .small()
+                    .ghost()
+                    .label(h.name.clone())
+                    .track_focus(&h.name_focus)
+                    .disabled(self.pending || self.reconcile || !self.manageable)
+                    .on_click(cx.listener(move |v, event: &ClickEvent, w, cx| {
+                        if event.click_count() == 2 {
+                            v.open_group_fields(Some(&id), w, cx);
+                        }
+                    })),
+            )
             .into_any_element()
     }
 }

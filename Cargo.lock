@@ -733,6 +733,7 @@ dependencies = [
  "boardcraft-board",
  "boardcraft-mobile-edit-client",
  "boardcraft-mobile-edit-host",
+ "boardcraft-ui",
  "gpui-kit",
  "postgres",
  "ring",
@@ -771,6 +772,13 @@ dependencies = [
  "tiny_http",
  "uuid",
  "wait-timeout",
+]
+
+[[package]]
+name = "boardcraft-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
 ]
 
 [[package]]

@@ -107,7 +107,9 @@ fn forward(
         archive_reads.fetch_add(1, SeqCst);
     }
     let entry = (first.starts_with("POST ") || first.starts_with("PUT "))
-        && (first.contains("/main-table/items") || first.contains("/main-table/groups"));
+        && (first.contains("/main-table/items")
+            || first.contains("/main-table/groups")
+            || first.contains("/main-table/group-order"));
     let save = (first.starts_with("POST ") && first.contains("/main-table-fold ")) || entry;
     let length = head
         .lines()

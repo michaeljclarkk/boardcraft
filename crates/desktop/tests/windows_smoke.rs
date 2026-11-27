@@ -26,6 +26,18 @@ mod group_create;
 mod group_edit;
 #[path = "windows/group_fields.rs"]
 mod group_fields;
+#[path = "windows/group_order.rs"]
+mod group_order;
+#[path = "../../mobile-edit-host/tests/fixture/native_group_order.rs"]
+mod native_group_order;
+#[test]
+fn windows_reorders_physical_groups() {
+    group_order::moves();
+}
+#[test]
+fn windows_recovers_group_reorder() {
+    group_order::recovers();
+}
 #[path = "../../mobile-edit-host/tests/fixture/native_group_fields.rs"]
 mod native_group_fields;
 

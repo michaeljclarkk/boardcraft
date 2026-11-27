@@ -38,9 +38,8 @@ pub fn current_owner() {
         EditError::Missing,
     );
     both(&c, HIDDEN, EditError::PermissionDenied);
-    // Only the two new native routes are exposed; no generic structural API.
+    // The field commands do not expose a generic structural API.
     for (method, suffix) in [
-        ("POST", "main-table/group-order"),
         ("POST", "main-table/groups/g-z"),
         ("PUT", "main-table/groups"),
         ("POST", "groups"),

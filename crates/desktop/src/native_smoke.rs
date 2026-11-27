@@ -4,6 +4,7 @@ use gpui_kit::test::{ElementSnapshot, TestEventExt, TestWindowExt};
 pub(super) mod archive;
 pub(super) mod board_link;
 pub(super) mod group_fields;
+pub(super) mod group_order;
 pub(super) mod grouped_entry;
 pub(super) mod login;
 pub(super) mod logout;

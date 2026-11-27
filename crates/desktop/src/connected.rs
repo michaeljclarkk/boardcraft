@@ -37,6 +37,7 @@ pub(super) struct Connected {
     link_input: Option<Entity<InputState>>,
     screen: Screen,
     message: &'static str,
+    scroll: ScrollHandle,
     #[cfg(all(windows, feature = "native-smoke"))]
     pub(super) submissions: usize,
     #[cfg(all(windows, feature = "native-smoke"))]
@@ -102,6 +103,9 @@ pub(super) fn open(port: u16, board: Option<Uuid>, cx: &mut App) {
             } else if mode.starts_with("--groups-") {
                 cx.set_reduce_motion(true);
                 super::native_smoke::group_fields::install(_view, &mode, w);
+            } else if mode.starts_with("--order-") {
+                cx.set_reduce_motion(true);
+                super::native_smoke::group_order::install(_view, &mode, w);
             } else if let Some(board) = board {
                 super::native_smoke::login::install(board, mode == "--smoke-session", w);
             } else {
@@ -121,6 +125,7 @@ impl Connected {
             link_input: None,
             screen: Screen::Loading,
             message: "",
+            scroll: ScrollHandle::new(),
             #[cfg(all(windows, feature = "native-smoke"))]
             submissions: 0,
             #[cfg(all(windows, feature = "native-smoke"))]
@@ -384,6 +389,7 @@ impl Render for Connected {
             .id("connected")
             .size_full()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .flex()
             .flex_col()
             .p_4()

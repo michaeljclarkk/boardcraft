@@ -106,6 +106,9 @@ impl EntryTarget {
 
 impl MainTable {
     pub(super) fn set_busy(&mut self, pending: bool, cx: &mut App) {
+        if pending {
+            self.drag.borrow_mut().cancel();
+        }
         self.pending = pending;
         let enabled = self.editable && !pending && !self.reconcile;
         for h in &self.headings {

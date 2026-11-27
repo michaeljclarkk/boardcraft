@@ -62,6 +62,7 @@ Each packet is one file under [packets](packets/) and is loaded only when dispat
 - [46-windows-selection-move](packets/46-windows-selection-move.md) — Select roots and move them together to a physical group in Windows browse.
 - [47-windows-board-archive](packets/47-windows-board-archive.md) — Archive and restore roots and physical groups in Windows browse.
 - [48-windows-group-fields](packets/48-windows-group-fields.md) — Create a group and edit its name and colour in Windows browse.
+- [49-windows-group-order](packets/49-windows-group-order.md) — Reorder physical groups by menu or drag in Windows browse.
 
 ## Delivery phases after the first slice
 

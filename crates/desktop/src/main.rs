@@ -597,6 +597,16 @@ fn main() {
                             | "--groups-create-session"
                             | "--groups-member"
                             | "--groups-viewer"
+                            | "--order-moves"
+                            | "--order-conflict"
+                            | "--order-commit"
+                            | "--order-demoted"
+                            | "--order-denied"
+                            | "--order-session"
+                            | "--order-ack"
+                            | "--order-refresh"
+                            | "--order-member"
+                            | "--order-viewer"
                     )
                 } else {
                     matches!(

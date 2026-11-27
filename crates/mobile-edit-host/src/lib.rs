@@ -339,7 +339,15 @@ fn handle(
                 ["", "navigation", "boards", _, "main-table", "groups", _]
             )
         );
-    if native_archive || native_group_fields {
+    let native_group_order = mode != Mode::Scoped
+        && matches!(
+            (req.method(), path.as_slice()),
+            (
+                Method::Post,
+                ["", "navigation", "boards", _, "main-table", "group-order"]
+            )
+        );
+    if native_archive || native_group_fields || native_group_order {
         path.remove(4);
     }
     // Opt-in native contract; existing selected and direct reads stay flat.
@@ -416,7 +424,10 @@ fn handle(
         )
         | (Method::Post, ["", "navigation", "boards", board, "groups" | "group-order"])
         | (Method::Put, ["", "navigation", "boards", board, "groups", _])
-            if matches!(shape, ReadShape::Grouped) || native_archive || native_group_fields =>
+            if matches!(shape, ReadShape::Grouped)
+                || native_archive
+                || native_group_fields
+                || native_group_order =>
         {
             (board, SelectedOwner, None)
         }

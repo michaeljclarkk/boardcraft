@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 mod archive;
 mod group_fields;
+mod group_order;
 mod main_table;
 pub use archive::{ArchiveRead, ArchivedGroup, ArchivedItem};
 pub use group_fields::GroupFields;

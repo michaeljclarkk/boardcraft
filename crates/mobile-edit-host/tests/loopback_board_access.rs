@@ -18,6 +18,14 @@ mod native_archive_checks;
 mod native_group_fields;
 #[path = "fixture/native_group_fields_checks.rs"]
 mod native_group_fields_checks;
+#[path = "fixture/native_group_order.rs"]
+mod native_group_order;
+#[path = "fixture/native_group_order_checks.rs"]
+mod native_group_order_checks;
+#[test]
+fn native_group_order_checks_current_owner() {
+    native_group_order_checks::current_owner();
+}
 #[path = "fixture/native_selection.rs"]
 mod native_selection;
 
