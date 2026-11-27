@@ -1,7 +1,5 @@
 use crate::dev::Dev;
 use anyhow::{Context, Result, bail, ensure};
-#[path = "../../crates/mobile-edit-host/examples/web_board_view/lifetime.rs"]
-mod viewer_lifetime;
 use std::{
     env,
     ffi::OsString,
@@ -81,7 +79,7 @@ fn database(_: &Dev, _: &[OsString]) -> Result<()> {
 }
 
 fn viewer(dev: &Dev, args: &[OsString]) -> Result<()> {
-    viewer_lifetime::duration(args).map_err(anyhow::Error::msg)?;
+    crate::viewer_lifetime::duration(args).map_err(anyhow::Error::msg)?;
     crate::web_platform::prepare(dev)?;
     let mut child = dev.command("cargo")?;
     #[cfg(windows)]

@@ -3,6 +3,7 @@ mod dev;
 mod port_status;
 #[cfg(windows)]
 mod postgres;
+mod viewer_lifetime;
 mod web_platform;
 
 fn main() -> std::process::ExitCode {
