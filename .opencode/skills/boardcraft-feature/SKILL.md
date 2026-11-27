@@ -1,19 +1,40 @@
 ---
 name: boardcraft-feature
-description: Implement or review a boardcraft workflow across Rust, PostgreSQL and GPUI, including state ownership, failure recovery and milestone evidence.
+description: Build or review a boardcraft workflow so it ships end to end with both workflow parity and UI parity against the internal tool.
 ---
 
-Start with a user action. What record does it affect, what must stay true, and what will the user see if saving fails?
+Start with the user action. What does the user click, what record changes, what do they see, and what happens when the save fails? Finish that journey in the running app before widening scope.
 
-Use Rust for implementation and the viewer. For UI checks use only GPUI Kit's own Rust testing support and Computer Use on the running app. No custom browser driver, OCR, CDP harness, or substitute automation; report a visual check as unverified when Computer Use is unavailable. Do not add hand-written JS/MJS/CJS/TS, including scripts embedded as Rust strings. See the [language decision](../../../docs/web-client-stack.md).
+## Order of work
 
-**Scope rule for coordinators and workers.** Name the observable reference workflow or explicit owner request in the brief and handoff. A test strategy, toolkit example or another project's feature is not a product requirement. If Computer Use cannot reach a control, record what was not observed. Build a missing shared control only when the user action itself needs it. Before introducing a new platform bridge, dependency fork or second representation of application state, show which in-scope action fails with the existing stack and get the owner's decision. Continue unrelated in-scope work while that decision is open.
+1. Run the app and the same screen in the internal tool side by side.
+2. Build the smallest vertical slice: control → named Rust operation → PostgreSQL commit → accepted result back in the view.
+3. Exercise it in the running app, restart, and check the saved state.
+4. Match the internal tool's UI, then record any remaining difference.
 
-- **One client stack.** Desktop, Android and the browser use GPUI Kit. Browser work targets the wasm shell in `crates/web` and shared controls in `crates/boardcraft-ui`; both must compile for `wasm32-unknown-unknown`. Do not add hand-written browser application JavaScript, keep the JavaScript preview as a fallback, or add a second view layer. See [the decision](../../../docs/web-client-stack.md).
-- **No UI fallback.** If Kit lacks an interaction, build it in `crates/boardcraft-ui` with a public API, docs, a synthetic example, an interaction test and accessibility semantics. Do not embed HTML/CSS/JS/React/TSX, a webview, iframe or DOM overlay, and do not keep a web-only control. Keep it domain-free and document the missing Kit capability so it can be shared or proposed upstream later; an upstream PR is not required in a packet. See [shared GPUI components](../../../docs/gpui-components.md).
-- **One rule owner.** Trace the interaction from the Kit control to a named Rust operation and back. A keyboard shortcut, context menu and import performing the same action should call that operation. Use stable record IDs; titles and row positions can change.
-- **One commit point.** Keep related PostgreSQL writes in a transaction. Report the accepted value after commit. If an edit also schedules required work, persist that intent with the edit and make retries safe. Only add this machinery to a feature that needs it.
-- **A recoverable editor.** Run I/O away from the GPUI event thread. Distinguish an editable draft from a pending request and a saved value. On failure, keep the draft and give the user a way to retry or reload. Show a stale edit as a conflict rather than silently overwriting another user's change.
-- **Proportionate reads.** Fetch the rows and fields the view needs in a stable order. Check for a query per row before reaching for a cache. Prefer a stock Kit control unless a specific interaction requires a custom one.
+Do not batch a large packet or wait for a test gate to declare the work real.
 
-Test at the boundary where a mistake would show up. For a rename, create two items with the same title, edit one, reconnect, and check both IDs and their order. Interrupt a save and verify the stored value and the draft independently. In the handoff, identify the rule owner, the check that passed, and anything that still needs to be exercised in the running app.
+## Parities
+
+**Workflow parity:** same action, inputs, controls, result, failure and recovery as the internal tool.
+
+**UI parity:** same screen structure, control choice, labels and order, density, emphasis, empty/loading/saving/error states, keyboard and focus behaviour, pointer and touch behaviour, and visible result. Compare screenshots at the same window size and fixture.
+
+A workflow with an open UI difference stays open in [docs/workflows.md](../../../docs/workflows.md). Passing tests do not close it.
+
+## Rules
+
+- One named Rust operation owns the business rule. UI actions, imports and jobs call it.
+- Stable IDs, explicit inputs, typed outcomes. A label or position is not an identity.
+- One transaction for related writes; report success after commit.
+- Keep drafts on failure; give the user retry, reload or recovery.
+- Keep database work off the UI thread.
+- Start with stock GPUI Kit controls. If one is missing, add the smallest working control in `boardcraft-ui`, use it, then improve it. Do not block the screen on docs, examples or accessibility gates.
+- Port the internal tool's behaviour and translate its logic into Rust; it is our product. Its C#/React/XAML/CSS is reference only — no JavaScript, TypeScript, XAML or CSS goes into boardcraft. Keep the stack 100% Rust.
+
+## Verification
+
+- Focused Rust tests at the boundary that can break: store for persistence, host for access, a running control for input and focus.
+- Use the running desktop app and Computer Use for native windows; Chrome with the `chrome-devtools` MCP for the browser.
+- No custom browser driver, OCR, accessibility mirror, DOM mirror or substitute harness. If a visual check cannot run, say what you could not see.
+- Report the actions you performed and what you saw, not just a green build.

@@ -88,7 +88,7 @@ cargo install wasm-bindgen-cli --version 0.2.130 --locked
 cargo run --locked --manifest-path tools/Cargo.toml -- viewer
 ```
 
-Choose disposable credentials at the viewer's console prompts. Open its printed loopback URL in your normal browser, sign in and open **Review**. Keep the terminal open while using the board. Press Enter there to stop the host and drop its fixture. After a source change, rerun `viewer` and open the new URL: the host snapshots assets at startup.
+The viewer opens **Review** in your default browser as the fixed local owner; there are no credentials to choose or enter. The terminal also prints the loopback URL for another browser. Refreshing or opening a new tab uses that same identity. Keep the terminal open while using the board. Press Enter there to stop the host and drop its fixture. After a source change, stop the old viewer and rerun `viewer`: the host snapshots assets at startup.
 
 For a live check, use Computer Use to rename the second of the two **Review** items, reopen the board and compare both names. Use GPUI Kit tests for control behavior. For authorization, scope, commits and rollback run the existing host tests against the disposable database:
 
@@ -169,7 +169,7 @@ cargo test --locked --manifest-path tools/Cargo.toml
 bc status
 ```
 
-Start one feature session with `bcdb cargo run --locked --manifest-path tools/Cargo.toml -- run 1`. The [runner guide](../README.md#run-the-queue) explains restarts.
+Normal development does not use the runner. Build and test directly, or start a feature session only when Michael asks for queue dispatch with `bcdb cargo run --locked --manifest-path tools/Cargo.toml -- run 1`. The [optional runner guide](../README.md#optional-packet-runner) explains restarts.
 
 ## Change size
 

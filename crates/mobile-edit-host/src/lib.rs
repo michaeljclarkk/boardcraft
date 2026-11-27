@@ -26,6 +26,9 @@ pub struct Host {
     pub port: u16,
 }
 
+/// Stable fixture identity used by the local Review viewer and its stored board operations.
+pub const REVIEW_OWNER: Uuid = Uuid::from_u128(0x172a0b9a_9e99_48ca_a499_8278376d5271);
+
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
     Scoped,
@@ -35,18 +38,18 @@ enum Mode {
 
 impl Host {
     pub fn start(config: &Config, board: BoardId) -> Result<Self, &'static str> {
-        Self::listen(config, board, Mode::Scoped, None)
+        Self::listen(config, board, Mode::Scoped, None, false)
     }
 
     /// Advertise the caller's visible catalog. Item requests still target only `board`.
     pub fn start_with_navigation(config: &Config, board: BoardId) -> Result<Self, &'static str> {
-        Self::listen(config, board, Mode::Navigation, None)
+        Self::listen(config, board, Mode::Navigation, None, false)
     }
 
     /// Serve the exact-origin web session API without a client asset bundle.
     /// Useful for independent transport and store acceptance checks.
     pub fn start_web_api(config: &Config, board: BoardId) -> Result<Self, &'static str> {
-        Self::listen(config, board, Mode::Web, None)
+        Self::listen(config, board, Mode::Web, None, false)
     }
 
     /// Serve the single Trunk-built wasm client at `/web/` and its session API
@@ -58,7 +61,17 @@ impl Host {
         dist: &std::path::Path,
     ) -> Result<Self, &'static str> {
         let assets = web_assets::Assets::load(dist)?;
-        Self::listen(config, board, Mode::Web, Some(assets))
+        Self::listen(config, board, Mode::Web, Some(assets), false)
+    }
+
+    /// Serve a passwordless local viewer as the fixed synthetic Review owner.
+    pub fn start_disposable_viewer(
+        config: &Config,
+        board: BoardId,
+        dist: &std::path::Path,
+    ) -> Result<Self, &'static str> {
+        let assets = web_assets::Assets::load(dist)?;
+        Self::listen(config, board, Mode::Web, Some(assets), true)
     }
 
     fn listen(
@@ -66,6 +79,7 @@ impl Host {
         board: BoardId,
         mode: Mode,
         web: Option<web_assets::Assets>,
+        disposable_viewer: bool,
     ) -> Result<Self, &'static str> {
         let navigation = mode != Mode::Scoped;
         if config.get_dbname() != Some("rustday_test") {
@@ -77,6 +91,10 @@ impl Host {
         store::migrate(&mut db).map_err(|_| "board migration failed")?;
         boardcraft_account::migrate(config).map_err(|_| "account migration failed")?;
         access::migrate(&mut db).map_err(|_| "board access migration failed")?;
+        if disposable_viewer {
+            db.execute("INSERT INTO accounts(id,username,email,role,active) VALUES ($1,'Review','review@example.invalid','owner',true)", &[&REVIEW_OWNER])
+                .map_err(|_| "cannot seed disposable Review owner")?;
+        }
         let server = Arc::new(
             Server::http((std::net::Ipv4Addr::LOCALHOST, 0)).map_err(|_| "loopback bind failed")?,
         );
@@ -84,7 +102,7 @@ impl Host {
         let listener = server.clone();
         let config = config.clone();
         let worker = thread::spawn(move || {
-            let mut sessions = web_session::Sessions::new(port);
+            let mut sessions = web_session::Sessions::new(port, disposable_viewer);
             while let Ok(mut req) = listener.recv() {
                 let wrong_host = mode == Mode::Web && !sessions.authority_matches(&req);
                 if !wrong_host
@@ -118,10 +136,12 @@ impl Host {
                     match path.as_str() {
                         "/session" => session(&config, &mut db, &mut req).map(|body| (body, None)),
                         "/session/logout" => logout(&config, &req).map(|body| (body, None)),
-                        "/navigation/boards" if navigation => {
-                            navigation_boards(&mut db, &req, access::bearer(&req))
-                                .map(|body| (body, None))
-                        }
+                        "/navigation/boards" if navigation => navigation_boards(
+                            &mut db,
+                            &req,
+                            access::bearer(&req).map(access::Actor::Session),
+                        )
+                        .map(|body| (body, None)),
                         _ => {
                             let token = access::bearer(&req);
                             handle(
@@ -130,7 +150,7 @@ impl Host {
                                 mode,
                                 &mut req,
                                 &path,
-                                token,
+                                token.map(access::Actor::Session),
                                 ReadShape::Flat,
                             )
                         }
@@ -260,14 +280,14 @@ fn logout(config: &Config, req: &Request) -> Result<Vec<u8>, u16> {
 fn navigation_boards(
     db: &mut Client,
     req: &Request,
-    token: Result<Token, u16>,
+    actor: Result<access::Actor, u16>,
 ) -> Result<Vec<u8>, u16> {
     if req.method() != &Method::Get {
         return Err(405);
     }
-    let token = token?;
+    let actor = actor?;
     let mut tx = db.transaction().map_err(access::navigation_unavailable)?;
-    let account = access::resolve(&mut tx, &token)?;
+    let account = actor.resolve(&mut tx)?;
     let summaries = access::list_visible_boards(&mut tx, account)?;
     tx.commit().map_err(access::navigation_unavailable)?;
     Ok(serde_json::to_vec(&summaries).expect("serializable summaries"))
@@ -310,7 +330,7 @@ fn handle(
     mode: Mode,
     req: &mut Request,
     path: &str,
-    token: Result<Token, u16>,
+    actor: Result<access::Actor, u16>,
     shape: ReadShape,
 ) -> ApiResult {
     let mut path: Vec<_> = path.split('/').collect();
@@ -554,7 +574,7 @@ fn handle(
     let target = target
         .map(|id| Uuid::parse_str(id).ok().and_then(ItemId::new).ok_or(404u16))
         .transpose()?;
-    let token = token?;
+    let actor = actor?;
     // Buffer bounded input before acquiring database locks. Do not return draft
     // validation or board data before the caller has been authorized.
     enum Action {
@@ -648,7 +668,7 @@ fn handle(
         log::error!("begin board request failed board={requested}");
         503u16
     })?;
-    let account = access::resolve(&mut tx, &token)?;
+    let account = actor.resolve(&mut tx)?;
     if matches!(operation, ScopedRead | ScopedRename) && requested != scoped_board.as_uuid() {
         return Err(404);
     }

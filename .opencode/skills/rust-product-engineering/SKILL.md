@@ -9,12 +9,12 @@ description: 'Use when designing, building, testing or reviewing a Rust product 
 
 Four demands, in this order when they conflict:
 
-1. **Architecture that cannot rot.** One direction of dependency between crates, one owner per business rule, and a tree where a newcomer knows where a file belongs before writing it.
+1. **A finished workflow.** A user can do the thing in the running app, including loading, empty, saving, conflict and recovery states, and durable follow-up that survives a crash.
 2. **Shared Rust code.** A rule, type, contract or control is written once. A second copy is a defect with a delay fuse.
-3. **Idiomatic Rust.** Types that make invalid states unrepresentable, no panics on runtime paths, errors that say what happened, and borrows that do not pretend to be ownership.
-4. **A finished workflow.** Loading, empty, saving, conflict and recovery states, and durable follow-up that survives a crash.
+3. **Architecture that cannot rot.** One direction of dependency between crates and one owner per business rule.
+4. **Idiomatic Rust.** Types that make invalid states unrepresentable, no panics on runtime paths, errors that say what happened.
 
-Never trade 1 or 2 for speed. A quick module that forks a rule is a rewrite with extra steps.
+Ship the workflow first; keep the other three intact by keeping scope small. Never fork a rule or duplicate state for speed — a quick module that forks a rule is a rewrite with extra steps.
 
 ## The Maintainer Test
 
@@ -53,7 +53,7 @@ Rules that follow from the table:
 - Every workspace crate is registered in one table with its layer. An unregistered crate fails the check, so a new crate cannot quietly land anywhere it likes.
 - Enforce it with a workspace tool that reads `cargo metadata --format-version 1 --no-deps` and fails on upward, sideways, cyclic or unregistered dependencies. Keep the rule engine separate from the metadata parser so the rules are unit-testable.
 - The check runs with the other gates, in the same command that runs formatting, clippy and tests, and stops at the first failure.
-- Moving a crate between layers or adding one is a coordinator decision recorded in `docs/architecture.md`, not a side effect of a feature packet. Where the tree and the document disagree, the document is wrong until the coordinator updates it.
+- Moving a crate between layers or adding one is a recorded architecture decision in `docs/architecture.md`, not a side effect of a feature change. Where the tree and the document disagree, the document is wrong until it is updated.
 
 ### Crate boundary rules
 
@@ -119,7 +119,7 @@ xtask/                  cargo xtask ci | layers | wasm
 android/                separate workspace, same crates by path
 ```
 
-`crates/` holds libraries; `apps/` holds binaries. The desktop and web packages currently sit in `crates/`; moving them is a coordinator decision, not a packet side effect. Migrations live with the crate that owns the tables they create.
+`crates/` holds libraries; `apps/` holds binaries. The desktop and web packages currently sit in `crates/`; moving them is a recorded architecture decision, not a packet side effect. Migrations live with the crate that owns the tables they create.
 
 ### Module rules
 
@@ -275,7 +275,7 @@ When you deliberately keep two implementations, state the concrete difference: l
 
 ## Implement One Vertical Feature
 
-1. **Place it.** Decide the crate, layer and module before writing code. Does it reuse an existing owner, extend one, or need a new crate (coordinator decision)? If the answer is a new module in a dumping ground, stop and name the concept instead.
+1. **Place it.** Decide the crate, layer and module before writing code. Does it reuse an existing owner, extend one, or need a new crate (recorded architecture decision)? If the answer is a new module in a dumping ground, stop and name the concept instead.
 2. **State the contract briefly.** The user action, access scope, authoritative records, success condition and most important failure. No design document for a routine field edit.
 3. **Choose the owner.** One named Rust operation for the business decision, reused by every action that means the same thing. Identify shared policy, and extract it in this change when a real second caller exists.
 4. **Model the data deliberately.** Stable identifiers as newtypes, explicit relationships, constraints and migrations. Choose variable-value representations from real query and validation needs, not a universal `serde_json::Value` bag.
@@ -303,7 +303,7 @@ The architecture question is whether the rule has one owner and the dependency s
 - **Shared vs separate:** share a rule once its meaning is identical at both call sites; keep two implementations when lifetime, validation, storage or change cadence differ, and state which one.
 - **Simple vs recoverable:** keep the direct synchronous commit for the user action; add durable follow-up only when a real consequence needs it. Do not trade correctness for fewer modules.
 - **Fast vs correct:** bounded, well-shaped queries first; caching and concurrency arrive with ownership, invalidation and failure semantics attached.
-- **Clean tree vs delivered feature:** a new module in the right crate beats a new crate in the wrong layer. If the right home does not exist yet, raise it as a coordinator decision rather than inventing `common` locally.
+- **Clean tree vs delivered feature:** a new module in the right crate beats a new crate in the wrong layer. If the right home does not exist yet, raise it as a recorded architecture decision rather than inventing `common` locally.
 - **Responsive vs ordered:** queue I/O and keep sequencing at the owning operation; do not block the UI, and do not scatter detached work.
 - **Compatibility vs clean design:** preserve real consumers and stored data with a bounded migration; do not preserve complexity that has no current consumer.
 - **Modern vs familiar:** established crates behind ordinary domain names. New libraries are welcome; novel internal frameworks are not.
@@ -326,5 +326,5 @@ Add the layering check where it exists, the native and wasm builds for shared co
 
 Scale verification to risk. Do not claim coverage, security approval or device acceptance that was not exercised. One coherent implementation with concise evidence beats two fictional reviews.
 
-For consequential choices, record the decision, the reason, the affected owner and the operational implication in the existing project documentation, through the coordinator when the document is one a packet may not edit. The handoff names the entry point, the rule owner, the persistence and migration, the shared code reused or extracted, and the checks that passed.
+For consequential choices, record the decision, the reason, the affected owner and the operational implication in the existing project documentation, when the document is one a feature change may not edit. The handoff names the entry point, the rule owner, the persistence and migration, the shared code reused or extracted, and the checks that passed.
 

@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use boardcraft_account::Token;
+use boardcraft_mobile_edit_client::{DISPOSABLE_VIEWER, VIEWER_BOARD_PATH};
 use tiny_http::{Header, Method, Request};
 use uuid::Uuid;
 
@@ -26,16 +27,18 @@ pub(super) struct Sessions {
     origin: String,
     cookie: String,
     pairs: HashMap<(Uuid, Uuid), Token>,
+    disposable_viewer: bool,
 }
 
 impl Sessions {
-    pub(super) fn new(port: u16) -> Self {
+    pub(super) fn new(port: u16, disposable_viewer: bool) -> Self {
         let authority = format!("127.0.0.1:{port}");
         Self {
             origin: format!("http://{authority}"),
             authority,
             cookie: format!("boardcraft-{}", Uuid::new_v4()),
             pairs: HashMap::new(),
+            disposable_viewer,
         }
     }
 
@@ -61,6 +64,23 @@ impl Sessions {
             return Err(403);
         }
         let binding = one(req, BINDING)?.ok_or(401u16)?;
+        if path == VIEWER_BOARD_PATH {
+            return if self.disposable_viewer
+                && *req.method() == Method::Get
+                && binding == DISPOSABLE_VIEWER
+            {
+                Ok((serde_json::to_vec(&board.as_uuid()).unwrap(), None))
+            } else {
+                Err(404)
+            };
+        }
+        if self.disposable_viewer {
+            return if binding == DISPOSABLE_VIEWER {
+                board_request(req, path, db, board, access::Actor::ReviewOwner)
+            } else {
+                Err(403)
+            };
+        }
         if path == "/session" && *req.method() == Method::Post {
             if binding != "login" {
                 return Err(403);
@@ -95,19 +115,7 @@ impl Sessions {
                 *cookie_out = Some(self.set_cookie(""));
                 Ok((b"null".to_vec(), None))
             }
-            (&Method::Get, "/navigation/boards") => {
-                navigation_boards(db, req, Ok(token.clone())).map(|body| (body, None))
-            }
-            (_, p) if p.starts_with("/navigation/boards/") => crate::handle(
-                db,
-                board,
-                crate::Mode::Web,
-                req,
-                path,
-                Ok(token.clone()),
-                crate::ReadShape::Grouped,
-            ),
-            _ => Err(404),
+            _ => board_request(req, path, db, board, access::Actor::Session(token.clone())),
         };
         if matches!(result, Err(401)) {
             self.pairs.remove(&pair);
@@ -124,5 +132,29 @@ impl Sessions {
             ),
         )
         .unwrap()
+    }
+}
+
+fn board_request(
+    req: &mut Request,
+    path: &str,
+    db: &mut postgres::Client,
+    board: crate::BoardId,
+    actor: access::Actor,
+) -> ApiResult {
+    if path == "/navigation/boards" && *req.method() == Method::Get {
+        navigation_boards(db, req, Ok(actor)).map(|body| (body, None))
+    } else if path.starts_with("/navigation/boards/") {
+        crate::handle(
+            db,
+            board,
+            crate::Mode::Web,
+            req,
+            path,
+            Ok(actor),
+            crate::ReadShape::Grouped,
+        )
+    } else {
+        Err(404)
     }
 }

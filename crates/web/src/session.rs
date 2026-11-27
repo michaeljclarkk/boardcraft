@@ -1,7 +1,7 @@
 //! Same-origin transport; the host alone holds the account bearer.
 use boardcraft_mobile_edit_client::{
-    ArchiveRead, BOARD_ACCESS_HEADER, BoardSummary, Credentials, EditError, MainTableGroup,
-    MainTableRead, NameEdit, SavedItem, TableCommand,
+    ArchiveRead, BOARD_ACCESS_HEADER, EditError, MainTableGroup, MainTableRead, NameEdit,
+    SavedItem, TableCommand,
 };
 use futures::{FutureExt, future::Either};
 use serde::{Serialize, de::DeserializeOwned};
@@ -10,6 +10,9 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestCredentials, RequestInit, RequestMode, RequestRedirect, Response};
 
+#[cfg(target_family = "wasm")]
+use boardcraft_mobile_edit_client::{BoardSummary, Credentials};
+#[cfg(target_family = "wasm")]
 pub(super) enum Resolution {
     Accepted,
     Rejected,
@@ -132,6 +135,7 @@ fn body(value: &impl Serialize) -> Result<Option<String>, EditError> {
         .map_err(|_| EditError::Transport)
 }
 
+#[cfg(target_family = "wasm")]
 pub(super) async fn resolve(binding: &str, executor: &gpui_kit::BackgroundExecutor) -> Resolution {
     match request::<serde_json::Value>(binding, "GET", "/session", None, executor).await {
         Ok(_) => Resolution::Accepted,
@@ -139,6 +143,7 @@ pub(super) async fn resolve(binding: &str, executor: &gpui_kit::BackgroundExecut
         Err(_) => Resolution::Unavailable,
     }
 }
+#[cfg(target_family = "wasm")]
 pub(super) async fn sign_in(
     credentials: &Credentials,
     executor: &gpui_kit::BackgroundExecutor,
@@ -148,6 +153,18 @@ pub(super) async fn sign_in(
     Uuid::parse_str(&binding).map_err(|_| EditError::Transport)?;
     Ok(binding)
 }
+#[cfg(target_family = "wasm")]
+pub(super) async fn viewer_board(
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<Option<Uuid>, EditError> {
+    use boardcraft_mobile_edit_client::{DISPOSABLE_VIEWER, VIEWER_BOARD_PATH};
+    match request(DISPOSABLE_VIEWER, "GET", VIEWER_BOARD_PATH, None, executor).await {
+        Ok((board, _)) => Ok(Some(board)),
+        Err(EditError::Missing) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+#[cfg(target_family = "wasm")]
 pub(super) async fn logout(
     binding: &str,
     executor: &gpui_kit::BackgroundExecutor,
@@ -156,6 +173,7 @@ pub(super) async fn logout(
         .await
         .map(|_| ())
 }
+#[cfg(target_family = "wasm")]
 pub(super) async fn list(
     binding: &str,
     executor: &gpui_kit::BackgroundExecutor,

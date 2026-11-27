@@ -12,11 +12,24 @@ use std::{cell::RefCell, rc::Rc};
 struct Sample {
     ids: Vec<SharedString>,
     drag: Rc<RefCell<HeadingDrag>>,
+    focus: FocusHandle,
+}
+impl Sample {
+    fn new(cx: &mut Context<Self>) -> Self {
+        let ids = vec!["Alpha".into(), "Beta".into(), "Empty".into()];
+        Self {
+            drag: Rc::new(RefCell::new(HeadingDrag::new(ids.iter().cloned()))),
+            ids,
+            focus: cx.focus_handle(),
+        }
+    }
 }
 impl Render for Sample {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let geometry = self.drag.clone();
         let mut content = div()
+            .id("sample-sections")
+            .track_focus(&self.focus)
             .p_4()
             .flex()
             .flex_col()
@@ -57,7 +70,12 @@ impl Render for Sample {
                             && e.button == MouseButton::Left
                             && !w.last_input_was_touch()
                         {
-                            _ = down.update(cx, |s, _| s.drag.borrow_mut().press(e.position));
+                            _ = down.update(cx, |s, cx| {
+                                s.drag.borrow_mut().press(e.position);
+                                if s.drag.borrow().is_held() {
+                                    s.focus.focus(w, cx);
+                                }
+                            });
                         }
                     });
                     let moving = view.clone();
@@ -99,15 +117,54 @@ fn main() {
         .with_assets(gpui_kit::assets::Assets)
         .run(|cx| {
             gpui_kit::init(cx);
-            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
-                cx.new(|_| {
-                    let ids = vec!["Alpha".into(), "Beta".into(), "Empty".into()];
-                    Sample {
-                        drag: Rc::new(RefCell::new(HeadingDrag::new(ids.iter().cloned()))),
-                        ids,
-                    }
-                })
-            })
-            .expect("open synthetic drag sample");
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(Sample::new))
+                .expect("open synthetic drag sample");
         });
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests {
+    use super::Sample;
+    use gpui_kit::{
+        AppContext, Bounds, MouseButton, Role, TestAppContext, WindowBounds, WindowOptions, px,
+        size,
+        test::{TestEventExt, TestWindowExt},
+    };
+
+    #[gpui_kit::test]
+    fn focused_escape_cancels_without_consuming_the_next_drag(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (handle, sample) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Default::default(),
+                        size(px(600.), px(420.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |_, cx| cx.new(Sample::new),
+            )
+            .unwrap()
+        });
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            let source = w.find("Empty");
+            assert_eq!(source.role(), Some(Role::Button));
+            assert_eq!(source.label(), Some("Empty"));
+            let target = w.find("Alpha").bounds().center();
+            w.pointer_down(source.bounds().center(), MouseButton::Left, cx);
+            w.pointer_move(target, Some(MouseButton::Left), cx);
+            assert!(sample.read(cx).focus.contains_focused(w, cx));
+            assert_eq!(sample.read(cx).drag.borrow().moving_id(), Some("Empty"));
+            w.press("escape", cx);
+            w.pointer_up(target, MouseButton::Left, cx);
+            assert!(sample.read(cx).drag.borrow().moving_id().is_none());
+            assert_eq!(sample.read(cx).ids, ["Alpha", "Beta", "Empty"]);
+            w.drag(source.bounds().center(), target, cx);
+            assert_eq!(sample.read(cx).ids, ["Empty", "Alpha", "Beta"]);
+        })
+        .unwrap();
+    }
 }

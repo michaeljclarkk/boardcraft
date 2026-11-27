@@ -1,17 +1,16 @@
 //! Build and serve the real wasm client for a human using an ordinary browser.
+#[path = "web_board_view/browser.rs"]
+mod browser;
 #[allow(dead_code)]
 #[path = "../tests/fixture/mod.rs"]
 mod fixture;
 
 use std::{io, path::PathBuf, process::Command};
 
-use boardcraft_account::Role;
 use boardcraft_board::{Board, BoardId, ItemId, store};
+use boardcraft_mobile_edit_host::{Host, REVIEW_OWNER};
 use postgres::NoTls;
 use uuid::Uuid;
-
-const USERNAME: &str = "BOARDCRAFT_VIEWER_USERNAME";
-const PASSWORD: &str = "BOARDCRAFT_VIEWER_PASSWORD";
 
 fn main() -> std::process::ExitCode {
     match run() {
@@ -30,69 +29,46 @@ fn run() -> Result<(), &'static str> {
             println!(
                 "web_board_view: build wasm, seed a disposable editable board, and serve until Enter."
             );
-            println!(
-                "Choose disposable credentials at the hidden console prompts, then sign in in your browser."
-            );
-            println!(
-                "A launcher may instead supply both BOARDCRAFT_VIEWER_USERNAME and BOARDCRAFT_VIEWER_PASSWORD in the process environment. Never put them in arguments or URLs."
-            );
+            println!("Open the printed address to edit Review as its local fixture owner.");
             return Ok(());
         }
         _ => return Err("usage: web_board_view [--help]"),
-    }
+    };
     let web = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../web");
     println!("Building the locked wasm client…");
     let status = Command::new("trunk")
         .current_dir(&web)
         .env_remove("RUSTUP_TOOLCHAIN")
-        .env_remove(USERNAME)
-        .env_remove(PASSWORD)
         .args(["build", "--locked"])
         .status()
         .map_err(|_| "Cannot start Trunk; install the pinned web toolchain first.")?;
     if !status.success() {
         return Err("Wasm build failed; no viewer was started.");
     }
-    let (username, password) = credentials()?;
     let schema = fixture::Schema::new();
     let board_id = BoardId::new(Uuid::new_v4()).ok_or("Cannot allocate board identity.")?;
-    let host =
-        boardcraft_mobile_edit_host::Host::start_web(&schema.config, board_id, &web.join("dist"))
-            .map_err(|_| "Cannot start the loopback web host.")?;
+    let host = Host::start_disposable_viewer(&schema.config, board_id, &web.join("dist"))
+        .map_err(|_| "Cannot start the loopback viewer.")?;
     let mut db = schema
         .config
         .connect(NoTls)
         .map_err(|_| "Cannot seed viewer database.")?;
-    let mut board = Board::new(board_id);
-    for id in [fixture::FIRST, fixture::SECOND] {
-        board
-            .add_item(
-                ItemId::new(id).ok_or("Invalid fixture identity.")?,
-                "Review",
-            )
-            .map_err(|_| "Cannot seed viewer board.")?;
-    }
-    store::create_board(&mut db, &board).map_err(|_| "Cannot seed viewer board.")?;
-    let account = fixture::seed_account_on(&mut db, &username, &password, Role::Owner);
-    drop(password);
-    drop(username);
+    seed_review_board(&mut db, board_id, REVIEW_OWNER)?;
     let workspace = Uuid::new_v4();
     let mut tx = db.transaction().map_err(|_| "Cannot seed viewer access.")?;
     tx.execute(
         "INSERT INTO workspaces(id,creator_id,name,position,active,is_open) VALUES ($1,$2,'Review',0,true,false)",
-        &[&workspace, &account],
+        &[&workspace, &REVIEW_OWNER],
     ).map_err(|_| "Cannot seed viewer access.")?;
     tx.execute(
         "INSERT INTO board_policies(board_id,workspace_id,name,position,kind,creator_id,active) VALUES ($1,$2,'Review',0,'private',$3,true)",
-        &[&board_id.as_uuid(), &workspace, &account],
+        &[&board_id.as_uuid(), &workspace, &REVIEW_OWNER],
     ).map_err(|_| "Cannot seed viewer access.")?;
     tx.commit().map_err(|_| "Cannot commit viewer access.")?;
+    browser::open_board(host.port, board_id.as_uuid());
     println!(
-        "Open in your normal browser: http://127.0.0.1:{}/web/boards/{}",
-        host.port,
-        board_id.as_uuid()
+        "Review has two Work groups: the first has one Review, the second has Review and Sketch. Reserve starts empty."
     );
-    println!("Sign in with the disposable credentials you chose. The board is editable.");
     println!(
         "Keep this terminal open. Press Enter here to stop this viewer and remove its synthetic data."
     );
@@ -109,31 +85,31 @@ fn run() -> Result<(), &'static str> {
     Ok(())
 }
 
-fn credentials() -> Result<(String, String), &'static str> {
-    // Process-only configuration supports protected launchers; no credential
-    // file, browser argument, automatic sign-in or session bypass is created.
-    let configured = (std::env::var(USERNAME), std::env::var(PASSWORD));
-    let (username, password) = match configured {
-        (Ok(username), Ok(password)) => (username, password),
-        (Err(std::env::VarError::NotPresent), Err(std::env::VarError::NotPresent)) => (
-            rpassword::prompt_password("Choose a disposable username (hidden): ")
-                .map_err(|_| "A console is required for the hidden credential prompts.")?,
-            rpassword::prompt_password(
-                "Choose a disposable password (hidden; do not reuse a real password): ",
-            )
-            .map_err(|_| "Cannot read a hidden password from the console.")?,
-        ),
-        _ => {
-            return Err(
-                "Supply both viewer credential environment variables, or neither to use hidden prompts.",
-            );
-        }
-    };
-    let username = username.trim().to_owned();
-    if username.is_empty() || username.len() > 128 || password.is_empty() || password.len() > 1024 {
-        return Err(
-            "Use a nonempty disposable username (up to 128 bytes) and password (up to 1024 bytes).",
-        );
+// Keep both original Review IDs, but make group identity, per-group accents,
+// same-group reorder and an empty destination observable on the first visit.
+fn seed_review_board(
+    db: &mut postgres::Client,
+    board: BoardId,
+    owner: Uuid,
+) -> Result<(), &'static str> {
+    let second_group = "g-00000000-0000-0000-0000-000000000002";
+    let empty_group = "g-00000000-0000-0000-0000-000000000003";
+    store::create_board(db, &Board::new(board)).map_err(|_| "Cannot seed viewer board.")?;
+    let mut tx = db.transaction().map_err(|_| "Cannot start viewer seed.")?;
+    store::edit_group(&mut tx, board, "main", 1, 1, "Work", "#579bfc")
+        .map_err(|_| "Cannot seed first group.")?;
+    store::create_group(&mut tx, board, second_group, 2, "Work", "#00c875")
+        .map_err(|_| "Cannot seed second group.")?;
+    store::create_group(&mut tx, board, empty_group, 3, "Reserve", "#443322")
+        .map_err(|_| "Cannot seed empty group.")?;
+    for (group, id, title) in [
+        ("main", fixture::FIRST, "Review"),
+        (second_group, fixture::SECOND, "Review"),
+        (second_group, Uuid::from_u128(63), "Sketch"),
+    ] {
+        let id = ItemId::new(id).ok_or("Invalid fixture identity.")?;
+        store::create_group_item(&mut tx, board, group, id, owner, title)
+            .map_err(|_| "Cannot seed viewer item.")?;
     }
-    Ok((username, password))
+    tx.commit().map_err(|_| "Cannot commit viewer groups.")
 }

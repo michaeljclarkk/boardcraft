@@ -1,6 +1,7 @@
 //! Composition of stock Kit controls with the shared native/wasm drag state.
 use super::*;
 use gpui_kit::base::ElementExt;
+use gpui_kit::component::{Sizable, button::ButtonVariants};
 use gpui_kit::{
     AnyElement, DispatchPhase, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, canvas,
 };
@@ -8,6 +9,7 @@ use gpui_kit::{
 impl Table {
     pub(super) fn render_groups(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let geometry = self.drag.clone();
+        let scroll = self.scroll.clone();
         let mut groups = div()
             .id("physical-groups")
             .relative()
@@ -15,13 +17,23 @@ impl Table {
             .flex_col()
             .gap_3()
             .on_prepaint(move |bounds, w, _| {
-                geometry
-                    .borrow_mut()
-                    .set_viewport(bounds.intersect(&w.visual_viewport_bounds()))
+                geometry.borrow_mut().set_viewport(
+                    bounds
+                        .intersect(&scroll.bounds())
+                        .intersect(&w.visual_viewport_bounds()),
+                )
             });
         for (ix, g) in self.read.groups().iter().enumerate() {
             let id = g.id().to_owned();
             let name = g.name().to_owned();
+            // This user-chosen colour is part of the accepted record, independent of
+            // selection, hover, and drag-feedback tokens.
+            let hue = g
+                .colour()
+                .strip_prefix('#')
+                .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+                .map(|rgb| gpui_kit::rgb(rgb).into())
+                .unwrap_or(cx.theme().foreground);
             let collapsed = self.folded(&id, g.is_collapsed());
             let selected = g
                 .items()
@@ -39,6 +51,8 @@ impl Table {
             let fold_id = id.clone();
             header = header.child(
                 Button::new(key(format!("fold-{id}")))
+                    .small()
+                    .ghost()
                     .label(if collapsed { "▸" } else { "▾" })
                     .accessibility_label(format!("Toggle {name}"))
                     .accessibility_id(id.clone())
@@ -60,7 +74,10 @@ impl Table {
                     })
                     .child(
                         Button::new(key(format!("heading-{id}")))
-                            .label(name.clone())
+                            .small()
+                            .ghost()
+                            .accessibility_label(name.clone())
+                            .child(div().text_color(hue).child(name.clone()))
                             .accessibility_id(format!("heading-{id}"))
                             .disabled(self.busy() || !self.read.is_manageable())
                             .on_click(cx.listener(move |t, e: &gpui_kit::ClickEvent, w, cx| {
@@ -70,16 +87,28 @@ impl Table {
                             })),
                     ),
             );
-            header = header.child(format!("{} items", g.items().len()));
-            // Saved colour is data. Its text also conveys it without relying on colour perception.
-            header = header.child(g.colour().to_owned());
+            let count = match g.items().len() {
+                0 => "No items".into(),
+                1 => "1 item".into(),
+                n => format!("{n} items"),
+            };
+            header = header.child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(count),
+            );
             let weak = cx.weak_entity();
             let menu_id = id.clone();
             let manageable = self.read.is_manageable();
             let busy = self.busy();
             let last = ix + 1 == self.read.groups().len();
+            let group_ids: Vec<_> = g.items().iter().map(|r| r.id).collect();
             header = header.child(
                 Button::new(key(format!("group-menu-{id}")))
+                    .small()
+                    .ghost()
+                    .accessibility_label(format!("Group menu for {name}"))
                     .label("Group options")
                     .accessibility_id(id.clone())
                     .disabled(busy)
@@ -137,14 +166,34 @@ impl Table {
                                     });
                                 }));
                         }
+                        let select = weak.clone();
+                        let ids = group_ids.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new("Select all items in group")
+                                .disabled(ids.is_empty())
+                                .on_click(move |_, w, cx| {
+                                    let _ = select
+                                        .update(cx, |t, cx| t.select(ids.clone(), true, w, cx));
+                                }),
+                        );
                         let weak = weak.clone();
                         let id = menu_id.clone();
                         menu.item(
-                            PopupMenuItem::new("Archive group…")
+                            PopupMenuItem::new("Archive group")
                                 .disabled(!manageable)
                                 .on_click(move |_, w, cx| {
                                     let _ = weak.update(cx, |t, cx| {
-                                        t.open_editor(Kind::ArchiveGroup(id.clone()), w, cx)
+                                        t.submit(
+                                            TableCommand::Group {
+                                                id: id.clone(),
+                                                board_revision: t.read.revision(),
+                                                restore: false,
+                                            },
+                                            None,
+                                            None,
+                                            w,
+                                            cx,
+                                        )
                                     });
                                 }),
                         )
@@ -160,6 +209,9 @@ impl Table {
                 .flex()
                 .flex_col()
                 .gap_2()
+                .border_l_2()
+                .border_color(hue)
+                .pl_2()
                 .on_prepaint(move |bounds, _, _| {
                     if let Some(s) = geometry.borrow_mut().section_mut(&gid) {
                         s.set_section(bounds);
@@ -170,29 +222,37 @@ impl Table {
                 let ids: Vec<_> = g.items().iter().map(|r| r.id).collect();
                 section = section.child(
                     Checkbox::new(key(format!("check-group-{id}")))
-                        .label(format!("Select group {id}"))
+                        .label(format!("Select all items in {name}"))
                         .checked(!ids.is_empty() && selected == ids.len())
                         .indeterminate(selected > 0 && selected < ids.len())
                         .disabled(self.busy() || ids.is_empty())
                         .on_change(cx.listener(move |t, checked, w, cx| {
-                            t.select(ids.clone(), *checked, None, w, cx)
+                            t.select(ids.clone(), *checked, w, cx)
                         })),
                 );
                 if let Some(drag) = self.row_drags.get(&id) {
                     let geometry = drag.clone();
+                    let scroll = self.scroll.clone();
                     let mut rows =
                         div()
                             .flex()
                             .flex_col()
                             .gap_1()
                             .on_prepaint(move |bounds, w, _| {
-                                geometry
-                                    .borrow_mut()
-                                    .set_viewport(bounds.intersect(&w.visual_viewport_bounds()))
+                                geometry.borrow_mut().set_viewport(
+                                    bounds
+                                        .intersect(&scroll.bounds())
+                                        .intersect(&w.visual_viewport_bounds()),
+                                )
                             });
                     for item in g.items() {
                         let item_id = item.id;
                         let checked = self.selection.contains(&item_id);
+                        let hover = if checked {
+                            cx.theme().list_active
+                        } else {
+                            cx.theme().list_hover
+                        };
                         let geometry = drag.clone();
                         let rid = item_id.to_string();
                         let mut row = div()
@@ -201,8 +261,9 @@ impl Table {
                             .flex()
                             .items_center()
                             .gap_2()
+                            .hover(move |s| s.bg(hover))
                             .bg(if checked {
-                                cx.theme().accent
+                                cx.theme().list_active
                             } else {
                                 cx.theme().background
                             })
@@ -214,7 +275,7 @@ impl Table {
                             })
                             .child(
                                 Checkbox::new(key(format!("check-{item_id}")))
-                                    .accessibility_label(format!("Select {item_id}"))
+                                    .accessibility_label(format!("Select {}", item.title))
                                     .checked(checked)
                                     .disabled(self.busy())
                                     .on_change(cx.listener(move |t, checked, w, cx| {
@@ -235,7 +296,11 @@ impl Table {
                                         .label("⋮⋮")
                                         .accessibility_label(format!("Drag {}", item.title))
                                         .accessibility_id(format!("grip-{item_id}"))
-                                        .disabled(self.busy() || !self.read.is_editable()),
+                                        .disabled(
+                                            self.busy()
+                                                || !self.read.is_editable()
+                                                || (checked && self.selection.len() > 1),
+                                        ),
                                 ),
                         );
                         if let Some(name) = self.rows.get(&item_id) {
@@ -247,6 +312,9 @@ impl Table {
                         row = row.child(
                             Button::new(key(format!("item-menu-{item_id}")))
                                 .label("More options")
+                                .small()
+                                .ghost()
+                                .accessibility_label(format!("More options for {}", item.title))
                                 .accessibility_id(format!("menu-{item_id}"))
                                 .disabled(self.busy())
                                 .dropdown_menu(move |menu, _, _| {
@@ -280,7 +348,7 @@ impl Table {
                                 .left_0()
                                 .right_0()
                                 .h(gpui_kit::px(1.))
-                                .bg(cx.theme().primary);
+                                .bg(cx.theme().info);
                             row = row.child(if after { line.bottom_0() } else { line.top_0() });
                         }
                         rows = rows.child(row);
@@ -289,22 +357,29 @@ impl Table {
                 }
                 if let Some(entry) = self.entries.get(&id) {
                     let group = id.clone();
-                    let input = entry.input.clone();
+                    let cancel_id = id.clone();
                     section = section.child(
                         div()
                             .flex()
                             .gap_2()
                             .capture_key_down(cx.listener(
                                 move |t, event: &gpui_kit::KeyDownEvent, w, cx| {
-                                    if event.keystroke.key == "escape" && !t.pending {
-                                        input.update(cx, |i, cx| i.set_value("", w, cx));
+                                    if event.keystroke.key == "escape"
+                                        && !t.busy()
+                                        && let Some(entry) = t.entries.get_mut(&cancel_id)
+                                    {
+                                        entry.input.update(cx, |i, cx| i.set_value("", w, cx));
+                                        entry.notice = "";
+                                        entry.proposed = Uuid::new_v4();
                                         cx.stop_propagation();
+                                        cx.notify();
                                     }
                                 },
                             ))
                             .child(
                                 Input::new(&entry.input)
-                                    .aria_label(format!("Add item to {id}"))
+                                    .w_64()
+                                    .aria_label(format!("Add item to {name}"))
                                     .disabled(self.busy() || !self.read.is_editable()),
                             )
                             .child(
@@ -317,22 +392,40 @@ impl Table {
                                     ),
                             ),
                     );
+                    if !entry.notice.is_empty() {
+                        section = section.child(status(entry.notice));
+                    }
                 }
             }
-            if let Some((target, after)) = self.drag.borrow().edge()
-                && target == id
-            {
-                // An insertion cue cannot move the heading out from under the
-                // pointer before release. Keep it out of the flex flow.
-                let line = div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .h(gpui_kit::px(1.))
-                    .bg(cx.theme().primary);
-                section = section.child(if after { line.bottom_0() } else { line.top_0() });
-            }
             groups = groups.child(section);
+        }
+        let drag = self.drag.borrow();
+        if let Some(mark) = drag.marker() {
+            let offset = mark.origin - drag.surface_origin();
+            groups = groups.child(
+                div()
+                    .absolute()
+                    .top(offset.y)
+                    .left(offset.x)
+                    .w(mark.size.width)
+                    .h(mark.size.height)
+                    .bg(cx.theme().info),
+            );
+        }
+        if let Some(id) = drag.moving_id()
+            && let Some(group) = self.read.groups().iter().find(|g| g.id() == id)
+            && let Some(pointer) = drag.pointer()
+        {
+            let offset = pointer - drag.surface_origin();
+            groups = groups.child(
+                div()
+                    .absolute()
+                    .top(offset.y)
+                    .left(offset.x)
+                    .px_2()
+                    .bg(cx.theme().popover)
+                    .child(format!("Moving {}", group.name())),
+            );
         }
         groups.child(self.drag_events(cx))
     }
@@ -364,6 +457,15 @@ impl Table {
                                     .any(|g| g.id() == id && !t.folded(id, g.is_collapsed()))
                                 {
                                     drag.borrow_mut().press(e.position);
+                                    if t.selection.len() > 1
+                                        && drag
+                                            .borrow()
+                                            .source_id()
+                                            .and_then(|id| id.parse::<Uuid>().ok())
+                                            .is_some_and(|id| t.selection.contains(&id))
+                                    {
+                                        drag.borrow_mut().cancel();
+                                    }
                                 }
                             }
                         }
@@ -371,6 +473,9 @@ impl Table {
                             || t.row_drags.values().any(|d| d.borrow().is_held())
                         {
                             t.focus.focus(w, cx);
+                            if t.drag.borrow().is_held() {
+                                t.scroll_held_heading(w, cx);
+                            }
                         }
                     });
                 });
@@ -450,5 +555,37 @@ impl Table {
         .absolute()
         .size_full()
         .into_any_element()
+    }
+    fn scroll_held_heading(&self, w: &mut Window, cx: &mut Context<Self>) {
+        let generation = self.drag.borrow().generation();
+        let start = cx.background_executor().now();
+        let table = cx.weak_entity();
+        w.on_next_frame(move |w, cx| {
+            let _ = table.update(cx, |t, cx| {
+                if !t.drag.borrow().is_held() || generation != t.drag.borrow().generation() {
+                    return;
+                }
+                if !w.is_window_active() || t.busy() {
+                    t.drag.borrow_mut().cancel();
+                    cx.notify();
+                    return;
+                }
+                let velocity = t.drag.borrow().scroll_velocity();
+                if velocity != 0.0 {
+                    let seconds = cx
+                        .background_executor()
+                        .now()
+                        .duration_since(start)
+                        .as_secs_f32()
+                        .min(0.05);
+                    let offset = t.scroll.offset();
+                    let y = (offset.y - gpui_kit::px(velocity * seconds))
+                        .clamp(-t.scroll.max_offset().y, gpui_kit::px(0.));
+                    t.scroll.set_offset(gpui_kit::point(offset.x, y));
+                    cx.notify();
+                }
+                t.scroll_held_heading(w, cx);
+            });
+        });
     }
 }

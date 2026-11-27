@@ -62,6 +62,92 @@ pub(super) fn send(
     }
 }
 
+#[test]
+fn disposable_viewer_opens_review_on_independent_visits() {
+    use boardcraft_mobile_edit_client::{DISPOSABLE_VIEWER, VIEWER_BOARD_PATH};
+    use boardcraft_mobile_edit_host::REVIEW_OWNER;
+    use uuid::Uuid;
+    let f = Fixture::start();
+    let board = BoardId::new(f.board).unwrap();
+    let dist = tempfile::tempdir().unwrap();
+    for name in ["index.html", "shell.wasm", "shell.js"] {
+        std::fs::write(dist.path().join(name), []).unwrap();
+    }
+    let entry = format!("/web/api{VIEWER_BOARD_PATH}");
+    let path = format!("/web/api/navigation/boards/{}", f.board);
+    let get = |host: &Host, path: &str| {
+        let authority = format!("127.0.0.1:{}", host.port);
+        send(
+            host.port,
+            "GET",
+            path,
+            &authority,
+            &[("Boardcraft-Web", DISPOSABLE_VIEWER)],
+            "",
+        )
+    };
+    for normal in [
+        Host::start_web_api(&f.schema.config, board).unwrap(),
+        Host::start_web(&f.schema.config, board, dist.path()).unwrap(),
+    ] {
+        assert_eq!(get(&normal, &entry).status, 404);
+        assert_eq!(get(&normal, &path).status, 401);
+    }
+
+    let host = Host::start_disposable_viewer(&f.schema.config, board, dist.path()).unwrap();
+    let mut db = f.connect();
+    let workspace = Uuid::new_v4();
+    db.execute("INSERT INTO workspaces(id,creator_id,name,position,active,is_open) VALUES ($1,$2,'Review',0,true,false)", &[&workspace,&REVIEW_OWNER]).unwrap();
+    db.execute("INSERT INTO board_policies(board_id,workspace_id,name,position,kind,creator_id,active) VALUES ($1,$2,'Review',0,'private',$3,true)", &[&f.board,&workspace,&REVIEW_OWNER]).unwrap();
+    let item = Uuid::new_v4();
+    let authority = format!("127.0.0.1:{}", host.port);
+    let origin = format!("http://{authority}");
+    for visit in 0..2 {
+        let landing = get(&host, &entry);
+        assert_eq!(landing.status, 200);
+        assert_eq!(
+            serde_json::from_str::<Uuid>(&landing.body).unwrap(),
+            f.board
+        );
+        assert!(landing.cookie.is_none());
+        let reply = get(&host, &path);
+        assert_eq!((reply.status, reply.access.as_deref()), (200, Some("edit")));
+        assert!(reply.cookie.is_none());
+        if visit == 0 {
+            let body =
+                serde_json::json!({"id":item,"group_id":"main","title":"Sketch"}).to_string();
+            let create = |origin| {
+                send(
+                    host.port,
+                    "POST",
+                    &format!("{path}/items"),
+                    &authority,
+                    &[("Origin", origin), ("Boardcraft-Web", DISPOSABLE_VIEWER)],
+                    &body,
+                )
+                .status
+            };
+            assert_eq!(create("http://localhost"), 403);
+            assert_eq!(create(&origin), 200);
+        } else {
+            let groups: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+            assert!(
+                groups[0]["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["id"] == item.to_string())
+            );
+        }
+    }
+    let creator: Uuid = db
+        .query_one("SELECT created_by FROM board_items WHERE id=$1", &[&item])
+        .unwrap()
+        .get(0);
+    assert_eq!(creator, REVIEW_OWNER);
+    assert_no_session(&f);
+}
+
 pub(super) fn groups() {
     use selection::SELECTED;
     use serde_json::{Value, json};

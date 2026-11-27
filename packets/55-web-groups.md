@@ -10,6 +10,8 @@ Port the grouped board workflows to the wasm client and recheck the outcomes fro
 
 **Live acceptance** (pending): use Computer Use in the [ordinary viewer](../docs/development.md#browser-viewer); retain GPUI Kit tests for control behavior.
 
+**Temporary viewer identity (owner request).** While porting, open Review as a fixed local actor on every visit, without credentials, a sign-in screen or a one-time link. Use the same actor for saves. Revisit authentication once the port is complete.
+
 - Duplicate a group, cancel, save and reload by ID; check revisions and unchanged peers.
 - Reorder by menu and drag; check single and all folds and hidden selection anchors after reload.
 - Create an item with its proposed UUID, move by menu, reorder by grip and reload.

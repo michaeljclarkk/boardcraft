@@ -1,7 +1,7 @@
 use super::{Deserialize, SavedItem};
 
 /// Shared selected-board group response for native and wasm transports.
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct MainTableGroup {
     pub(crate) id: String,
     pub(crate) name: String,

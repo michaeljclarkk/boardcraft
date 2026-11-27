@@ -1,0 +1,13 @@
+{
+  "status": "blocked",
+  "summary": "Grouped-board port in progress. The ordinary Rust viewer seeds two Work groups with distinct accepted colours and duplicate Review roots, plus an empty Reserve with a custom colour. The compared workflow is to change one group's colour, cancel or save explicitly, then move and reload it without changing its peer. Live packet acceptance remains pending.",
+  "evidence": [
+    "Final locked wasm32 check of boardcraft-web passed after fixing a moved EditError. The modified web_board_view example passed cargo check. Locked boardcraft-web and boardcraft-ui tests passed (6/6): two production-table Kit interactions (edit the second duplicate and cancel; fold while preserving a hidden selection anchor), three gesture-state cases, and a focused Escape/subsequent drag Kit example.",
+    "All 42 cases passed in the locked loopback_board_access integration suite on the disposable PostgreSQL database (0 failed, ignored or filtered). Cases include grouped ordering, edit revisions, atomic selection moves, folds, archive/Trash receipts, denial and rollback.",
+    "Runner status reports packets 53 and 54 verified and 55 pending. The owner's visual check covers the previous build.",
+    "Source comparison identified separate roles for the saved group colour (name and rail), selection, keyboard focus, muted count and the heading/row drop marker. This specifies visible expectations; it does not establish a rendered colour match.",
+    "After the owner removed viewer authentication for the port, the disposable viewer launched the seeded board in the default browser. Computer Use verified fresh entry and a Chrome reload without credentials: blue Work (1 item), green Work (2 items), Reserve (No items), and the board editing controls were visible. No identity picker or sign-in form appeared.",
+    "The focused disposable_viewer_opens_review_on_independent_visits host integration test passed: independent credential-free visits, persisted edit ownership, and isolation from the two ordinary host modes."
+  ],
+  "next": "When grouped-board proofing resumes, compare the second Work's colour before Cancel, after Save and after reorder/reload."
+}

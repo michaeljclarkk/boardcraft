@@ -1,10 +1,10 @@
-use boardcraft_mobile_edit_client::{BoardSummary, Credentials, EditError};
+use boardcraft_mobile_edit_client::{BoardSummary, Credentials, DISPOSABLE_VIEWER, EditError};
 use gpui_kit::{
     AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement,
     Render, Role, StatefulInteractiveElement, Styled, Subscription, Task, Window,
     base::Disableable,
     component::{
-        ActiveTheme,
+        ActiveTheme, WindowExt,
         button::Button,
         input::{Input, InputEvent, InputState},
     },
@@ -28,6 +28,12 @@ enum Screen {
     Unavailable,
     StorageUnavailable,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HostKind {
+    Unknown,
+    Authenticated,
+    Viewer,
+}
 enum Page {
     Loading,
     List(Vec<BoardSummary>),
@@ -38,6 +44,7 @@ enum Page {
 }
 
 pub(super) struct Shell {
+    host: HostKind,
     screen: Screen,
     page: Page,
     destination: Option<Uuid>,
@@ -47,6 +54,7 @@ pub(super) struct Shell {
     message: &'static str,
     logging_out: bool,
     focus: FocusHandle,
+    scroll: gpui_kit::ScrollHandle,
     action_focus: FocusHandle,
     request: Option<Task<()>>,
     saves: Vec<Task<()>>,
@@ -100,6 +108,7 @@ impl Shell {
             browser.set_onpopstate(Some(history.as_ref().unchecked_ref()));
         }
         let mut shell = Self {
+            host: HostKind::Unknown,
             screen: Screen::Checking,
             page: Page::Loading,
             destination: address(),
@@ -109,6 +118,7 @@ impl Shell {
             message: "",
             logging_out: false,
             focus,
+            scroll: gpui_kit::ScrollHandle::new(),
             action_focus: cx.focus_handle().tab_stop(true),
             request: None,
             saves: Vec::new(),
@@ -137,13 +147,42 @@ impl Shell {
     }
 
     fn check(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.page, Page::Board(_)) {
+            w.close_dialog(cx);
+        }
         self.logging_out = false;
         self.screen = Screen::Checking;
         self.page = Page::Loading;
         self.saves.clear();
         self.events.truncate(2);
+        if self.host == HostKind::Viewer {
+            self.screen = Screen::SignedIn;
+            self.load(w, cx);
+            return;
+        }
         let executor = cx.background_executor().clone();
+        let discover = self.host == HostKind::Unknown;
         self.request = Some(cx.spawn_in(w, async move |view, cx| {
+            if discover {
+                let host = session::viewer_board(&executor).await;
+                let _ = view.update_in(cx, |view, w, cx| match host {
+                    Ok(board) => {
+                        view.host = if let Some(board) = board {
+                            view.binding = Some(DISPOSABLE_VIEWER.to_owned());
+                            view.destination.get_or_insert(board);
+                            HostKind::Viewer
+                        } else {
+                            HostKind::Authenticated
+                        };
+                        view.check(w, cx);
+                    }
+                    Err(_) => {
+                        view.screen = Screen::Unavailable;
+                        cx.notify();
+                    }
+                });
+                return;
+            }
             let stored = binding::read().await;
             let result = match &stored {
                 Ok(Some(binding)) => session::resolve(binding, &executor).await,
@@ -257,6 +296,7 @@ impl Shell {
         self.page = Page::Loading;
         self.message = "";
         let destination = self.destination;
+        let viewer = self.host == HostKind::Viewer;
         let executor = cx.background_executor().clone();
         // Defer replacing the resolving task until its callback returns.
         self.request = Some(cx.spawn_in(w, async move |view, cx| {
@@ -269,7 +309,7 @@ impl Shell {
                     .await
                     .map(|boards| (boards, None))
             };
-            if matches!(result, Err(EditError::SessionRejected)) {
+            if !viewer && matches!(result, Err(EditError::SessionRejected)) {
                 let _ = binding::forget(&binding).await;
             }
             let _ = view.update_in(cx, |view, w, cx| {
@@ -279,7 +319,9 @@ impl Shell {
                         let Some(board) = destination else {
                             return;
                         };
-                        let table = cx.new(|cx| Table::new(binding.clone(), board, read, w, cx));
+                        let table = cx.new(|cx| {
+                            Table::new(binding.clone(), board, read, view.scroll.clone(), w, cx)
+                        });
                         view.events.push(cx.subscribe_in(
                             &table,
                             w,
@@ -287,6 +329,7 @@ impl Shell {
                         ));
                         view.page = Page::Board(table);
                     }
+                    Err(EditError::SessionRejected) if viewer => view.page = Page::Denied,
                     Err(EditError::SessionRejected) => view.signed_out(w, cx),
                     Err(EditError::PermissionDenied | EditError::Missing) => {
                         view.page = Page::Denied
@@ -394,9 +437,13 @@ impl Render for Shell {
                 content.child(status("session-status", "Could not read session storage"))
             }
             Screen::SignedIn => {
-                let mut page = content
-                    .child(status("session-status", "Signed in"))
-                    .child("Your session is ready.");
+                let mut page = if self.host == HostKind::Viewer {
+                    content
+                } else {
+                    content
+                        .child(status("session-status", "Signed in"))
+                        .child("Your session is ready.")
+                };
                 page = match &self.page {
                     Page::Loading => page.child(status(
                         "page-status",
@@ -501,10 +548,11 @@ impl Render for Shell {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
                     .child(content),
             )
             .child(status("notice", self.message))
-            .child(actions)
+            .children((self.host != HostKind::Viewer).then_some(actions))
     }
 }
 

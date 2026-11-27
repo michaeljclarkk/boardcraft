@@ -4,11 +4,11 @@
 
 #[cfg(target_family = "wasm")]
 mod binding;
-#[cfg(target_family = "wasm")]
+#[cfg(any(target_family = "wasm", test))]
 mod board_view;
-#[cfg(target_family = "wasm")]
+#[cfg(any(target_family = "wasm", test))]
 mod groups;
-#[cfg(target_family = "wasm")]
+#[cfg(any(target_family = "wasm", test))]
 mod session;
 #[cfg(target_family = "wasm")]
 mod shell;

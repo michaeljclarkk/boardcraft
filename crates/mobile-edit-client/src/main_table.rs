@@ -2,6 +2,7 @@ use super::*;
 use std::collections::HashSet;
 
 /// Complete authorized snapshot, independent of whether a body is folded.
+#[derive(Clone)]
 pub struct MainTableRead {
     groups: Vec<MainTableGroup>,
     revision: i64,

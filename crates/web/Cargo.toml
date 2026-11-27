@@ -18,8 +18,22 @@ futures.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 web-sys = { workspace = true, features = [
-    "AbortController", "AbortSignal", "BroadcastChannel", "DomException", "Event", "EventTarget",
+    "AbortController", "AbortSignal", "BroadcastChannel", "DomException", "Event", "EventTarget", "Headers",
     "IdbDatabase", "IdbFactory", "IdbObjectStore", "IdbOpenDbRequest", "IdbRequest",
     "IdbTransaction", "IdbTransactionMode", "Request", "RequestCredentials",
     "RequestInit", "RequestMode", "RequestRedirect", "Response", "Window", "History", "Location",
 ] }
+
+# Mount the production table in a Kit test window. The cases below exercise
+# visit-local gestures only; the browser transport is never substituted.
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+boardcraft-ui = { path = "../boardcraft-ui" }
+boardcraft-mobile-edit-client = { path = "../mobile-edit-client" }
+serde = "1"
+serde_json = "1"
+uuid = { version = "1", features = ["serde", "v4"] }
+futures.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = ["AbortController", "AbortSignal", "Headers", "Request", "RequestCredentials", "RequestInit", "RequestMode", "RequestRedirect", "Response", "Window"] }

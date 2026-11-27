@@ -34,8 +34,31 @@ pub(super) fn bearer(req: &Request) -> Result<Token, u16> {
     Token::from_encoded(raw).map_err(|_| 401)
 }
 
-pub(super) fn resolve(tx: &mut Transaction<'_>, token: &Token) -> Result<Account, u16> {
-    boardcraft_account::resolve_on(tx, token).map_err(account_status)
+pub(super) enum Actor {
+    Session(Token),
+    ReviewOwner,
+}
+
+impl Actor {
+    pub(super) fn resolve(&self, tx: &mut Transaction<'_>) -> Result<Account, u16> {
+        match self {
+            Self::Session(token) => {
+                boardcraft_account::resolve_on(tx, token).map_err(account_status)
+            }
+            Self::ReviewOwner => {
+                tx.query_opt(
+                    "SELECT 1 FROM accounts WHERE id=$1 AND active AND role='owner' FOR SHARE",
+                    &[&crate::REVIEW_OWNER],
+                )
+                .map_err(|_| 503u16)?
+                .ok_or(403u16)?;
+                Ok(Account {
+                    id: crate::REVIEW_OWNER,
+                    role: boardcraft_account::Role::Owner,
+                })
+            }
+        }
+    }
 }
 
 pub(super) fn account_status(e: Error) -> u16 {

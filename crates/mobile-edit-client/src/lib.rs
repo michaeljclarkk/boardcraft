@@ -32,6 +32,10 @@ pub struct SavedItem {
 
 pub const BOARD_ACCESS_HEADER: &str = "boardcraft-board-access";
 
+/// Public request label, not a credential. Only the disposable loopback host accepts it.
+pub const DISPOSABLE_VIEWER: &str = "disposable-viewer";
+pub const VIEWER_BOARD_PATH: &str = "/viewer-board";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardSummary {

@@ -7,3 +7,10 @@ publish = false
 [dependencies]
 gpui-kit.workspace = true
 web-time = "1.1"
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[[example]]
+name = "heading_drag"
+test = true

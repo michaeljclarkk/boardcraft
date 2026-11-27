@@ -1,12 +1,35 @@
-# boardcraft roadmap: full workflow parity
+# boardcraft roadmap: the internal tool parity
 
-**Goal:** a user can perform every supported workflow with the same inputs, controls, permissions and results, including after a failed save, a disconnect or an upgrade. Persisted records, shared links, API clients and background work are part of that contract. Rust owns the rules, PostgreSQL owns durable state, and Longbridge GPUI Kit supplies the desktop controls.
+**Goal:** a user can perform every supported the internal tool workflow in boardcraft with the same inputs, controls, layout, permissions and results, including after a failed save, a disconnect or an upgrade. Both workflow parity and UI parity are acceptance criteria. Rust owns the rules, PostgreSQL owns durable state, and Longbridge GPUI Kit supplies the desktop controls.
 
-The numbered packets below are the milestone index. Use `cargo run --locked --manifest-path tools/Cargo.toml -- status` for registered packets and local checkpoints. A checkpoint from the former browser client is historical; wasm parity needs its own evidence.
+## Delivery order (owner direction, 2026-11-28)
+
+Ship one vertical desktop journey at a time. Do not start the next until the current one is demoable in the running app with the internal tool open beside it.
+
+1. **Board journey.** Launch the desktop app, see the boards available in the running app, open a board, rename an item, restart and confirm the saved name. The screen, controls, labels and states match the internal tool.
+2. **Groups and items.** Groups are visible; create, rename, collapse and reorder them. Create, move, select and reorder items. Match the internal tool's table, menus and drag behaviour.
+3. **Board chrome.** Navigation, share link, archive/trash and the recovery states around them.
+4. **Auth.** Sign-in, resolve, logout and session restore. This comes after the board works and only matters before shared deployment.
+5. **Other clients.** Android and the browser mirror the desktop journey once desktop is right.
+
+Packets 01–57 are the historical port index below; they are reference material, not gates. The runner, gates and handoffs are optional bookkeeping. Packets 13–21 (auth) and 26–56 (browser and the retired test harness) are out of delivery order and stay closed until steps 4 and 5. Handoffs that mention harnesses, drivers or OCR describe retired tooling; do not rebuild them.
+
+## Current task
+
+**Desktop board journey.** With the internal tool in a second window for comparison, make the desktop app open a board list, open a board and rename an item, then restart and show the saved value. Record the UI differences in [docs/workflows.md](docs/workflows.md) and close them before moving to groups. Details and acceptance: [docs/roadmap.md](docs/roadmap.md#next-task).
+
+## Progress log
+
+Newest first. After each delivery, add one dated entry: what changed, what you saw in the app, what stayed unverified, and the next action. Link the feature note or files. This is the project's memory; do not move it into chat.
+
+**2026-11-28 — Agent setup reset.** Rustday now runs on the internal tool's agent model: direct owner authority, workflow **and** UI parity as equal acceptance, 100% Rust restated, optional runner, no custom UI harness, and a delivery order that starts with the desktop board journey. Changed `AGENTS.md`, `opencode.json`, `ROADMAP.md`, `README.md`, `docs/README.md`, `docs/workflows.md`, `docs/roadmap.md`, `docs/gaps.md` and the project skills. No application code changed. Next: build the desktop board journey.
+
+The numbered packets below are the historical milestone index. Use `cargo run --locked --manifest-path tools/Cargo.toml -- status` only if you want local checkpoints. A checkpoint from the former browser client is historical; wasm parity needs its own evidence.
 
 **Windows desktop and Android are the active targets.** After the first desktop slice, verify the edit on Android: edit an item, background and reopen the app, then confirm the saved value on Windows. Check keyboard and mouse on Windows, and touch, keyboard dismissal, system Back and suspend/resume on Android.
 
 **iOS follows Android.** Keep shared Rust rules and reusable controls portable. Defer iOS implementation and testing until Android's workflow and delivery checks pass and a Mac with Xcode is available. Track iOS as deferred so it does not block Windows or Android milestones. When iOS work begins, run the shared acceptance scenarios on iOS and record simulator or device evidence separately.
+
 
 ## Decided stack change (2026-11-27)
 

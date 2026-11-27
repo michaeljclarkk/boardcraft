@@ -39,7 +39,9 @@ A control that exists on only one client is a missing shared control, not an acc
 
 | Control | Missing capability | Owner | Example | Interaction test | Wasm | Upstream note |
 |---|---|---|---|---|---|---|
-| `HeadingDrag` / `SectionBounds` | Kit's generic drag lacks a name-only threshold and heading-midpoint insertion edges | `crates/boardcraft-ui/src/heading_drag.rs` | [`examples/heading_drag.rs`](../crates/boardcraft-ui/examples/heading_drag.rs) | `mod tests` in the owner; desktop grouped-order journeys | Unknown — verify with packet 53 | A generic threshold-and-edge reorder gesture could be proposed to Kit without the group domain. |
+| `HeadingDrag` / `SectionBounds` | Begin a reorder only on the named handle, after a movement threshold. Resolve a release relative to the heading or row midpoint. | [`heading_drag.rs`](../crates/boardcraft-ui/src/heading_drag.rs) | [Synthetic sections](../crates/boardcraft-ui/examples/heading_drag.rs) | Kit test `focused_escape_cancels_without_consuming_the_next_drag` in the example; threshold, no-op and relative-drop cases in the owner | Used by the [wasm table](../crates/web/src/groups/gestures.rs); live packet 55 interaction pending | A reusable threshold-and-edge gesture could emit either a complete order or a relative anchor. |
+
+The shared state supplies measured edges, not another widget tree. The table keeps Kit Buttons for heading names and row grips with accessible labels. Group menu Up/Down provide the keyboard alternative; Escape cancels a held drag. Row grips follow the pointer-only item reorder path. A drop emits an intent; the accepted model changes only after the host commits and the table reads it back. Selection uses Kit Checkbox; destination and colour choices use Kit Select with stable values and accessible text, including a hex label beside each colour swatch.
 
 ## Documenting a missing capability
 
