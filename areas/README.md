@@ -12,6 +12,7 @@ Rules:
 - Once the area's contract is stable, run UI and cross-platform work as two concurrent OpenCode subagents. The main agent owns the contract, integrates and verifies.
 - Work one screen at a time inside the area.
 - Change `percent` only after verifying behaviour in the running app. 0 = not started; 100 = every workflow matches on every active client, behaviour and UI.
+- Commit and push after each verified screen as `port(<area>): <screen>`. Only port code, its area row and the generated status files may be staged; the pre-commit guard rejects everything else.
 - Never count code written, tests or scaffolding.
 - Put new code under the `code` path listed in the area. Create the module when the first real workflow lands, not before.
 - Regenerate the README table and chart with `cargo run --locked --manifest-path tools/Cargo.toml -- port-status`. The pre-commit hook and CI do it automatically.

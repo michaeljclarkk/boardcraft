@@ -5,6 +5,22 @@ if command -v cargo >/dev/null 2>&1 && [ -f tools/Cargo.toml ]; then
   git add README.md docs/port-status.svg
 fi
 
+# Port-only guard: a commit may contain port code and its status row, nothing else.
+bad=0
+for f in $(git diff --cached --name-only --diff-filter=ACMRD); do
+  case "$f" in
+    crates/*|android/*|areas/*|docs/workflows.md|docs/port-status.svg|README.md|Cargo.toml|Cargo.lock) ;;
+    *)
+      printf 'port-only guard: %s is not port code\n' "$f"
+      bad=1
+      ;;
+  esac
+done
+if [ "$bad" -ne 0 ]; then
+  echo "Commit only the current area's port code. Owner tooling changes need --no-verify."
+  exit 1
+fi
+
 # Count the index, not the working tree. Skip patch generation and rename detection.
 stats=$(git diff --cached --numstat --no-renames --no-ext-diff) || exit 1
 printf '%s\n' "$stats" | awk -F '\t' '
