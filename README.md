@@ -4,6 +4,8 @@ boardcraft is the native Rust port of the internal tool: its entire C# and React
 
 **The only job is to get boardcraft running 1:1 with the internal tool, in Rust only. Write Rust code, run it, and test the UI with Computer Use and GPUI Kit tests. No extra harnesses or infrastructure.**
 
+Delivery shape: two containers — `boardcraft` on **5078** for every client, and the database private behind it. Documented in [docs/deployment.md](docs/deployment.md); not built yet.
+
 Everything here is our own work: our schema, our rules, our controls, our names and our fixtures. This repository contains no other product's code, assets or wording. See [AGENTS.md](AGENTS.md) for the rule that applies to every change.
 
 <!-- PORT-STATUS:START -->

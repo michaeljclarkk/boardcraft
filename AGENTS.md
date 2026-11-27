@@ -54,7 +54,8 @@ Do not build, restore or keep any of these, even "temporarily":
 - an orchestrator, queue, packet, runner, handoff or second agent dispatcher;
 - auth, sessions, accounts, deployment or server infrastructure the ported screen does not use;
 - a new crate, dependency, abstraction, layer or document the screen cannot be built without;
-- a refactor, test suite, tooling detour or "cleanup" that is not the current screen.
+- a refactor, test suite, tooling detour or "cleanup" that is not the current screen;
+- a Dockerfile, Compose file or packaging pipeline before the owner asks. The target is documented in [docs/deployment.md](docs/deployment.md).
 
 If you are unsure whether something is part of the port: **it isn't.** Do not add it. Ask the owner and continue on the screen.
 

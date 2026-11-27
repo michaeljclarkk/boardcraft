@@ -12,6 +12,7 @@ Documents answer questions. They are not a second task list.
 | How do I open a board or recover the environment? | [Rust browser viewer](development.md#browser-viewer) and [development runbook](development.md). Run commands from the repository root. |
 | Where does the behaviour live? | [Architecture and owner map](architecture.md). Link to the smallest useful implementation entry point. |
 | What stack does the browser client use? | [Browser client stack](web-client-stack.md). Decision, shared controls, migration notes and risks. |
+| How is it deployed for clients? | [Deployment shape](deployment.md). Two containers, app on 5078, database private. |
 | What do I do when GPUI Kit lacks an interaction? | [Shared GPUI components](gpui-components.md). No-fallback rule, required artifacts and the control register. |
 | What is implemented, verified or unknown? | [Workflow register](workflows.md). Track automated checks, desktop observations and unresolved questions separately. |
 | What is parked until later? | [Deferred work](deferred.md). Owner decisions with entry criteria; not part of the port. |
