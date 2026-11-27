@@ -12,7 +12,7 @@ Any deviation from that is the worst thing you can do here — an orchestrator, 
 2. Open the internal tool on the same fixture, same window size.
 3. Write the Rust needed to make boardcraft match it — translate the C#/TSX behaviour, not a subset.
 4. Run the app. Look at it. Fix the differences.
-5. Record what you saw in the [progress log](ROADMAP.md#progress-log) and the [workflow register](docs/workflows.md), then stop.
+5. Record what you saw in the [progress log](ROADMAP.md#progress-log) and the [workflow register](docs/workflows.md), then stop. The entry names both subagent session IDs when parallel work was used.
 
 One screen per session. Then the owner decides what is next.
 
@@ -24,12 +24,12 @@ The approved areas are exactly the files under `areas/`. Anything outside them �
 
 UI and cross-platform work should run **concurrently as subagents** wherever the area allows it.
 
-Once the area's Rust operation and client contract are stable:
+Once the area's Rust operation and client contract are stable, call the `subagent` tool twice with `background: true` and `agent: general`:
 
-1. Spawn one **UI subagent** for the desktop and browser screens in that area: GPUI Kit controls, layout, states, keyboard and focus.
-2. Spawn one **cross-platform subagent** for Android and shared-client parity: the same action on the phone and through the shared client.
-3. Both work on the same fixture and contract at the same time. The main agent owns the contract, integrates their work, runs the app and verifies the result.
-4. If the contract changes, stop both subagents and restart them from the new contract. Do not let them guess.
+1. **UI** — “Implement `<screen>` in `<area>`; stay inside the area's code homes; do not commit, add crates or write docs.”
+2. **Cross-platform** — “Port the same screen to Android and the shared client; stay inside the area's code homes; do not commit, add crates or write docs.”
+
+Work the contract and integration while they run. Review their changes, run the app and verify the result. If the contract changes, stop both and restart them from the new contract. Record both session IDs in the progress-log entry; if a call failed, say so there. Do not silently skip the parallel step.
 
 Rules for subagents:
 
