@@ -46,7 +46,7 @@ const overall = Math.round(areas.reduce((sum, a) => sum + a.percent, 0) / areas.
 const table = [
   "## Port map",
   "",
-  `**Overall: ${overall}%** — mean across ${areas.length} areas. A handoff names one area; it includes its Rust rules, UI and desktop/browser/Android behaviour.`,
+  `**Overall: ${overall}%** — mean across ${areas.length} areas. A handoff names one area; it includes its Rust rules, UI and desktop/browser/Android behaviour. Once the contract is stable, UI and cross-platform work run as two concurrent subagents.`,
   "",
   "| Area | What it covers | Code home | Ported |",
   "|---|---|---|---|",

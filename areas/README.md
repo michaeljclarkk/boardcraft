@@ -9,6 +9,7 @@ Each `<area>.md` has frontmatter with `id`, `name`, `order`, `percent` and `code
 Rules:
 
 - A handoff names one area. Port its Rust rules, its UI and its desktop/browser/Android behaviour together.
+- Once the area's contract is stable, run UI and cross-platform work as two concurrent OpenCode subagents. The main agent owns the contract, integrates and verifies.
 - Work one screen at a time inside the area.
 - Change `percent` only after verifying behaviour in the running app. 0 = not started; 100 = every workflow matches on every active client, behaviour and UI.
 - Never count code written, tests or scaffolding.

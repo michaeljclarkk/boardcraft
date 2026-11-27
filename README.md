@@ -9,7 +9,7 @@ Everything here is our own work: our schema, our rules, our controls, our names 
 <!-- PORT-STATUS:START -->
 ## Port map
 
-**Overall: 12%** — mean across 16 areas. A handoff names one area; it includes its Rust rules, UI and desktop/browser/Android behaviour.
+**Overall: 12%** — mean across 16 areas. A handoff names one area; it includes its Rust rules, UI and desktop/browser/Android behaviour. Once the contract is stable, UI and cross-platform work run as two concurrent subagents.
 
 | Area | What it covers | Code home | Ported |
 |---|---|---|---|

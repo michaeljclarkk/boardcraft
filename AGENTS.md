@@ -20,6 +20,25 @@ A handoff names **one area** from the [port map](README.md#port-map) — for exa
 
 The approved areas are exactly the files under `areas/`. Anything outside them — a new area, feature, subsystem, harness or process — is out of scope and is a failure. Ask the owner; do not invent work.
 
+## Parallel UI and cross-platform work
+
+UI and cross-platform work should run **concurrently as subagents** wherever the area allows it.
+
+Once the area's Rust operation and client contract are stable:
+
+1. Spawn one **UI subagent** for the desktop and browser screens in that area: GPUI Kit controls, layout, states, keyboard and focus.
+2. Spawn one **cross-platform subagent** for Android and shared-client parity: the same action on the phone and through the shared client.
+3. Both work on the same fixture and contract at the same time. The main agent owns the contract, integrates their work, runs the app and verifies the result.
+4. If the contract changes, stop both subagents and restart them from the new contract. Do not let them guess.
+
+Rules for subagents:
+
+- They stay inside the area's `code` homes and the files the contract names.
+- They do not commit, push, add crates, add dependencies or write docs.
+- They do not build harnesses, drivers or their own tooling.
+- At most two subagents per area: UI and cross-platform. No swarms, queues or dispatchers.
+- Use OpenCode's built-in subagents. Do not build a script or loop to run them.
+
 ## 1:1
 
 - **Workflow parity:** same action, inputs, result, failure and recovery as the internal tool.
