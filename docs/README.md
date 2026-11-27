@@ -14,6 +14,7 @@ Documents answer questions. They are not a second task list.
 | What stack does the browser client use? | [Browser client stack](web-client-stack.md). Decision, shared controls, migration notes and risks. |
 | What do I do when GPUI Kit lacks an interaction? | [Shared GPUI components](gpui-components.md). No-fallback rule, required artifacts and the control register. |
 | What is implemented, verified or unknown? | [Workflow register](workflows.md). Track automated checks, desktop observations and unresolved questions separately. |
+| What is parked until later? | [Deferred work](deferred.md). Owner decisions with entry criteria; not part of the port. |
 | How must a worker behave? | [AGENTS.md](../AGENTS.md). |
 
 ## Rules
