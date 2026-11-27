@@ -16,11 +16,14 @@ export function mountSelection(controls, area) {
   const move = button('Move to', () => openSelectionMove(controls, area, checked));
   const archive = button('Archive', () => archiveDialog([...checked].map(id => board().rows.find(r => r.id === id)), controls, area, () => checked.clear()));
   archive.className = 'archive-selected';
-  toolbar.append(archive, move);
+  const remove = button('Delete', () => archiveDialog([...checked].map(id => board().rows.find(r => r.id === id)), controls, area, () => checked.clear(), true));
+  remove.className = 'delete-selected';
+  toolbar.append(archive, remove, move);
 
   function paint() {
     move.disabled = !board().editable;
     archive.disabled = !board().owner;
+    remove.disabled = !board().owner;
     for (const [id, box] of rowControls) {
       box.checked = checked.has(id);
       box.closest('li').classList.toggle('selected-item', box.checked);

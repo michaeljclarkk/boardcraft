@@ -4,7 +4,7 @@ function element(tag, text) {
   return node;
 }
 
-export function archiveDialog(targets, {api, board, busy, setBusy, refresh, button}, container, clearSelection) {
+export function archiveDialog(targets, {api, board, busy, setBusy, refresh, button}, container, clearSelection, deleting = false) {
   if (!api.current() || busy() || !board().owner) return;
   const batch = Array.isArray(targets), rows = batch ? targets : [targets];
   if (!rows.length || rows.some(r => !r)) return;
@@ -12,9 +12,10 @@ export function archiveDialog(targets, {api, board, busy, setBusy, refresh, butt
   let draft = {operation_id: crypto.randomUUID(), board_revision: board().revision,
     ...(batch ? {items: rows.map(r => ({id:r.id, revision:r.revision}))} : {item_revision:row.revision})};
   const dialog = document.createElement('dialog');
-  const title = 'Archive selected items?';
+  const verb = deleting ? 'Delete' : 'Archive', destination = deleting ? 'Trash' : 'Archive';
+  const title = `${verb} selected items?`;
   dialog.setAttribute('aria-label', title);
-  const summary = rows => `${rows.length} item${rows.length === 1 ? '' : 's'}: ${rows.slice(0,6).map(r=>r.title).join(', ')}${rows.length>6 ? ` and ${rows.length-6} more` : ''}. Restore ${rows.length===1?'it':'them'} later from this board’s Archive.`;
+  const summary = rows => `${rows.length} item${rows.length === 1 ? '' : 's'}: ${rows.slice(0,6).map(r=>r.title).join(', ')}${rows.length>6 ? ` and ${rows.length-6} more` : ''}. Restore ${rows.length===1?'it':'them'} later from this board’s ${destination}.`;
   const description = element('p', summary(rows));
   let reviewed;
   const detail = element('div', '');
@@ -23,12 +24,12 @@ export function archiveDialog(targets, {api, board, busy, setBusy, refresh, butt
     draft = {...draft, board_revision:reviewed.revision, items:reviewed.rows.map(r=>({id:r.id,revision:r.revision}))};
     description.textContent = summary(reviewed.rows); reviewed = undefined;
     detail.replaceChildren(); adopt.hidden = review.hidden = true; confirm.disabled = false;
-    status.textContent = 'Latest revisions loaded. Confirm to archive.';
+    status.textContent = `Latest revisions loaded. Confirm to ${verb.toLowerCase()}.`;
   });
   adopt.hidden = true;
   const status = element('p', ''); status.setAttribute('role', 'status');
   const trigger = document.activeElement;
-  const confirm = button('Confirm', submit), cancel = button('Cancel', () => { if (!busy()) dialog.close(); });
+  const confirm = button(deleting ? 'Delete' : 'Confirm', submit), cancel = button('Cancel', () => { if (!busy()) dialog.close(); });
   const review = button('Review latest items', async () => {
     if (busy() || !api.current()) return;
     setBusy(true); review.disabled = true; reviewed = undefined; adopt.disabled = true;
@@ -64,7 +65,7 @@ export function archiveDialog(targets, {api, board, busy, setBusy, refresh, butt
     setBusy(true); confirm.disabled = cancel.disabled = true; status.textContent = 'Saving…';
     try {
       if (batch) {
-        const ack = await api.archiveSelection(draft);
+        const ack = await (deleting ? api.deleteSelection(draft) : api.archiveSelection(draft));
         if (ack.operation_id!==draft.operation_id || ack.board_id!==board().id || !Array.isArray(ack.affected_ids) || ack.affected_ids.length!==ids.length || new Set(ack.affected_ids).size!==ids.length || !ack.affected_ids.every(id=>ids.includes(id))) throw Error('Unexpected acknowledgment');
       } else await api.transition(row.id, 'archive', draft);
     } catch (error) {
@@ -72,8 +73,8 @@ export function archiveDialog(targets, {api, board, busy, setBusy, refresh, butt
         if (batch) {
           const uncertain = ![401,403,404,409,422,500].includes(error);
           if (error===403) { dialog.remove(); try { const latest=await api.read(); if(api.current()) refresh(latest); } catch(e) { if(api.current()) { if(e===401) api.expired(); else api.reload(e===403 || e===404 ? 'Destination unavailable' : 'Could not recheck access. Reload the board.'); } } }
-          else if (uncertain) api.reload('Archive outcome unavailable. Reload the board.');
-          else { failure(error, error===409 ? 'Items changed. Review latest items.' : 'Archive not confirmed. Review latest items.'); review.hidden=false; }
+           else if (uncertain) api.reload(`${verb} outcome unavailable. Reload the board.`);
+           else { failure(error, error===409 ? 'Items changed. Review latest items.' : `${verb} not confirmed. Review latest items.`); review.hidden=false; }
         }
         else if (error === 500) { failure(error, 'Could not archive item.'); confirm.disabled = false; }
         else { failure(error, error === 409 ? 'Item changed. Review latest items.' : 'Archive outcome unavailable. Review latest items.'); review.hidden = false; }
@@ -84,7 +85,7 @@ export function archiveDialog(targets, {api, board, busy, setBusy, refresh, butt
     if (!api.current()) return;
     dialog.remove();
     try { const latest = await api.read(); if (api.current()) { clearSelection?.(); refresh(latest); } }
-    catch (error) { if (api.current()) { if (error === 401 || error === 403) failure(error, ''); else api.reload(batch ? 'Selected items archived. Reload the board.' : 'Item archived. Reload the board.'); } }
+    catch (error) { if (api.current()) { if (error === 401 || error === 403) failure(error, ''); else api.reload(batch ? `Selected items ${deleting?'deleted':'archived'}. Reload the board.` : 'Item archived. Reload the board.'); } }
     finally { if (api.current()) setBusy(false); }
   }
   review.hidden = true;
@@ -94,9 +95,10 @@ export function archiveDialog(targets, {api, board, busy, setBusy, refresh, butt
   container.append(dialog); dialog.showModal(); cancel.focus();
 }
 
-export function mountArchive(container, page, api) {
+export function mountArchive(container, page, api, trash = false) {
   const count = page.total;
-  container.append(element('h2', 'Items'), element('p', count ? `${count} archived item${count === 1 ? '' : 's'}` : 'No archived items'));
+  const state = trash ? 'deleted' : 'archived';
+  container.append(element('h2', 'Items'), element('p', count ? `${count} ${state} item${count === 1 ? '' : 's'}` : `No ${state} items`));
   if (!page.can_manage) container.append(element('p', 'Owner access required.'));
   if (page.has_more) container.append(element('p', `Showing the first ${page.items.length} items.`));
   const list = document.createElement('ul'); container.append(list);
@@ -122,7 +124,7 @@ export function mountArchive(container, page, api) {
     try { await send(); }
     catch (error) {
       restore.textContent = label;
-      return recover(error, error === 409 ? 'Archive changed.' : 'Restore outcome unavailable.');
+       return recover(error, error === 409 ? (trash ? 'Trash changed.' : 'Archive changed.') : 'Restore outcome unavailable.');
     }
     if (!api.current()) return;
     try { await api.readBoard(); if (api.current()) api.refresh(); }
@@ -134,8 +136,9 @@ export function mountArchive(container, page, api) {
     item.append(element('span', `${row.title} · ${row.group_name}`), restore);
     if (!row.group_active) item.append(element('span', 'Restore its group first.'));
     list.append(item);
-    restore.onclick = () => submit(restore, () => api.transition(row.id, 'restore', {operation_id: crypto.randomUUID(), board_revision: page.board_revision, item_revision: row.revision}));
+    restore.onclick = () => submit(restore, () => api.transition(row.id, trash ? 'restore-deleted' : 'restore', {operation_id: crypto.randomUUID(), board_revision: page.board_revision, item_revision: row.revision}));
   }
+  if (trash) return;
   container.append(element('h2', 'Groups'));
   const groups = document.createElement('ul'); container.append(groups);
   if (!page.groups.length) container.append(element('p', 'No archived groups'));

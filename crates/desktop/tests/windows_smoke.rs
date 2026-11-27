@@ -21,6 +21,10 @@ mod selected_archive;
 fn windows_archives_selected_roots() {
     selected_archive::run();
 }
+#[test]
+fn windows_deletes_and_restores_board_roots() {
+    selected_archive::run_trash();
+}
 #[cfg(feature = "attended-clipboard")]
 #[path = "windows/board_link.rs"]
 mod board_link;

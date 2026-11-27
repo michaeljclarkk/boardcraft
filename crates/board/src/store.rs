@@ -13,7 +13,8 @@ pub use main_table::set_main_table_fold;
 mod lifecycle;
 pub use group_lifecycle::{archived_groups, transition_group};
 pub use lifecycle::{
-    ArchivePage, Lifecycle, RootCommand, archive_page, archive_selected_roots, transition_root,
+    ArchivePage, Lifecycle, RootCommand, archive_page, archive_selected_roots,
+    delete_selected_roots, transition_root, trash_page,
 };
 mod reorder;
 mod selection_move;
@@ -146,6 +147,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
     {
         tx.batch_execute(include_str!("../migrations/0012_selected_root_archive.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (12)", &[])?;
+    }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version=13",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0013_root_trash.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (13)", &[])?;
     }
     tx.commit()
 }

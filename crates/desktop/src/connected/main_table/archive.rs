@@ -27,6 +27,7 @@ struct Group {
     name: SharedString,
 }
 pub(super) struct Archive {
+    trash: bool,
     revision: i64,
     manageable: bool,
     total: i64,
@@ -38,6 +39,7 @@ pub(super) struct Archive {
 impl From<ArchiveRead> for Archive {
     fn from(r: ArchiveRead) -> Self {
         Self {
+            trash: false,
             revision: r.revision(),
             manageable: r.is_manageable(),
             total: r.total(),
@@ -107,7 +109,7 @@ impl MainTable {
             .flex()
             .flex_col()
             .gap_2()
-            .child(Label::new("Archive"))
+            .child(Label::new(if a.trash { "Trash" } else { "Archive" }))
             .child(
                 Button::new("archive-reload")
                     .small()
@@ -119,23 +121,33 @@ impl MainTable {
             .child(
                 Button::new("archive-close")
                     .small()
-                    .label("Close Archive")
+                    .label(if a.trash {
+                        "Close Trash"
+                    } else {
+                        "Close Archive"
+                    })
                     .disabled(self.pending)
                     .on_click(cx.listener(|v, _, w, cx| {
                         if let Screen::Navigation(nav) = &mut v.screen
                             && let Page::Items(_, t) = &mut nav.page
                         {
                             t.archive = None;
-                            t.archive_focus.focus(w, cx);
+                            if t.recovery_trash {
+                                t.trash_focus.focus(w, cx);
+                            } else {
+                                t.archive_focus.focus(w, cx);
+                            }
                             cx.notify();
                         }
                     })),
-            )
-            .child(Label::new("Groups"));
+            );
         if !a.manageable {
             body = body.child(Label::new("Only an Owner can archive or restore content."));
         }
-        if a.groups.is_empty() {
+        if !a.trash {
+            body = body.child(Label::new("Groups"));
+        }
+        if !a.trash && a.groups.is_empty() {
             body = body.child(Label::new("No archived groups on this page"));
         }
         for g in &a.groups {
@@ -169,12 +181,13 @@ impl MainTable {
                     })),
             );
         }
-        body = body.child(Label::new(format!("{} archived items", a.total)));
+        let state = if a.trash { "deleted" } else { "archived" };
+        body = body.child(Label::new(format!("{} {state} items", a.total)));
         if a.total == 0 {
-            body = body.child(Label::new("No archived items"));
+            body = body.child(Label::new(format!("No {state} items")));
         }
         if a.more {
-            body = body.child(Label::new("Showing the first 100 archived items."));
+            body = body.child(Label::new(format!("Showing the first 100 {state} items.")));
         }
         for r in &a.roots {
             let id = r.id;
@@ -221,9 +234,14 @@ fn snapshot(
     client: &EditClient,
     board: Uuid,
     cursor: Option<(i64, i64)>,
+    trash: bool,
 ) -> Result<(MainTableRead, ArchiveRead), EditError> {
     let table = client.read_main_table(board)?;
-    let archive = client.read_main_table_archive(board, cursor)?;
+    let archive = if trash {
+        client.read_main_table_trash(board)?
+    } else {
+        client.read_main_table_archive(board, cursor)?
+    };
     if table.revision() != archive.revision() {
         return Err(EditError::Conflict);
     }
@@ -231,6 +249,17 @@ fn snapshot(
 }
 
 impl Connected {
+    pub(super) fn open_recovery(&mut self, trash: bool, w: &mut Window, cx: &mut Context<Self>) {
+        if let Screen::Navigation(nav) = &mut self.screen
+            && let Page::Items(_, t) = &mut nav.page
+        {
+            if t.pending {
+                return;
+            }
+            t.recovery_trash = trash;
+        }
+        self.read_archive(None, w, cx);
+    }
     fn confirm_root_archive(&mut self, id: Uuid, w: &mut Window, cx: &mut Context<Self>) {
         let Screen::Navigation(nav) = &mut self.screen else {
             return;
@@ -462,6 +491,7 @@ impl Connected {
             return;
         }
         let board = *board;
+        let trash = old.recovery_trash;
         let visit = self.navigation_request;
         let baseline = old
             .archive
@@ -480,9 +510,17 @@ impl Connected {
         let client = nav.client.clone();
         old.set_busy(true, cx);
         self.message = if writing {
-            "Saving archive change…"
+            if trash {
+                "Saving Trash change…"
+            } else {
+                "Saving archive change…"
+            }
         } else {
-            "Reading board Archive…"
+            if trash {
+                "Reading board Trash…"
+            } else {
+                "Reading board Archive…"
+            }
         };
         #[cfg(all(windows, feature = "native-smoke"))]
         if writing {
@@ -495,15 +533,24 @@ impl Connected {
                     revision,
                     operation,
                     restore,
-                }) => client
-                    .archive_main_table_item(board, id, operation, baseline, revision, restore)
-                    .map_err(Failure::Save)?,
+                }) => {
+                    if trash && restore {
+                        client.restore_main_table_deleted_item(
+                            board, id, operation, baseline, revision,
+                        )
+                    } else {
+                        client.archive_main_table_item(
+                            board, id, operation, baseline, revision, restore,
+                        )
+                    }
+                    .map_err(Failure::Save)?;
+                }
                 Some(Command::Group { id, restore }) => client
                     .archive_main_table_group(board, &id, baseline, restore)
                     .map_err(Failure::Save)?,
                 None => (),
             }
-            snapshot(&client, board, cursor).map_err(Failure::Read)
+            snapshot(&client, board, cursor, trash).map_err(Failure::Read)
         });
         cx.spawn_in(w, async move |v, cx| {
             let result = work.await;
@@ -516,11 +563,11 @@ impl Connected {
                 match result {
                     Ok((read, archive)) => {
                         let mut table = MainTable::new(read, board, Some(old), w, cx);
-                        if show_archive { table.archive = Some(archive.into()); table.archive_focus.focus(w, cx); }
+                        if show_archive { let mut page: Archive = archive.into(); page.trash = trash; table.archive = Some(page); table.archive_focus.focus(w, cx); }
                         else { table.focus_first(w, cx); }
                         table.undo = undo;
                         nav.page = Page::Items(board, Box::new(table));
-                        v.message = if writing { "" } else { "Archive reloaded. No change was submitted." };
+                        v.message = if writing { "" } else if trash { "Trash reloaded. No change was submitted." } else { "Archive reloaded. No change was submitted." };
                     }
                     Err(Failure::Save(EditError::SessionRejected) | Failure::Read(EditError::SessionRejected)) => {
                         v.link_input = None; v.screen = Self::identifier(w, cx); v.message = "Session expired. Sign in again.";
@@ -532,9 +579,9 @@ impl Connected {
                         old.reconcile = true; old.undo = None; old.set_busy(false, cx);
                         old.archive_focus.focus(w, cx);
                         let denied = matches!(failure, Failure::Save(EditError::PermissionDenied));
-                        v.message = if denied { "Archive not saved: permission denied. Checking current access…" }
-                            else if matches!(failure, Failure::Save(EditError::Conflict | EditError::Missing | EditError::InvalidDraft)) { "Content changed or is unavailable. Reload Archive before choosing again." }
-                            else { "Archive change not confirmed. Reload Archive; this request will not be repeated." };
+                        v.message = if denied { if trash { "Trash change not saved: permission denied. Checking current access…" } else { "Archive not saved: permission denied. Checking current access…" } }
+                            else if matches!(failure, Failure::Save(EditError::Conflict | EditError::Missing | EditError::InvalidDraft)) { if trash { "Content changed or is unavailable. Reload Trash before choosing again." } else { "Content changed or is unavailable. Reload Archive before choosing again." } }
+                            else if trash { "Trash change not confirmed. Reload Trash; this request will not be repeated." } else { "Archive change not confirmed. Reload Archive; this request will not be repeated." };
                         if denied { v.read_archive(None, w, cx); }
                     }
                 }

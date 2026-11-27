@@ -97,6 +97,14 @@ impl MainTable {
                     .on_click(cx.listener(|v, _, w, cx| v.open_selection_archive(w, cx))),
             )
             .child(
+                Button::new("selection-delete")
+                    .track_focus(&self.selection_delete_focus)
+                    .small()
+                    .label("Delete…")
+                    .disabled(!self.manageable || self.pending || self.reconcile)
+                    .on_click(cx.listener(|v, _, w, cx| v.open_selection_delete(w, cx))),
+            )
+            .child(
                 Button::new("selection-clear")
                     .small()
                     .ghost()

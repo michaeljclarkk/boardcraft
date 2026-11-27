@@ -6,7 +6,10 @@ fn board_document(request: &Request) -> bool {
     let Some(text) = request.url().strip_prefix("/boards/") else {
         return false;
     };
-    let text = text.strip_suffix("/archive").unwrap_or(text);
+    let text = text
+        .strip_suffix("/archive")
+        .or_else(|| text.strip_suffix("/trash"))
+        .unwrap_or(text);
     let has = |name, value: &str| {
         request
             .headers()

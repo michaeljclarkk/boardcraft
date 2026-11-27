@@ -303,6 +303,25 @@ impl Snapshot {
         operation: Uuid,
         selected: &[u128],
     ) -> Self {
+        self.lifecycle_selection(f, actor, operation, selected, false)
+    }
+    pub fn deleted_selection(
+        &self,
+        f: &Fixture,
+        actor: Uuid,
+        operation: Uuid,
+        selected: &[u128],
+    ) -> Self {
+        self.lifecycle_selection(f, actor, operation, selected, true)
+    }
+    fn lifecycle_selection(
+        &self,
+        f: &Fixture,
+        actor: Uuid,
+        operation: Uuid,
+        selected: &[u128],
+        deleting: bool,
+    ) -> Self {
         let mut expected = self.clone();
         let ids: Vec<_> = selected.iter().copied().map(Uuid::from_u128).collect();
         let revisions: Vec<_> = ids
@@ -316,7 +335,7 @@ impl Snapshot {
                 .find(|r| r["id"] == json!(id))
                 .unwrap();
             assert_eq!(r["state"], 0);
-            r["state"] = json!(1);
+            r["state"] = json!(if deleting { 2 } else { 1 });
             r["revision"] = json!(r["revision"].as_i64().unwrap() + 1);
         }
         let b = expected
@@ -326,7 +345,7 @@ impl Snapshot {
             .unwrap();
         let revision = b["revision"].as_i64().unwrap();
         b["revision"] = json!(revision + 1);
-        expected.receipts.push(json!({"operation_id":operation,"actor_id":actor,"board_id":SELECTED,"board_revision":revision,"selected_ids":ids,"selected_revisions":revisions,"affected_ids":ids,"lifecycle":"archive-selection"}));
+        expected.receipts.push(json!({"operation_id":operation,"actor_id":actor,"board_id":SELECTED,"board_revision":revision,"selected_ids":ids,"selected_revisions":revisions,"affected_ids":ids,"lifecycle":if deleting {"delete-selection"} else {"archive-selection"}}));
         assert_eq!(Self::read(f), expected);
         expected
     }

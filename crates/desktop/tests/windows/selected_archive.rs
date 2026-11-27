@@ -5,6 +5,12 @@ use std::sync::atomic::Ordering::SeqCst;
 use uuid::Uuid;
 
 pub(super) fn run() {
+    lifecycle(false);
+}
+pub(super) fn run_trash() {
+    lifecycle(true);
+}
+fn lifecycle(trash: bool) {
     for mode in [
         "success",
         "conflict",
@@ -20,6 +26,19 @@ pub(super) fn run() {
         "viewer",
     ] {
         let f = native_archive::fixture();
+        let selected = if trash {
+            &[67, 59][..]
+        } else {
+            &[67, 59, 61][..]
+        };
+        let accepted = |state: &super::reorder_state::Snapshot, op| {
+            if trash {
+                state.deleted_selection(&f.f, f.member, op, selected)
+            } else {
+                state.archived_selection(&f.f, f.member, op, selected)
+            }
+        };
+        let operation = |r, ix, status| operation(r, ix, status, trash);
         if matches!(mode, "member" | "viewer") {
             f.role(mode);
         }
@@ -28,7 +47,7 @@ pub(super) fn run() {
         cmd.args([
             "browse",
             &r.port.to_string(),
-            &format!("--bulk-archive-{mode}"),
+            &format!("--bulk-{}-{mode}", if trash { "trash" } else { "archive" }),
         ])
         .env(
             "BOARDCRAFT_SESSION_ORIGIN",
@@ -71,7 +90,7 @@ pub(super) fn run() {
                 f.client()
                     .rename_main_table_item(
                         SELECTED,
-                        Uuid::from_u128(61),
+                        Uuid::from_u128(if trash { 59 } else { 61 }),
                         &boardcraft_mobile_edit_client::NameEdit {
                             title: "Indigo".into(),
                             revision: 1,
@@ -84,7 +103,7 @@ pub(super) fn run() {
                 f.f.connect()
                     .execute(
                         "UPDATE board_items SET state=1,revision=revision+1 WHERE id=$1",
-                        &[&Uuid::from_u128(61)],
+                        &[&Uuid::from_u128(if trash { 59 } else { 61 })],
                     )
                     .unwrap();
                 state = f.state();
@@ -108,13 +127,17 @@ pub(super) fn run() {
             w.reply("ok");
             w.expect("saved");
             let op = operation(&r, 0, 200);
-            state = state.archived_selection(&f.f, f.member, op, &[67, 59, 61]);
+            state = accepted(&state, op);
             w.reply("ok");
             w.expect("inventory");
             assert_eq!(f.state(), state);
             w.reply("ok");
             w.expect("restored");
-            state = state.lifecycle_records(&f.f, f.member, "restore");
+            state = state.lifecycle_records(
+                &f.f,
+                f.member,
+                if trash { "restore-deleted" } else { "restore" },
+            );
             w.reply("ok");
             w.expect("reloaded");
             assert_eq!(f.state(), state);
@@ -154,7 +177,7 @@ pub(super) fn run() {
             w.reply("ok");
             w.expect("deliberate");
             assert_eq!(operation(&r, 1, 200), op);
-            state.archived_selection(&f.f, f.member, op, &[67, 59, 61]);
+            accepted(&state, op);
             w.finish();
         } else if matches!(mode, "demoted" | "denied" | "session") {
             w.expect(if mode == "demoted" {
@@ -170,7 +193,7 @@ pub(super) fn run() {
         } else {
             w.expect("uncertain");
             let op = operation(&r, 0, 200);
-            state = state.archived_selection(&f.f, f.member, op, &[67, 59, 61]);
+            state = accepted(&state, op);
             w.reply("ok");
             w.expect("reconciled");
             assert_eq!(f.state(), state);
@@ -179,13 +202,20 @@ pub(super) fn run() {
         }
     }
 }
-fn operation(r: &Relay, ix: usize, status: u16) -> Uuid {
+fn operation(r: &Relay, ix: usize, status: u16, trash: bool) -> Uuid {
     let calls = r.entries.lock().unwrap();
     let e = &calls[ix];
     assert_eq!(e.method, "POST");
     assert_eq!(
         e.path,
-        format!("/navigation/boards/{SELECTED}/main-table/items/archive-selection")
+        format!(
+            "/navigation/boards/{SELECTED}/main-table/items/{}",
+            if trash {
+                "delete-selection"
+            } else {
+                "archive-selection"
+            }
+        )
     );
     assert_eq!(e.status, status);
     assert_eq!(e.body["board_revision"], 2);
@@ -196,7 +226,14 @@ fn operation(r: &Relay, ix: usize, status: u16) -> Uuid {
             .iter()
             .map(|r| r["id"].clone())
             .collect::<Vec<_>>(),
-        [67, 59, 61].map(|n| serde_json::json!(Uuid::from_u128(n)))
+        (if trash {
+            vec![67, 59]
+        } else {
+            vec![67, 59, 61]
+        })
+        .into_iter()
+        .map(|n| serde_json::json!(Uuid::from_u128(n)))
+        .collect::<Vec<_>>()
     );
     let op = serde_json::from_value::<Uuid>(e.body["operation_id"].clone()).unwrap();
     assert!(!op.is_nil());

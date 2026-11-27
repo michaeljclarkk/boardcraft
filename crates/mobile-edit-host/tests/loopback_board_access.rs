@@ -20,6 +20,10 @@ mod selected_archive_checks;
 fn selected_root_archive_is_atomic_and_authorized() {
     selected_archive_checks::atomic_and_authorized();
 }
+#[test]
+fn selected_root_trash_is_atomic_and_authorized() {
+    selected_archive_checks::trash_atomic_and_authorized();
+}
 #[path = "fixture/native_group_fields.rs"]
 mod native_group_fields;
 #[path = "fixture/native_group_fields_checks.rs"]

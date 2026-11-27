@@ -300,7 +300,14 @@ fn handle(
             (req.method(), path.as_slice()),
             (
                 Method::Get,
-                ["", "navigation", "boards", _, "main-table", "archive"]
+                [
+                    "",
+                    "navigation",
+                    "boards",
+                    _,
+                    "main-table",
+                    "archive" | "trash"
+                ]
             ) | (
                 Method::Get,
                 [
@@ -323,7 +330,7 @@ fn handle(
                     _,
                     "main-table",
                     "items",
-                    "archive-selection"
+                    "archive-selection" | "delete-selection"
                 ]
             ) | (
                 Method::Post,
@@ -335,7 +342,7 @@ fn handle(
                     "main-table",
                     "items" | "groups",
                     _,
-                    "archive" | "restore"
+                    "archive" | "restore" | "restore-deleted"
                 ]
             )
         );
@@ -452,10 +459,10 @@ fn handle(
                 "boards",
                 board,
                 "items",
-                "archive-selection",
+                "archive-selection" | "delete-selection",
             ],
         ) if matches!(shape, ReadShape::Grouped) || native_archive => (board, SelectedOwner, None),
-        (Method::Get, ["", "navigation", "boards", board, "archive"])
+        (Method::Get, ["", "navigation", "boards", board, "archive" | "trash"])
         | (Method::Get, ["", "navigation", "boards", board, "archive", "groups", _, _])
             if matches!(shape, ReadShape::Grouped) || native_archive =>
         {
@@ -491,7 +498,7 @@ fn handle(
                 board,
                 "items",
                 id,
-                "archive" | "restore",
+                "archive" | "restore" | "restore-deleted",
             ],
         ) if matches!(shape, ReadShape::Grouped) || native_archive => {
             (board, SelectedOwner, Some(id))
@@ -536,12 +543,13 @@ fn handle(
         Fold(Result<FoldDraft, u16>),
         EditGroup(String, Result<EditGroupDraft, u16>),
         ArchivePage(Option<(i64, i64)>),
+        TrashPage,
         Group(String, store::Lifecycle, Result<GroupDraft, u16>),
         Lifecycle(ItemId, store::Lifecycle, Result<RootDraft, u16>),
         Rename(ItemId, Result<NameEdit, u16>),
         Create(Result<CreateDraft, u16>),
         SelectionMove(Result<SelectionMoveDraft, u16>),
-        SelectionArchive(Result<SelectionArchiveDraft, u16>),
+        SelectionLifecycle(store::Lifecycle, Result<SelectionLifecycleDraft, u16>),
         Move(ItemId, Result<MoveDraft, u16>),
         Reorder(ItemId, Result<ReorderDraft, u16>),
     }
@@ -551,6 +559,9 @@ fn handle(
         }
         Some(item) if path.last() == Some(&"restore") => {
             Action::Lifecycle(item, store::Lifecycle::Restore, read_json(req))
+        }
+        Some(item) if path.last() == Some(&"restore-deleted") => {
+            Action::Lifecycle(item, store::Lifecycle::RestoreDeleted, read_json(req))
         }
         None if path.get(4) == Some(&"groups") && path.len() == 5 => {
             Action::CreateGroup(read_json(req))
@@ -580,6 +591,7 @@ fn handle(
                 )
             }
         }
+        None if path.get(4) == Some(&"trash") => Action::TrashPage,
         None if path.get(4) == Some(&"archive") => Action::ArchivePage(if path.len() == 8 {
             Some((
                 path[6].parse().map_err(|_| 400u16)?,
@@ -594,8 +606,19 @@ fn handle(
         None if path.last() == Some(&"move-selection") => {
             Action::SelectionMove(read_json_limit(req, 1024 * 1024))
         }
-        None if path.last() == Some(&"archive-selection") => {
-            Action::SelectionArchive(read_json_limit(req, 1024 * 1024))
+        None if matches!(
+            path.last(),
+            Some(&"archive-selection" | &"delete-selection")
+        ) =>
+        {
+            Action::SelectionLifecycle(
+                if path.last() == Some(&"delete-selection") {
+                    store::Lifecycle::Delete
+                } else {
+                    store::Lifecycle::Archive
+                },
+                read_json_limit(req, 1024 * 1024),
+            )
         }
         None if req.method() == &Method::Post => Action::Create(read_json(req)),
         None => Action::Read,
@@ -662,6 +685,18 @@ fn handle(
                 .map_err(|e| order_error(e, requested, "transition_group"))?;
             serde_json::to_vec(&serde_json::json!({"board_id":requested,"group_id":group,"board_revision":baseline+1})).unwrap()
         }
+        Action::TrashPage => {
+            tx.query_opt(
+                "SELECT revision FROM boards WHERE id=$1 FOR SHARE",
+                &[&requested],
+            )
+            .map_err(|e| order_error(e.into(), requested, "trash_page"))?
+            .ok_or(404u16)?;
+            let page = store::trash_page(&mut tx, board)
+                .map_err(|e| order_error(e, requested, "trash_page"))?;
+            let items:Vec<_>=page.items.into_iter().map(|r|serde_json::json!({"id":r.id,"title":r.title,"group_id":r.group_id,"group_name":r.group_name,"revision":r.revision,"state":r.state,"effective_state":2,"restorable":owner && r.group_active && r.state==2,"group_active":r.group_active})).collect();
+            serde_json::to_vec(&serde_json::json!({"board_revision":page.revision,"can_manage":owner,"total":page.total,"has_more":page.total>items.len() as i64,"items":items,"groups":[],"next_group_offset":null})).unwrap()
+        }
         Action::ArchivePage(cursor) => {
             let gp = store::archived_groups(&mut tx, board, cursor)
                 .map_err(|e| order_error(e, requested, "archived_groups"))?;
@@ -688,10 +723,16 @@ fn handle(
             .map_err(|e| order_error(e, requested, "transition_root"))?;
             serde_json::to_vec(&serde_json::json!({"operation_id":d.operation_id,"item_id":item.as_uuid(),"board_id":requested})).unwrap()
         }
-        Action::SelectionArchive(draft) => {
+        Action::SelectionLifecycle(action, draft) => {
+            let deleting = matches!(action, store::Lifecycle::Delete);
             let d = draft?;
             let items: Vec<_> = d.items.into_iter().map(|r| (r.id, r.revision)).collect();
-            let affected = store::archive_selected_roots(
+            let apply = if deleting {
+                store::delete_selected_roots
+            } else {
+                store::archive_selected_roots
+            };
+            let affected = apply(
                 &mut tx,
                 account.id,
                 board,
@@ -699,7 +740,17 @@ fn handle(
                 d.board_revision,
                 &items,
             )
-            .map_err(|e| order_error(e, requested, "archive_selected_roots"))?;
+            .map_err(|e| {
+                order_error(
+                    e,
+                    requested,
+                    if deleting {
+                        "delete_selected_roots"
+                    } else {
+                        "archive_selected_roots"
+                    },
+                )
+            })?;
             serde_json::to_vec(&serde_json::json!({"board_id":requested,"operation_id":d.operation_id,"affected_ids":affected})).unwrap()
         }
         Action::SelectionMove(draft) => {
@@ -886,7 +937,7 @@ struct RootDraft {
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SelectionArchiveDraft {
+struct SelectionLifecycleDraft {
     operation_id: Uuid,
     board_revision: i64,
     items: Vec<SelectedRoot>,

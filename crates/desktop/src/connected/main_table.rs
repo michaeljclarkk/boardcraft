@@ -51,6 +51,7 @@ pub(super) struct MainTable {
     move_dialog: Option<Entity<MoveDialog>>,
     move_focus: FocusHandle,
     selection_archive_focus: FocusHandle,
+    selection_delete_focus: FocusHandle,
     _move_subscription: Option<Subscription>,
     item_move: Option<Entity<item_move::ItemMoveDialog>>,
     _item_move_subscription: Option<Subscription>,
@@ -59,7 +60,9 @@ pub(super) struct MainTable {
     group_focus: FocusHandle,
     _group_subscription: Option<Subscription>,
     archive: Option<Archive>,
+    recovery_trash: bool,
     archive_focus: FocusHandle,
+    trash_focus: FocusHandle,
     archive_triggers: std::collections::HashMap<Uuid, FocusHandle>,
     root_command: Option<RootCommand>,
     undo: Option<Undo>,
@@ -232,6 +235,9 @@ impl MainTable {
             selection_archive_focus: previous
                 .map(|t| t.selection_archive_focus.clone())
                 .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
+            selection_delete_focus: previous
+                .map(|t| t.selection_delete_focus.clone())
+                .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
             item_move: None,
             _item_move_subscription: None,
             failed_moves: previous.map(|t| t.failed_moves.clone()).unwrap_or_default(),
@@ -241,8 +247,12 @@ impl MainTable {
                 .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
             _group_subscription: None,
             archive: None,
+            recovery_trash: previous.is_some_and(|t| t.recovery_trash),
             archive_focus: previous
                 .map(|t| t.archive_focus.clone())
+                .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
+            trash_focus: previous
+                .map(|t| t.trash_focus.clone())
                 .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
             root_command: None,
             archive_triggers,
@@ -274,12 +284,26 @@ impl MainTable {
         column = column.child(self.new_group_options(cx));
         column = column.child(self.failed_item_moves(cx));
         column = column.child(
-            Button::new("open-archive")
-                .small()
-                .label("Archive…")
-                .track_focus(&self.archive_focus)
-                .disabled(self.pending || self.root_command.is_some())
-                .on_click(cx.listener(|v, _, w, cx| v.read_archive(None, w, cx))),
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    Button::new("open-archive")
+                        .small()
+                        .label("Archive…")
+                        .track_focus(&self.archive_focus)
+                        .disabled(self.pending || self.root_command.is_some())
+                        .on_click(cx.listener(|v, _, w, cx| v.open_recovery(false, w, cx))),
+                )
+                .child(
+                    Button::new("open-trash")
+                        .small()
+                        .label("Trash…")
+                        .track_focus(&self.trash_focus)
+                        .disabled(self.pending || self.root_command.is_some())
+                        .on_click(cx.listener(|v, _, w, cx| v.open_recovery(true, w, cx))),
+                ),
         );
         if let Some(undo) = &self.undo {
             column = column

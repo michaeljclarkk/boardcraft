@@ -223,6 +223,7 @@ async function perform({action, password, rows, otherPort}) {
   if (action.startsWith('group life ')) return groupLifecycleJourney(action.slice(11), {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, traverse, boardPath, selectedGet, resolve, observe, login, list, origin});
   if (action.startsWith('life ')) return lifecycleJourney(action, {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe, named, traverse});
   if (action.startsWith('bulk ')) return selectedArchiveJourney(action.slice(5), {browser,uuid,click,key,wait,check,requests,statuses,reload,selectedGet,resolve,observe,named});
+  if (action.startsWith('trash ')) return selectedArchiveJourney(action.slice(6), {browser,uuid,click,key,wait,check,requests,statuses,reload,selectedGet,resolve,observe,named},true);
   if (action.startsWith('batch ')) return batchJourney(action, {browser, uuid, click, key, wait, check, requests, statuses, reload, historyAt, boardPath, selectedGet, resolve, observe, named});
   if (action.startsWith('select ')) return selectionJourney(action, {uuid, send, click, key, wait, requests, statuses, reload, historyAt, selectedGet, boardPath, resolve, observe, named});
   if (action.startsWith('reorder ')) return reorderJourney(action, {uuid, send, click, key, wait, requests, statuses, reload, historyAt, selectedGet, boardPath, resolve, observe});

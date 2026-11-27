@@ -93,8 +93,32 @@ impl EditClient {
         board_revision: i64,
         items: &[(Uuid, i64)],
     ) -> Result<(), EditError> {
+        self.lifecycle_selection(board, operation, board_revision, items, false)
+    }
+    pub fn delete_main_table_selection(
+        &self,
+        board: Uuid,
+        operation: Uuid,
+        board_revision: i64,
+        items: &[(Uuid, i64)],
+    ) -> Result<(), EditError> {
+        self.lifecycle_selection(board, operation, board_revision, items, true)
+    }
+    fn lifecycle_selection(
+        &self,
+        board: Uuid,
+        operation: Uuid,
+        board_revision: i64,
+        items: &[(Uuid, i64)],
+        trash: bool,
+    ) -> Result<(), EditError> {
+        let action = if trash {
+            "delete-selection"
+        } else {
+            "archive-selection"
+        };
         let url = format!(
-            "http://127.0.0.1:{}/navigation/boards/{board}/main-table/items/archive-selection",
+            "http://127.0.0.1:{}/navigation/boards/{board}/main-table/items/{action}",
             self.port
         );
         let draft = serde_json::json!({"operation_id":operation,"board_revision":board_revision,
@@ -118,8 +142,20 @@ impl EditClient {
         board: Uuid,
         cursor: Option<(i64, i64)>,
     ) -> Result<ArchiveRead, EditError> {
+        self.read_recovery(board, cursor, false)
+    }
+    pub fn read_main_table_trash(&self, board: Uuid) -> Result<ArchiveRead, EditError> {
+        self.read_recovery(board, None, true)
+    }
+    fn read_recovery(
+        &self,
+        board: Uuid,
+        cursor: Option<(i64, i64)>,
+        trash: bool,
+    ) -> Result<ArchiveRead, EditError> {
+        let kind = if trash { "trash" } else { "archive" };
         let mut url = format!(
-            "http://127.0.0.1:{}/navigation/boards/{board}/main-table/archive",
+            "http://127.0.0.1:{}/navigation/boards/{board}/main-table/{kind}",
             self.port
         );
         if let Some((revision, offset)) = cursor {
@@ -141,9 +177,14 @@ impl EditClient {
                 r.id.is_nil()
                     || !items.insert(r.id)
                     || r.revision < 1
-                    || r.effective_state != 1
-                    || ![0, 1, 3].contains(&r.state)
-                    || (r.group_active && r.state != 1)
+                    || r.effective_state != if trash { 2 } else { 1 }
+                    || !(if trash {
+                        &[0, 1, 2, 3][..]
+                    } else {
+                        &[0, 1, 3][..]
+                    })
+                    .contains(&r.state)
+                    || (r.group_active && r.state != if trash { 2 } else { 1 })
                     || r.restorable != (read.can_manage && r.group_active)
             })
             || read
@@ -166,6 +207,41 @@ impl EditClient {
         item_revision: i64,
         restore: bool,
     ) -> Result<(), EditError> {
+        self.lifecycle_item(
+            board,
+            item,
+            operation,
+            board_revision,
+            item_revision,
+            if restore { "restore" } else { "archive" },
+        )
+    }
+    pub fn restore_main_table_deleted_item(
+        &self,
+        board: Uuid,
+        item: Uuid,
+        operation: Uuid,
+        board_revision: i64,
+        item_revision: i64,
+    ) -> Result<(), EditError> {
+        self.lifecycle_item(
+            board,
+            item,
+            operation,
+            board_revision,
+            item_revision,
+            "restore-deleted",
+        )
+    }
+    fn lifecycle_item(
+        &self,
+        board: Uuid,
+        item: Uuid,
+        operation: Uuid,
+        board_revision: i64,
+        item_revision: i64,
+        action: &str,
+    ) -> Result<(), EditError> {
         #[derive(Serialize)]
         struct Draft {
             operation_id: Uuid,
@@ -178,7 +254,6 @@ impl EditClient {
             item_id: Uuid,
             board_id: Uuid,
         }
-        let action = if restore { "restore" } else { "archive" };
         let url = format!(
             "http://127.0.0.1:{}/navigation/boards/{board}/main-table/items/{item}/{action}",
             self.port

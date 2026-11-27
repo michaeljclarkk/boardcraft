@@ -24,16 +24,29 @@ pub struct ArchivePage {
 /// Keep the board revision even for an empty archive. Deleted (own or inherited)
 /// takes precedence over Archived; Staging by itself is not a recovery state.
 pub fn archive_page(tx: &mut Transaction<'_>, board: BoardId) -> Result<ArchivePage, ReorderError> {
+    recovery_page(tx, board, false)
+}
+
+/// Deleted on the root or its group takes precedence over Archive.
+pub fn trash_page(tx: &mut Transaction<'_>, board: BoardId) -> Result<ArchivePage, ReorderError> {
+    recovery_page(tx, board, true)
+}
+fn recovery_page(
+    tx: &mut Transaction<'_>,
+    board: BoardId,
+    trash: bool,
+) -> Result<ArchivePage, ReorderError> {
     let rows = tx.query(
         "SELECT b.revision,p.id,p.title,p.group_id,p.name,p.revision,p.state,p.active,p.total
         FROM boards b LEFT JOIN LATERAL (
-        SELECT i.id,i.title,i.group_id,g.name,i.revision,i.state,g.active,count(*) OVER () AS total,
+        SELECT i.id,i.title,i.group_id,g.name,i.revision,i.state,(g.active AND NOT g.deleted) AS active,count(*) OVER () AS total,
                i.position,i.created_at
         FROM board_items i JOIN board_groups g ON (i.board_id,i.group_id)=(g.board_id,g.id)
-        WHERE i.board_id=b.id AND NOT g.deleted AND i.state<>2 AND (i.state=1 OR NOT g.active)
+        WHERE i.board_id=b.id AND CASE WHEN $2 THEN (g.deleted OR i.state=2)
+          ELSE NOT g.deleted AND i.state<>2 AND (i.state=1 OR NOT g.active) END
         ORDER BY i.position,i.created_at NULLS FIRST,i.id LIMIT 100
     ) p ON true WHERE b.id=$1 ORDER BY p.position,p.created_at NULLS FIRST,p.id",
-        &[&board.0],
+        &[&board.0, &trash],
     )?;
     let first = rows.first().ok_or(ReorderError::Missing)?;
     Ok(ArchivePage {
@@ -60,6 +73,8 @@ pub fn archive_page(tx: &mut Transaction<'_>, board: BoardId) -> Result<ArchiveP
 pub enum Lifecycle {
     Archive,
     Restore,
+    Delete,
+    RestoreDeleted,
 }
 pub struct RootCommand {
     pub action: Lifecycle,
@@ -84,6 +99,8 @@ pub fn transition_root(
     let kind = match cmd.action {
         Lifecycle::Archive => "archive",
         Lifecycle::Restore => "restore",
+        Lifecycle::Delete => "delete",
+        Lifecycle::RestoreDeleted => "restore-deleted",
     };
     let args: &[&(dyn ToSql + Sync)] = &[
         &cmd.operation,
@@ -107,8 +124,8 @@ pub fn transition_root(
         return Err(Conflict);
     }
     validate_roots(tx, board, &[item.0], &[cmd.item_revision], cmd.action)?;
-    if matches!(cmd.action, Lifecycle::Restore)
-        && !archive_page(tx, board)?
+    if matches!(cmd.action, Lifecycle::Restore | Lifecycle::RestoreDeleted)
+        && !recovery_page(tx, board, matches!(cmd.action, Lifecycle::RestoreDeleted))?
             .items
             .iter()
             .any(|r| r.id == item.0)
@@ -138,6 +155,45 @@ pub fn archive_selected_roots(
     board_revision: i64,
     items: &[(Uuid, i64)],
 ) -> Result<Vec<Uuid>, ReorderError> {
+    transition_selected_roots(
+        tx,
+        actor,
+        board,
+        operation,
+        board_revision,
+        items,
+        Lifecycle::Archive,
+    )
+}
+
+/// Same atomic eligibility and revision owner as Archive; no physical deletion.
+pub fn delete_selected_roots(
+    tx: &mut Transaction<'_>,
+    actor: Uuid,
+    board: BoardId,
+    operation: Uuid,
+    board_revision: i64,
+    items: &[(Uuid, i64)],
+) -> Result<Vec<Uuid>, ReorderError> {
+    transition_selected_roots(
+        tx,
+        actor,
+        board,
+        operation,
+        board_revision,
+        items,
+        Lifecycle::Delete,
+    )
+}
+fn transition_selected_roots(
+    tx: &mut Transaction<'_>,
+    actor: Uuid,
+    board: BoardId,
+    operation: Uuid,
+    board_revision: i64,
+    items: &[(Uuid, i64)],
+    action: Lifecycle,
+) -> Result<Vec<Uuid>, ReorderError> {
     use ReorderError::*;
     if operation.is_nil()
         || !(1..=10_000).contains(&items.len())
@@ -150,6 +206,11 @@ pub fn archive_selected_roots(
         return Err(Invalid);
     }
     let version = lock_board(tx, board)?;
+    let kind = match action {
+        Lifecycle::Archive => "archive-selection",
+        Lifecycle::Delete => "delete-selection",
+        _ => return Err(Invalid),
+    };
     let args: &[&(dyn ToSql + Sync)] = &[
         &operation,
         &actor,
@@ -157,21 +218,28 @@ pub fn archive_selected_roots(
         &board_revision,
         &ids,
         &revisions,
+        &kind,
     ];
     if let Some(row) = tx.query_opt(
-        "SELECT lifecycle='archive-selection' AND (actor_id,board_id,board_revision,selected_ids,selected_revisions)
+        "SELECT lifecycle=$7 AND (actor_id,board_id,board_revision,selected_ids,selected_revisions)
         IS NOT DISTINCT FROM ($2,$3,$4,$5,$6), affected_ids
-        FROM group_reorder_receipts WHERE operation_id=$1", args)? {
-        return if row.get::<_, Option<bool>>(0) == Some(true) { Ok(row.get(1)) } else { Err(Conflict) };
+        FROM group_reorder_receipts WHERE operation_id=$1",
+        args,
+    )? {
+        return if row.get::<_, Option<bool>>(0) == Some(true) {
+            Ok(row.get(1))
+        } else {
+            Err(Conflict)
+        };
     }
     if version != board_revision {
         return Err(Conflict);
     }
-    validate_roots(tx, board, &ids, &revisions, Lifecycle::Archive)?;
-    apply_transition(tx, board, &ids, Lifecycle::Archive)?;
+    validate_roots(tx, board, &ids, &revisions, action)?;
+    apply_transition(tx, board, &ids, action)?;
     let inserted = tx.execute(
         "INSERT INTO group_reorder_receipts(operation_id,actor_id,board_id,board_revision,selected_ids,selected_revisions,affected_ids,lifecycle)
-        VALUES($1,$2,$3,$4,$5,$6,$5,'archive-selection') ON CONFLICT DO NOTHING", args)?;
+        VALUES($1,$2,$3,$4,$5,$6,$5,$7) ON CONFLICT DO NOTHING", args)?;
     if inserted != 1 {
         return Err(Conflict);
     }
@@ -190,7 +258,7 @@ fn validate_roots(
     let rows = tx.query(
         "SELECT i.revision,i.state FROM unnest($2::uuid[]) WITH ORDINALITY r(id,n)
         JOIN board_items i ON i.board_id=$1 AND i.id=r.id
-        JOIN board_groups g ON (g.board_id,g.id)=(i.board_id,i.group_id) AND g.active
+        JOIN board_groups g ON (g.board_id,g.id)=(i.board_id,i.group_id) AND g.active AND NOT g.deleted
         ORDER BY r.n FOR UPDATE OF i FOR SHARE OF g",
         &[&board.0, &ids],
     )?;
@@ -205,8 +273,9 @@ fn validate_roots(
         return Err(ReorderError::Conflict);
     }
     let from = match action {
-        Lifecycle::Archive => 0,
+        Lifecycle::Archive | Lifecycle::Delete => 0,
         Lifecycle::Restore => 1,
+        Lifecycle::RestoreDeleted => 2,
     };
     if rows.iter().any(|r| r.get::<_, i32>(1) != from) {
         return Err(ReorderError::Invalid);
@@ -221,7 +290,8 @@ fn apply_transition(
 ) -> Result<(), ReorderError> {
     let to = match action {
         Lifecycle::Archive => 1i32,
-        Lifecycle::Restore => 0,
+        Lifecycle::Delete => 2,
+        Lifecycle::Restore | Lifecycle::RestoreDeleted => 0,
     };
     tx.execute(
         "UPDATE board_items SET state=$3,revision=revision+1 WHERE board_id=$1 AND id=ANY($2)",

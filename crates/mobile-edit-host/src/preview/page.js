@@ -76,8 +76,8 @@ function navigate(path) {
 }
 
 function loadRoute(current) {
-  const archive = /^\/boards\/([^/]+)\/archive$/.exec(location.pathname);
-  if (archive) return loadDestination(archive[1], current, '', true);
+  const archive = /^\/boards\/([^/]+)\/(archive|trash)$/.exec(location.pathname);
+  if (archive) return loadDestination(archive[1], current, '', archive[2]);
   return location.pathname === '/preview/' ? loadBoards(current)
     : loadDestination(location.pathname.slice('/boards/'.length), current);
 }
@@ -119,7 +119,7 @@ async function loadBoards(current) {
 
 async function loadDestination(id, current, notice = '', recovery = false) {
   clearNavigation();
-  step(destination, recovery ? 'Archive' : 'Board items');
+  step(destination, recovery === 'trash' ? 'Trash' : recovery ? 'Archive' : 'Board items');
   alert.textContent = notice;
   const path = `/navigation/boards/${encodeURIComponent(id)}`;
   async function read() {
@@ -147,11 +147,11 @@ async function loadDestination(id, current, notice = '', recovery = false) {
   link.onclick = e => { if (!e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey) { e.preventDefault(); navigate(link.pathname); } };
   try {
     if (recovery) {
-      const page = await readArchive();
+      const page = await request(path+'/'+recovery);
       if (!current()) return;
       const mounted = visit = Symbol();
       mountArchive(items, page, {transition, transitionGroup, current: () => visit === mounted, expired: forgetSession, readBoard: read, refresh: () => run(loadRoute),
-        more: (revision, offset) => request(`${path}/archive/groups/${revision}/${offset}`)});
+        more: (revision, offset) => request(`${path}/archive/groups/${revision}/${offset}`)}, recovery === 'trash');
       $('#recovery-nav').append(link); return;
     }
     const board = await read();
@@ -159,6 +159,9 @@ async function loadDestination(id, current, notice = '', recovery = false) {
     const mounted = visit = Symbol();
     const menu = document.createElement('details'), label = document.createElement('summary');
     label.textContent = 'Archived & deleted content'; menu.append(label, link); $('#recovery-nav').append(menu);
+    const trash = document.createElement('a'); trash.href = `/boards/${id}/trash`; trash.textContent = 'Trash';
+    trash.onclick = e => { if (!e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey) { e.preventDefault(); navigate(trash.pathname); } };
+    menu.append(trash);
     unmount = mountNames(board, items, $('#failures'), {
       current: () => visit === mounted,
       read,
@@ -176,6 +179,7 @@ async function loadDestination(id, current, notice = '', recovery = false) {
       editGroup: (id, draft) => request(`${path}/groups/${encodeURIComponent(id)}`, {method:'PUT', body:JSON.stringify(draft)}),
       moveSelection: draft => request(`${path}/items/move-selection`, {method:'POST', body:JSON.stringify(draft)}),
       archiveSelection: draft => request(`${path}/items/archive-selection`, {method:'POST', body:JSON.stringify(draft)}),
+      deleteSelection: draft => request(`${path}/items/delete-selection`, {method:'POST', body:JSON.stringify(draft)}),
       reorder: (item, draft) => request(`${path}/items/${encodeURIComponent(item)}/reorder`, {
         method: 'POST', body: JSON.stringify(draft)
       }),

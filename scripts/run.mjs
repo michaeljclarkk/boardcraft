@@ -167,6 +167,11 @@ packets.push({ ...itemPlacement, id: '51-selected-root-archive',
   cases: [...itemPlacement.cases, 'selected_root_archive_is_atomic_and_authorized'],
   windowsCases: [...itemPlacement.windowsCases, 'windows_archives_selected_roots'],
   browserCases: [...packets.find(p => p.id === '43-browser-group-collapse').browserCases, 'browser_archives_selected_roots'] });
+const selectedArchive = packets.at(-1);
+packets.push({ ...selectedArchive, id: '52-board-item-trash',
+  cases: [...selectedArchive.cases, 'selected_root_trash_is_atomic_and_authorized'],
+  windowsCases: [...selectedArchive.windowsCases, 'windows_deletes_and_restores_board_roots'],
+  browserCases: [...selectedArchive.browserCases, 'browser_deletes_and_restores_board_roots'] });
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
 const text = value => typeof value === 'string' && value.trim().length > 0;

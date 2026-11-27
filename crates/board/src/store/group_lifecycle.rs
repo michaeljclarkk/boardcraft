@@ -62,6 +62,9 @@ pub fn transition_group(
     action: Lifecycle,
     baseline: i64,
 ) -> Result<(), ReorderError> {
+    if !matches!(action, Lifecycle::Archive | Lifecycle::Restore) {
+        return Err(ReorderError::Invalid);
+    }
     if lock_board(tx, board)? != baseline {
         return Err(ReorderError::Conflict);
     }

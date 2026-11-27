@@ -4,6 +4,7 @@ use gpui_kit::component::{
     IndexPath, WindowExt,
     select::{Select, SelectItem, SelectState},
 };
+use gpui_kit::prelude::FluentBuilder;
 
 #[derive(Clone)]
 pub(super) struct GroupChoice {
@@ -36,8 +37,19 @@ enum State {
     Reviewed,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum SelectionAction {
+    Move,
+    Archive,
+    Delete,
+}
+impl SelectionAction {
+    fn is_lifecycle(self) -> bool {
+        self != Self::Move
+    }
+}
 pub(super) struct MoveDialog {
-    archive: bool,
+    action: SelectionAction,
     operation: Uuid,
     board_revision: i64,
     roots: Vec<Root>,
@@ -61,7 +73,7 @@ impl MoveDialog {
     }
     fn adoptable(&self) -> bool {
         self.review.as_ref().is_some_and(|read| {
-            (if self.archive {
+            (if self.action.is_lifecycle() {
                 read.is_manageable()
             } else {
                 read.is_editable()
@@ -82,6 +94,8 @@ impl MoveDialog {
 
 impl Render for MoveDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let lifecycle = self.action.is_lifecycle();
+        let deleting = self.action == SelectionAction::Delete;
         let mut body = div()
             .flex()
             .flex_col()
@@ -99,8 +113,12 @@ impl Render for MoveDialog {
         if self.roots.len() > 6 {
             body = body.child(Label::new(format!("and {} more", self.roots.len() - 6)));
         }
-        if self.archive {
-            body = body.child(Label::new("Restore these items later from board Archive."));
+        if lifecycle {
+            body = body.child(Label::new(if deleting {
+                "Restore these items later from board Trash."
+            } else {
+                "Restore these items later from board Archive."
+            }));
         } else {
             body = body
                 .child(Label::new("Destination board"))
@@ -140,7 +158,7 @@ impl Render for MoveDialog {
                     ),
                 }));
             }
-            let group_present = self.archive
+            let group_present = lifecycle
                 || self
                     .destination
                     .read(cx)
@@ -179,7 +197,14 @@ impl Render for MoveDialog {
                     Button::new("move-confirm")
                         .track_focus(&self.confirm_focus)
                         .primary()
-                        .label(if self.archive { "Archive" } else { "Confirm" })
+                        .when(deleting, |b| b.danger())
+                        .label(if deleting {
+                            "Delete"
+                        } else if lifecycle {
+                            "Archive"
+                        } else {
+                            "Confirm"
+                        })
                         .loading(self.state == State::Saving)
                         .disabled(self.state != State::Ready)
                         .on_click(cx.listener(|d, _, _, cx| d.emit(MoveEvent::Confirm, cx))),
@@ -193,13 +218,13 @@ enum Failure {
     Read(EditError),
 }
 impl Failure {
-    fn is_uncertain(&self, archive: bool, reviewing: bool) -> bool {
+    fn is_uncertain(&self, lifecycle: bool, reviewing: bool) -> bool {
         match self {
             // A review that sent no command may be retried without losing its draft.
-            Self::Read(_) => !(archive && reviewing),
+            Self::Read(_) => !(lifecycle && reviewing),
             Self::Save(EditError::Transport | EditError::AccessUnavailable) => true,
-            // The archive host returns 500 only after rolling back the transaction.
-            Self::Save(EditError::HostFault) => !archive,
+            // Lifecycle commands return 500 only after rolling back the transaction.
+            Self::Save(EditError::HostFault) => !lifecycle,
             Self::Save(_) => false,
         }
     }
@@ -226,12 +251,22 @@ impl Connected {
     }
 
     pub(super) fn open_selection_move(&mut self, w: &mut Window, cx: &mut Context<Self>) {
-        self.open_selection_command(false, w, cx);
+        self.open_selection_command(SelectionAction::Move, w, cx);
     }
     pub(super) fn open_selection_archive(&mut self, w: &mut Window, cx: &mut Context<Self>) {
-        self.open_selection_command(true, w, cx);
+        self.open_selection_command(SelectionAction::Archive, w, cx);
     }
-    fn open_selection_command(&mut self, archive: bool, w: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_selection_delete(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        self.open_selection_command(SelectionAction::Delete, w, cx);
+    }
+    fn open_selection_command(
+        &mut self,
+        action: SelectionAction,
+        w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let lifecycle = action.is_lifecycle();
+        let deleting = action == SelectionAction::Delete;
         let Screen::Navigation(nav) = &mut self.screen else {
             return;
         };
@@ -240,7 +275,7 @@ impl Connected {
         };
         if table.pending
             || table.reconcile
-            || !(if archive {
+            || !(if lifecycle {
                 table.manageable
             } else {
                 table.editable
@@ -286,7 +321,7 @@ impl Connected {
             return;
         };
         let dialog = cx.new(|cx| MoveDialog {
-            archive,
+            action,
             operation: Uuid::new_v4(),
             board_revision: table.board_revision,
             roots,
@@ -303,7 +338,9 @@ impl Connected {
                 }),
             );
         table.move_dialog = Some(dialog.clone());
-        if archive {
+        if deleting {
+            table.selection_delete_focus.focus(w, cx);
+        } else if lifecycle {
             table.selection_archive_focus.focus(w, cx);
         } else {
             table.move_focus.focus(w, cx);
@@ -315,7 +352,9 @@ impl Connected {
             let cancel = cancel.clone();
             let confirm = confirm.clone();
             surface
-                .title(if archive {
+                .title(if deleting {
+                    "Delete selected items?"
+                } else if lifecycle {
                     "Archive selected items?"
                 } else {
                     "Move selected items"
@@ -371,7 +410,7 @@ impl Connected {
                         return;
                     }
                     let read = d.review.as_ref().unwrap();
-                    if !d.archive
+                    if !d.action.is_lifecycle()
                         && !d
                             .destination
                             .read(cx)
@@ -393,7 +432,9 @@ impl Connected {
                     }
                     d.review = None;
                     d.state = State::Ready;
-                    d.notice = if d.archive {
+                    d.notice = if d.action == SelectionAction::Delete {
+                        "Revisions adopted. Confirm separately to delete the selected items."
+                    } else if d.action == SelectionAction::Archive {
                         "Revisions adopted. Confirm separately to archive the selected items."
                     } else {
                         "Revisions adopted. Confirm separately to move the selected items."
@@ -404,7 +445,7 @@ impl Connected {
             }
             MoveEvent::Confirm
                 if dialog.read(cx).state != State::Ready
-                    || !(if dialog.read(cx).archive {
+                    || !(if dialog.read(cx).action.is_lifecycle() {
                         table.manageable
                     } else {
                         table.editable
@@ -421,7 +462,8 @@ impl Connected {
         let reviewing = matches!(event, MoveEvent::Review);
         let uncertain = dialog.read(cx).state == State::Uncertain;
         let d = dialog.read(cx);
-        let archive = d.archive;
+        let lifecycle = d.action.is_lifecycle();
+        let deleting = d.action == SelectionAction::Delete;
         let Some(group) = d.destination.read(cx).selected_value() else {
             return;
         };
@@ -443,7 +485,9 @@ impl Connected {
             };
             d.notice = if reviewing {
                 "Reading current items…"
-            } else if archive {
+            } else if deleting {
+                "Deleting selected items…"
+            } else if lifecycle {
                 "Archiving selected items…"
             } else {
                 "Moving selected items…"
@@ -456,7 +500,11 @@ impl Connected {
         }
         let work = cx.background_executor().spawn(async move {
             if !reviewing {
-                if archive {
+                if deleting {
+                    client
+                        .delete_main_table_selection(board, command.0, command.2, &command.3)
+                        .map_err(Failure::Save)?;
+                } else if lifecycle {
                     client
                         .archive_main_table_selection(board, command.0, command.2, &command.3)
                         .map_err(Failure::Save)?;
@@ -479,7 +527,7 @@ impl Connected {
                 if *current != board || old.move_dialog.as_ref() != Some(&dialog) { return; }
                 old.set_busy(false, cx);
                 match result {
-                    Ok(read) if reviewing && !uncertain && (if archive { read.is_manageable() } else { read.is_editable() }) => {
+                    Ok(read) if reviewing && !uncertain && (if lifecycle { read.is_manageable() } else { read.is_editable() }) => {
                         dialog.update(cx, |d, cx| {
                             d.review = Some(read);
                             d.state = State::Reviewed;
@@ -495,8 +543,8 @@ impl Connected {
                         // disclosure only after Kit has restored the dialog trigger.
                         table.focus_first(w, cx);
                         nav.page = Page::Items(board, Box::new(table));
-                        v.message = if uncertain { if archive { "Board reloaded. Review accepted items before another archive." } else { "Board reloaded. Review accepted items before another move." } }
-                            else if reviewing { if archive { "Archive not saved: permission denied." } else { "Move not saved: permission denied." } } else { "" };
+                        v.message = if uncertain { if deleting { "Board reloaded. Review accepted items before another delete." } else if lifecycle { "Board reloaded. Review accepted items before another archive." } else { "Board reloaded. Review accepted items before another move." } }
+                            else if reviewing { if deleting { "Delete not saved: permission denied." } else if lifecycle { "Archive not saved: permission denied." } else { "Move not saved: permission denied." } } else { "" };
                     }
                     Err(Failure::Save(EditError::SessionRejected) | Failure::Read(EditError::SessionRejected)) => {
                         w.close_dialog(cx);
@@ -514,10 +562,10 @@ impl Connected {
                         let denied = matches!(failure, Failure::Save(EditError::PermissionDenied));
                         dialog.update(cx, |d, cx| {
                             d.review = None;
-                            d.state = if uncertain || failure.is_uncertain(archive, reviewing) { State::Uncertain } else { State::Refused };
-                            d.notice = if denied { if archive { "Archive not saved: permission denied. Checking current access…" } else { "Move not saved: permission denied. Checking current access…" } }
-                                else if d.state == State::Uncertain { if archive { "Archive not confirmed. Read the board before another archive; this request will not be repeated." } else { "Move not confirmed. Read the board before another move; this request will not be repeated." } }
-                                else if archive && reviewing { "Could not review selected items. Retry review." }
+                            d.state = if uncertain || failure.is_uncertain(lifecycle, reviewing) { State::Uncertain } else { State::Refused };
+                            d.notice = if denied { if deleting { "Delete not saved: permission denied. Checking current access…" } else if lifecycle { "Archive not saved: permission denied. Checking current access…" } else { "Move not saved: permission denied. Checking current access…" } }
+                                else if d.state == State::Uncertain { if deleting { "Delete not confirmed. Read the board before another delete; this request will not be repeated." } else if lifecycle { "Archive not confirmed. Read the board before another archive; this request will not be repeated." } else { "Move not confirmed. Read the board before another move; this request will not be repeated." } }
+                                else if lifecycle && reviewing { "Could not review selected items. Retry review." }
                                 else { "Items changed or are unavailable. Review latest items before confirming again." };
                             cx.notify();
                         });

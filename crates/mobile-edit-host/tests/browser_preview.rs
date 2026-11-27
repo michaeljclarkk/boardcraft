@@ -17,6 +17,10 @@ mod selected_archive_browser;
 fn browser_archives_selected_roots() {
     selected_archive_browser::run();
 }
+#[test]
+fn browser_deletes_and_restores_board_roots() {
+    selected_archive_browser::run_trash();
+}
 
 #[test]
 fn browser_collapses_physical_groups_by_id() {
