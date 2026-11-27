@@ -292,7 +292,45 @@ fn handle(
     token: Result<Token, u16>,
     shape: ReadShape,
 ) -> ApiResult {
-    let path: Vec<_> = path.split('/').collect();
+    let mut path: Vec<_> = path.split('/').collect();
+    // Native Archive is opt-in, like the grouped table. Normalize only these
+    // lifecycle routes so authorization, queries and commands have one owner.
+    let native_archive = mode != Mode::Scoped
+        && matches!(
+            (req.method(), path.as_slice()),
+            (
+                Method::Get,
+                ["", "navigation", "boards", _, "main-table", "archive"]
+            ) | (
+                Method::Get,
+                [
+                    "",
+                    "navigation",
+                    "boards",
+                    _,
+                    "main-table",
+                    "archive",
+                    "groups",
+                    _,
+                    _
+                ]
+            ) | (
+                Method::Post,
+                [
+                    "",
+                    "navigation",
+                    "boards",
+                    _,
+                    "main-table",
+                    "items" | "groups",
+                    _,
+                    "archive" | "restore"
+                ]
+            )
+        );
+    if native_archive {
+        path.remove(4);
+    }
     // Opt-in native contract; existing selected and direct reads stay flat.
     let shape = if matches!(
         path.as_slice(),
@@ -349,7 +387,7 @@ fn handle(
         (Method::Get, ["", "boards", id]) => (id, ScopedRead, None),
         (Method::Get, ["", "navigation", "boards", board, "archive"])
         | (Method::Get, ["", "navigation", "boards", board, "archive", "groups", _, _])
-            if matches!(shape, ReadShape::Grouped) =>
+            if matches!(shape, ReadShape::Grouped) || native_archive =>
         {
             (board, SelectedRead, None)
         }
@@ -367,7 +405,7 @@ fn handle(
         )
         | (Method::Post, ["", "navigation", "boards", board, "groups" | "group-order"])
         | (Method::Put, ["", "navigation", "boards", board, "groups", _])
-            if matches!(shape, ReadShape::Grouped) =>
+            if matches!(shape, ReadShape::Grouped) || native_archive =>
         {
             (board, SelectedOwner, None)
         }
@@ -382,7 +420,9 @@ fn handle(
                 id,
                 "archive" | "restore",
             ],
-        ) if matches!(shape, ReadShape::Grouped) => (board, SelectedOwner, Some(id)),
+        ) if matches!(shape, ReadShape::Grouped) || native_archive => {
+            (board, SelectedOwner, Some(id))
+        }
         (Method::Put, ["", "boards", board, "items", id, "name"]) => {
             (board, ScopedRename, Some(id))
         }

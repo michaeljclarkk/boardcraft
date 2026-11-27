@@ -573,6 +573,15 @@ fn main() {
                             | "--selection-refresh"
                             | "--selection-viewer"
                             | "--selection-viewer-range"
+                            | "--archive-round-trip"
+                            | "--archive-conflict"
+                            | "--archive-demoted"
+                            | "--archive-denied"
+                            | "--archive-session"
+                            | "--archive-ack"
+                            | "--archive-refresh"
+                            | "--archive-member"
+                            | "--archive-viewer"
                     )
                 } else {
                     matches!(

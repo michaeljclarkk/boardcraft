@@ -1,6 +1,7 @@
 //! Fixed journeys in a normally presented Kit window. Only production controls handle input.
 use super::*;
 use gpui_kit::test::{ElementSnapshot, TestEventExt, TestWindowExt};
+pub(super) mod archive;
 pub(super) mod board_link;
 pub(super) mod grouped_entry;
 pub(super) mod login;

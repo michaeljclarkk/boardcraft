@@ -8,9 +8,11 @@ use gpui_kit::component::{
     checkbox::Checkbox,
     menu::{DropdownMenu, PopupMenuItem},
 };
+mod archive;
 mod item_entry;
 mod selection;
 mod selection_move;
+use archive::{Archive, RootCommand, Undo};
 use item_entry::GroupEntry;
 use selection::Selection;
 use selection_move::MoveDialog;
@@ -30,6 +32,7 @@ pub(super) struct MainTable {
     revision: i64,
     board_revision: i64,
     editable: bool,
+    manageable: bool,
     pending: bool,
     folding: bool,
     reconcile: bool,
@@ -38,6 +41,11 @@ pub(super) struct MainTable {
     move_dialog: Option<Entity<MoveDialog>>,
     move_focus: FocusHandle,
     _move_subscription: Option<Subscription>,
+    archive: Option<Archive>,
+    archive_focus: FocusHandle,
+    archive_triggers: std::collections::HashMap<Uuid, FocusHandle>,
+    root_command: Option<RootCommand>,
+    undo: Option<Undo>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -163,10 +171,23 @@ impl MainTable {
             .flat_map(|g| g.items().iter().map(|r| r.id))
             .collect();
         selection.retain(&available);
+        let archive_triggers = available
+            .iter()
+            .map(|id| {
+                (
+                    *id,
+                    previous
+                        .and_then(|t| t.archive_triggers.get(id))
+                        .cloned()
+                        .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
+                )
+            })
+            .collect();
         Self {
             revision: read.view_revision(),
             board_revision: read.revision(),
             editable,
+            manageable: read.is_manageable(),
             pending: false,
             folding: false,
             reconcile: false,
@@ -177,12 +198,27 @@ impl MainTable {
                 .map(|t| t.move_focus.clone())
                 .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
             _move_subscription: None,
+            archive: None,
+            archive_focus: previous
+                .map(|t| t.archive_focus.clone())
+                .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
+            root_command: None,
+            archive_triggers,
+            undo: None,
             headings,
             _subscriptions: subscriptions,
         }
     }
 
-    pub(super) fn render(&self, cx: &mut Context<Connected>) -> impl IntoElement {
+    pub(super) fn render(&self, cx: &mut Context<Connected>) -> AnyElement {
+        if let Some(archive) = &self.archive {
+            self.render_archive(archive, cx).into_any_element()
+        } else {
+            self.render_active(cx).into_any_element()
+        }
+    }
+
+    fn render_active(&self, cx: &mut Context<Connected>) -> impl IntoElement {
         let mut column = div()
             .flex()
             .flex_col()
@@ -193,6 +229,39 @@ impl MainTable {
             } else {
                 "Board items · Read only"
             }));
+        column = column.child(
+            Button::new("open-archive")
+                .small()
+                .label("Archive…")
+                .track_focus(&self.archive_focus)
+                .disabled(self.pending || self.root_command.is_some())
+                .on_click(cx.listener(|v, _, w, cx| v.read_archive(None, w, cx))),
+        );
+        if let Some(undo) = &self.undo {
+            column = column
+                .child(Label::new(undo.label.clone()))
+                .child(
+                    Button::new("archive-undo")
+                        .small()
+                        .label("Undo")
+                        .disabled(self.pending || self.reconcile || !self.manageable)
+                        .on_click(cx.listener(|v, _, w, cx| v.undo_group_archive(w, cx))),
+                )
+                .child(
+                    Button::new("archive-dismiss")
+                        .small()
+                        .label("Dismiss")
+                        .disabled(self.pending)
+                        .on_click(cx.listener(|v, _, _, cx| {
+                            if let Screen::Navigation(nav) = &mut v.screen
+                                && let Page::Items(_, t) = &mut nav.page
+                            {
+                                t.undo = None;
+                                cx.notify();
+                            }
+                        })),
+                );
+        }
         if !self.editable {
             column = column.child(Label::new(
                 "Group presentation changes last only for this visit.",
@@ -208,181 +277,196 @@ impl MainTable {
             column = column.child(Label::new("Empty board"));
         }
         for h in &self.headings {
-            let id = h.id.clone();
-            let menu_id = id.clone();
-            let expanded = !h.collapsed;
-            let group_empty = h.rows.is_empty();
-            let view = cx.weak_entity();
-            let mut section = div()
-                .id(SharedString::from(format!("group-{id}")))
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
+            column = column.child(self.render_heading(h, cx));
+        }
+        column
+    }
+
+    fn render_heading(&self, h: &Heading, cx: &mut Context<Connected>) -> impl IntoElement {
+        let id = h.id.clone();
+        let menu_id = id.clone();
+        let expanded = !h.collapsed;
+        let group_empty = h.rows.is_empty();
+        let view = cx.weak_entity();
+        let manageable = self.manageable;
+        let mut section = div()
+            .id(SharedString::from(format!("group-{id}")))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Button::new(SharedString::from(format!("fold-{id}")))
+                            .small()
+                            .ghost()
+                            .track_focus(&h.focus)
+                            .icon(if expanded {
+                                IconName::ChevronDown
+                            } else {
+                                IconName::ChevronRight
+                            })
+                            .accessibility_label(format!("Toggle {}", h.name))
+                            .aria_expanded(expanded)
+                            .loading(self.pending)
+                            .disabled(self.reconcile)
+                            .on_click(cx.listener(move |v, _, w, cx| {
+                                v.fold_main_table(id.as_ref(), false, w, cx)
+                            })),
+                    )
+                    .child(Label::new(h.name.clone()))
+                    .child(Label::new(h.count.clone()))
+                    .child(
+                        Button::new(SharedString::from(format!("group-menu-{menu_id}")))
+                            .small()
+                            .ghost()
+                            .label("Group options")
+                            .disabled(self.pending || self.reconcile)
+                            .dropdown_menu(move |menu, _, _| {
+                                let mut menu = menu;
+                                for all in [false, true] {
+                                    let view = view.clone();
+                                    let id = menu_id.clone();
+                                    let label = match (expanded, all) {
+                                        (true, false) => "Collapse group",
+                                        (false, false) => "Expand group",
+                                        (true, true) => "Collapse all groups",
+                                        (false, true) => "Expand all groups",
+                                    };
+                                    menu = menu.item(PopupMenuItem::new(label).on_click(
+                                        move |_, w, cx| {
+                                            _ = view.update(cx, |v, cx| {
+                                                v.fold_main_table(id.as_ref(), all, w, cx)
+                                            });
+                                        },
+                                    ));
+                                }
+                                let select_view = view.clone();
+                                let id = menu_id.clone();
+                                menu = menu.item(
+                                    PopupMenuItem::new("Select all items in group")
+                                        .disabled(group_empty)
+                                        .on_click(move |_, w, cx| {
+                                            _ = select_view.update(cx, |v, cx| {
+                                                v.select_main_table_group(&id, true, w, cx)
+                                            });
+                                        }),
+                                );
+                                let view = view.clone();
+                                let id = menu_id.clone();
+                                menu = menu.item(
+                                    PopupMenuItem::new("Archive group")
+                                        .disabled(!manageable)
+                                        .on_click(move |_, w, cx| {
+                                            _ = view.update(cx, |v, cx| {
+                                                v.change_archive_group(&id, false, w, cx)
+                                            });
+                                        }),
+                                );
+                                menu
+                            }),
+                    ),
+            );
+        if expanded {
+            let mut body = div().flex().flex_col().gap_1().pl_8();
+            let group = h.id.clone();
+            let selected = h
+                .rows
+                .iter()
+                .filter(|r| {
+                    self.selection
+                        .ids
+                        .contains(&r.read(cx).edit.identity().1.as_uuid())
+                })
+                .count();
+            body = body.child(
+                Checkbox::new(SharedString::from(format!("select-group-{group}")))
+                    .small()
+                    .accessibility_label(format!("Select all items in {}", h.name))
+                    .checked(!h.rows.is_empty() && selected == h.rows.len())
+                    .indeterminate(selected > 0 && selected < h.rows.len())
+                    .disabled(h.rows.is_empty() || self.pending || self.reconcile)
+                    .on_change(cx.listener(move |v, checked, w, cx| {
+                        v.select_main_table_group(&group, *checked, w, cx)
+                    })),
+            );
+            if h.rows.is_empty() {
+                body = body.child(Label::new("No items"));
+            }
+            for r in &h.rows {
+                let id = r.read(cx).edit.identity().1.as_uuid();
+                let checked = self.selection.ids.contains(&id);
+                let name = r.read(cx).edit.accepted().to_owned();
+                body = body.child(
                     div()
+                        .id(SharedString::from(format!("selected-row-{id}")))
                         .flex()
                         .items_center()
                         .gap_2()
+                        .bg(if checked {
+                            cx.theme().accent
+                        } else {
+                            cx.theme().background
+                        })
                         .child(
-                            Button::new(SharedString::from(format!("fold-{id}")))
+                            Checkbox::new(SharedString::from(format!("select-{id}")))
                                 .small()
-                                .ghost()
-                                .track_focus(&h.focus)
-                                .icon(if expanded {
-                                    IconName::ChevronDown
-                                } else {
-                                    IconName::ChevronRight
-                                })
-                                .accessibility_label(format!("Toggle {}", h.name))
-                                .aria_expanded(expanded)
-                                .loading(self.pending)
-                                .disabled(self.reconcile)
-                                .on_click(cx.listener(move |v, _, w, cx| {
-                                    v.fold_main_table(id.as_ref(), false, w, cx)
+                                .accessibility_label(format!("Select {name}"))
+                                .checked(checked)
+                                .disabled(self.pending || self.reconcile)
+                                .on_change(cx.listener(move |v, checked, w, cx| {
+                                    v.select_main_table_row(
+                                        id,
+                                        *checked,
+                                        w.modifiers().shift,
+                                        w,
+                                        cx,
+                                    )
                                 })),
                         )
-                        .child(Label::new(h.name.clone()))
-                        .child(Label::new(h.count.clone()))
+                        .child(r.clone())
+                        .child(self.root_archive_menu(id, cx)),
+                );
+                if matches!(
+                    r.read(cx).edit.phase(),
+                    boardcraft_desktop::Phase::Failed(_)
+                ) {
+                    let row = r.clone();
+                    body = body
+                        .child(Label::new(
+                            "Name not saved. Correct the draft or reload the board.",
+                        ))
                         .child(
-                            Button::new(SharedString::from(format!("group-menu-{menu_id}")))
-                                .small()
-                                .ghost()
-                                .label("Group options")
-                                .disabled(self.pending || self.reconcile)
-                                .dropdown_menu(move |menu, _, _| {
-                                    let mut menu = menu;
-                                    for all in [false, true] {
-                                        let view = view.clone();
-                                        let id = menu_id.clone();
-                                        let label = match (expanded, all) {
-                                            (true, false) => "Collapse group",
-                                            (false, false) => "Expand group",
-                                            (true, true) => "Collapse all groups",
-                                            (false, true) => "Expand all groups",
-                                        };
-                                        menu = menu.item(PopupMenuItem::new(label).on_click(
-                                            move |_, w, cx| {
-                                                _ = view.update(cx, |v, cx| {
-                                                    v.fold_main_table(id.as_ref(), all, w, cx)
-                                                });
-                                            },
-                                        ));
+                            Button::new(SharedString::from(format!(
+                                "correct-{}",
+                                r.read(cx).edit.identity().1.as_uuid()
+                            )))
+                            .small()
+                            .label("Correct name")
+                            .disabled(self.pending || self.reconcile || !self.editable)
+                            .on_click(move |_, w, cx| {
+                                row.update(cx, |r, cx| {
+                                    let raw = r.edit.request().map(str::to_owned);
+                                    r.open(w, cx);
+                                    if r.baseline.is_some()
+                                        && let Some(raw) = raw
+                                    {
+                                        r.input.update(cx, |input, cx| input.set_value(raw, w, cx));
                                     }
-                                    let view = view.clone();
-                                    let id = menu_id.clone();
-                                    menu = menu.item(
-                                        PopupMenuItem::new("Select all items in group")
-                                            .disabled(group_empty)
-                                            .on_click(move |_, w, cx| {
-                                                _ = view.update(cx, |v, cx| {
-                                                    v.select_main_table_group(&id, true, w, cx)
-                                                });
-                                            }),
-                                    );
-                                    menu
-                                }),
-                        ),
-                );
-            if expanded {
-                let mut body = div().flex().flex_col().gap_1().pl_8();
-                let group = h.id.clone();
-                let selected = h
-                    .rows
-                    .iter()
-                    .filter(|r| {
-                        self.selection
-                            .ids
-                            .contains(&r.read(cx).edit.identity().1.as_uuid())
-                    })
-                    .count();
-                body = body.child(
-                    Checkbox::new(SharedString::from(format!("select-group-{group}")))
-                        .small()
-                        .accessibility_label(format!("Select all items in {}", h.name))
-                        .checked(!h.rows.is_empty() && selected == h.rows.len())
-                        .indeterminate(selected > 0 && selected < h.rows.len())
-                        .disabled(h.rows.is_empty() || self.pending || self.reconcile)
-                        .on_change(cx.listener(move |v, checked, w, cx| {
-                            v.select_main_table_group(&group, *checked, w, cx)
-                        })),
-                );
-                if h.rows.is_empty() {
-                    body = body.child(Label::new("No items"));
+                                })
+                            }),
+                        );
                 }
-                for r in &h.rows {
-                    let id = r.read(cx).edit.identity().1.as_uuid();
-                    let checked = self.selection.ids.contains(&id);
-                    let name = r.read(cx).edit.accepted().to_owned();
-                    body = body.child(
-                        div()
-                            .id(SharedString::from(format!("selected-row-{id}")))
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .bg(if checked {
-                                cx.theme().accent
-                            } else {
-                                cx.theme().background
-                            })
-                            .child(
-                                Checkbox::new(SharedString::from(format!("select-{id}")))
-                                    .small()
-                                    .accessibility_label(format!("Select {name}"))
-                                    .checked(checked)
-                                    .disabled(self.pending || self.reconcile)
-                                    .on_change(cx.listener(move |v, checked, w, cx| {
-                                        v.select_main_table_row(
-                                            id,
-                                            *checked,
-                                            w.modifiers().shift,
-                                            w,
-                                            cx,
-                                        )
-                                    })),
-                            )
-                            .child(r.clone()),
-                    );
-                    if matches!(
-                        r.read(cx).edit.phase(),
-                        boardcraft_desktop::Phase::Failed(_)
-                    ) {
-                        let row = r.clone();
-                        body = body
-                            .child(Label::new(
-                                "Name not saved. Correct the draft or reload the board.",
-                            ))
-                            .child(
-                                Button::new(SharedString::from(format!(
-                                    "correct-{}",
-                                    r.read(cx).edit.identity().1.as_uuid()
-                                )))
-                                .small()
-                                .label("Correct name")
-                                .disabled(self.pending || self.reconcile || !self.editable)
-                                .on_click(move |_, w, cx| {
-                                    row.update(cx, |r, cx| {
-                                        let raw = r.edit.request().map(str::to_owned);
-                                        r.open(w, cx);
-                                        if r.baseline.is_some()
-                                            && let Some(raw) = raw
-                                        {
-                                            r.input.update(cx, |input, cx| {
-                                                input.set_value(raw, w, cx)
-                                            });
-                                        }
-                                    })
-                                }),
-                            );
-                    }
-                }
-                if self.editable && !self.reconcile {
-                    body = body.child(h.entry.clone());
-                }
-                section = section.child(body);
             }
-            column = column.child(section);
+            if self.editable && !self.reconcile {
+                body = body.child(h.entry.clone());
+            }
+            section = section.child(body);
         }
-        column
+        section
     }
 }
 

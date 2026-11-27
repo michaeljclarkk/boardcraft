@@ -10,8 +10,17 @@ mod fold_checks;
 mod grouped_entry;
 #[path = "fixture/grouped_entry_checks.rs"]
 mod grouped_entry_checks;
+#[path = "fixture/native_archive.rs"]
+mod native_archive;
+#[path = "fixture/native_archive_checks.rs"]
+mod native_archive_checks;
 #[path = "fixture/native_selection.rs"]
 mod native_selection;
+
+#[test]
+fn native_board_archive_checks_access_and_scope() {
+    native_archive_checks::access_and_scope();
+}
 #[path = "fixture/native_selection_checks.rs"]
 mod native_selection_checks;
 #[path = "fixture/native_table.rs"]

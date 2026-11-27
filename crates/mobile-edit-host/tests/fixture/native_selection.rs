@@ -14,6 +14,9 @@ pub struct NativeSelection {
 }
 impl NativeSelection {
     pub fn new() -> Self {
+        Self::with_seed(reorder_state::seed)
+    }
+    pub fn with_seed(seed: impl FnOnce(&Fixture, Uuid)) -> Self {
         let f = Fixture::start();
         let selection = Selection::new(&f);
         selection::seed_groups(&f);
@@ -22,7 +25,7 @@ impl NativeSelection {
             .query_one("SELECT id FROM accounts WHERE username='reader'", &[])
             .unwrap()
             .get(0);
-        reorder_state::seed(&f, member);
+        seed(&f, member);
         Self {
             selection,
             f,

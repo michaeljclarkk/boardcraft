@@ -13,6 +13,8 @@ use std::{
 };
 use uuid::Uuid;
 
+#[path = "windows/archive.rs"]
+mod archive;
 #[cfg(feature = "attended-clipboard")]
 #[path = "windows/board_link.rs"]
 mod board_link;
@@ -26,14 +28,29 @@ mod group_edit;
 mod grouped_entry;
 #[path = "../../mobile-edit-host/tests/fixture/grouped_entry.rs"]
 mod grouped_entry_fixture;
+#[path = "../../mobile-edit-host/tests/fixture/lifecycle.rs"]
+#[allow(dead_code, reason = "shared fixture also seeds browser group recovery")]
+mod lifecycle;
 #[path = "windows/logout.rs"]
 mod logout;
 #[path = "windows/main_table.rs"]
 mod main_table;
 #[path = "windows/main_table_relay.rs"]
 mod main_table_relay;
+#[path = "../../mobile-edit-host/tests/fixture/native_archive.rs"]
+mod native_archive;
 #[path = "../../mobile-edit-host/tests/fixture/native_selection.rs"]
 mod native_selection;
+
+#[test]
+fn windows_archives_and_restores_board_content() {
+    archive::round_trip();
+}
+
+#[test]
+fn windows_recovers_board_archive() {
+    archive::recovery();
+}
 #[path = "../../mobile-edit-host/tests/fixture/reorder_state.rs"]
 #[allow(
     dead_code,

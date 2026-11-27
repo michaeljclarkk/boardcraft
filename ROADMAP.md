@@ -60,6 +60,7 @@ Each packet is one file under [packets](packets/) and is loaded only when dispat
 - [44-windows-main-table](packets/44-windows-main-table.md) — Open the grouped main table in Windows browse and share its saved folds.
 - [45-windows-grouped-item-entry](packets/45-windows-grouped-item-entry.md) — Add a root in a selected physical group and edit its name inline in Windows browse.
 - [46-windows-selection-move](packets/46-windows-selection-move.md) — Select roots and move them together to a physical group in Windows browse.
+- [47-windows-board-archive](packets/47-windows-board-archive.md) — Archive and restore roots and physical groups in Windows browse.
 
 ## Delivery phases after the first slice
 

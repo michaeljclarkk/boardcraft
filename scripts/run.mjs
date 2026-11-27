@@ -147,6 +147,9 @@ export const packets = [
   { id: '46-windows-selection-move', ...boardNavigation,
     cases: [...boardNavigation.cases, 'native_main_table_resolves_current_access', 'native_grouped_item_entry_checks_current_access', 'native_selection_move_checks_access_and_order'],
     windowsCases: [...boardNavigation.windowsCases, 'windows_opens_and_folds_main_table', 'windows_recovers_main_table_fold', 'windows_creates_and_renames_grouped_root', 'windows_recovers_grouped_item_entry', 'windows_moves_selected_roots_to_group', 'windows_reviews_selected_move'] },
+  { id: '47-windows-board-archive', ...boardNavigation,
+    cases: [...boardNavigation.cases, 'native_main_table_resolves_current_access', 'native_grouped_item_entry_checks_current_access', 'native_selection_move_checks_access_and_order', 'native_board_archive_checks_access_and_scope'],
+    windowsCases: [...boardNavigation.windowsCases, 'windows_opens_and_folds_main_table', 'windows_recovers_main_table_fold', 'windows_creates_and_renames_grouped_root', 'windows_recovers_grouped_item_entry', 'windows_moves_selected_roots_to_group', 'windows_reviews_selected_move', 'windows_archives_and_restores_board_content', 'windows_recovers_board_archive'] },
 ].map(packet => ({ model: 'openai/gpt-6.1-sol#xhigh', ...packet }));
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));

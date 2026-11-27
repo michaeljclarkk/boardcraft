@@ -7,6 +7,7 @@ pub struct MainTableRead {
     revision: i64,
     view_revision: i64,
     editable: bool,
+    manageable: bool,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +45,9 @@ impl MainTableRead {
     }
     pub fn is_editable(&self) -> bool {
         self.editable
+    }
+    pub fn is_manageable(&self) -> bool {
+        self.manageable
     }
 }
 
@@ -181,6 +185,12 @@ impl EditClient {
         let board_revision = revision(response.headers(), "boardcraft-board-revision")?;
         let view_revision = revision(response.headers(), "boardcraft-view-revision")?;
         let editable = edit_hint(response.headers());
+        let mut lifecycle = response
+            .headers()
+            .get_all("boardcraft-root-lifecycle")
+            .iter();
+        let manageable =
+            lifecycle.next().is_some_and(|v| v == "owner") && lifecycle.next().is_none();
         let groups: Vec<MainTableGroup> = response
             .body_mut()
             .read_json()
@@ -203,6 +213,7 @@ impl EditClient {
             revision: board_revision,
             view_revision,
             editable,
+            manageable,
         })
     }
 

@@ -169,6 +169,35 @@ impl Snapshot {
         expected
     }
     pub fn lifecycle(&self, f: &Fixture, actor: Uuid, action: &str) -> Self {
+        let now = self.lifecycle_records(f, actor, action);
+        let archived = action == "archive";
+        let id = BoardId::new(SELECTED).unwrap();
+        let groups = store::load_groups(&mut f.connect(), id).ok().unwrap();
+        let ids = |items: Vec<store::StoredItem>| {
+            items
+                .into_iter()
+                .map(|i| i.id.as_uuid().as_u128())
+                .collect::<Vec<_>>()
+        };
+        let first = if archived {
+            vec![73, 61, 77]
+        } else {
+            vec![73, 61, 67, 77]
+        };
+        assert_eq!(
+            groups.into_iter().map(|g| ids(g.items)).collect::<Vec<_>>(),
+            [first.clone(), vec![], vec![59]]
+        );
+        assert_eq!(
+            ids(store::load_items(&mut f.connect(), id).unwrap().unwrap()),
+            [first, vec![59]].concat()
+        );
+        now
+    }
+
+    // Native Archive uses the same records with tied group positions. Keep the
+    // whole-record oracle shared without assuming the browser fixture's order.
+    pub fn lifecycle_records(&self, f: &Fixture, actor: Uuid, action: &str) -> Self {
         let now = Self::read(f);
         let mut expected = self.clone();
         let id = Uuid::from_u128(67);
@@ -192,27 +221,6 @@ impl Snapshot {
         assert!(!Uuid::parse_str(op.as_str().unwrap()).unwrap().is_nil());
         expected.receipts.push(json!({"operation_id":op,"item_id":id,"actor_id":actor,"board_id":SELECTED,"board_revision":b,"item_revision":i,"lifecycle":action}));
         assert_eq!(now, expected);
-        let id = BoardId::new(SELECTED).unwrap();
-        let groups = store::load_groups(&mut f.connect(), id).ok().unwrap();
-        let ids = |items: Vec<store::StoredItem>| {
-            items
-                .into_iter()
-                .map(|i| i.id.as_uuid().as_u128())
-                .collect::<Vec<_>>()
-        };
-        let first = if archived {
-            vec![73, 61, 77]
-        } else {
-            vec![73, 61, 67, 77]
-        };
-        assert_eq!(
-            groups.into_iter().map(|g| ids(g.items)).collect::<Vec<_>>(),
-            [first.clone(), vec![], vec![59]]
-        );
-        assert_eq!(
-            ids(store::load_items(&mut f.connect(), id).unwrap().unwrap()),
-            [first, vec![59]].concat()
-        );
         now
     }
     // Build the expected committed records from the pre-attempt snapshot, then

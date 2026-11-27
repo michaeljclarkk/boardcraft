@@ -16,6 +16,7 @@ pub struct Relay {
     pub fault: Arc<AtomicUsize>, // 1: next table GET, 2: next POST acknowledgment
     pub saves: Arc<AtomicUsize>,
     pub reads: Arc<AtomicUsize>,
+    pub archive_reads: Arc<AtomicUsize>,
     pub entries: Arc<Mutex<Vec<EntryCall>>>,
     stop: mpsc::Sender<()>,
     worker: Option<thread::JoinHandle<()>>,
@@ -36,15 +37,17 @@ impl Relay {
         let fault = Arc::new(AtomicUsize::new(0));
         let saves = Arc::new(AtomicUsize::new(0));
         let reads = Arc::new(AtomicUsize::new(0));
+        let archive_reads = Arc::new(AtomicUsize::new(0));
         let entries = Arc::new(Mutex::new(Vec::new()));
         let (stop, rx) = mpsc::channel();
         let (f, s) = (fault.clone(), saves.clone());
         let calls = entries.clone();
         let r = reads.clone();
+        let ar = archive_reads.clone();
         let worker = thread::spawn(move || {
             while rx.try_recv().is_err() {
                 match listener.accept() {
-                    Ok((stream, _)) => forward(stream, host, &f, &s, &r, &calls),
+                    Ok((stream, _)) => forward(stream, host, &f, &s, &r, &ar, &calls),
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(2))
                     }
@@ -57,6 +60,7 @@ impl Relay {
             fault,
             saves,
             reads,
+            archive_reads,
             entries,
             stop,
             worker: Some(worker),
@@ -70,6 +74,7 @@ fn forward(
     fault: &AtomicUsize,
     saves: &AtomicUsize,
     reads: &AtomicUsize,
+    archive_reads: &AtomicUsize,
     entries: &Mutex<Vec<EntryCall>>,
 ) {
     child.set_nonblocking(false).unwrap();
@@ -98,8 +103,11 @@ fn forward(
     if read {
         reads.fetch_add(1, SeqCst);
     }
+    if first.starts_with("GET ") && first.contains("/main-table/archive") {
+        archive_reads.fetch_add(1, SeqCst);
+    }
     let entry = (first.starts_with("POST ") || first.starts_with("PUT "))
-        && first.contains("/main-table/items");
+        && (first.contains("/main-table/items") || first.contains("/main-table/groups/"));
     let save = (first.starts_with("POST ") && first.contains("/main-table-fold ")) || entry;
     let length = head
         .lines()
