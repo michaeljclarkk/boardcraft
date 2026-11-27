@@ -22,7 +22,6 @@ getrandom = "0.4"
 hex = "0.4"
 windows-dpapi = "0.2"
 zeroize = "1"
-winsafe = { version = "=0.0.27", features = ["kernel"] }
 
 [lints.rust]
 unsafe_code = "forbid"

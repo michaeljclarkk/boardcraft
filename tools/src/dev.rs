@@ -20,7 +20,6 @@ pub(crate) struct Dev {
     pub root: PathBuf,
     settings: Settings,
     path: OsString,
-    pub cli: OsString,
 }
 
 impl Dev {
@@ -49,22 +48,10 @@ impl Dev {
                 .chain(settings.tool_home.iter().map(|p| p.join("cargo/bin")))
                 .chain(env::split_paths(&env::var_os("PATH").unwrap_or_default())),
         )?;
-        let cli = env::var_os("OPENCODE_BIN")
-            .filter(|p| !p.is_empty())
-            .or_else(|| {
-                let exe = format!("opencode{}", env::consts::EXE_SUFFIX);
-                env::split_paths(&path)
-                    .map(|dir| dir.join(&exe))
-                    .find(|p| p.is_file())
-                    .map(PathBuf::into_os_string)
-            })
-            .or_else(desktop_cli)
-            .unwrap_or_else(|| "opencode".into());
         Ok(Self {
             root: root.to_owned(),
             settings,
             path,
-            cli,
         })
     }
 
@@ -82,7 +69,6 @@ impl Dev {
         let mut cmd = Command::new(bin);
         cmd.current_dir(&self.root)
             .env("PATH", &self.path)
-            .env("OPENCODE_BIN", &self.cli)
             .env_remove("PGPASSWORD")
             .env_remove("RUSTDAY_TEST_DATABASE_URL");
         if let Some(home) = &self.settings.tool_home {
@@ -94,31 +80,4 @@ impl Dev {
         }
         Ok(cmd)
     }
-}
-
-#[cfg(windows)]
-fn desktop_cli() -> Option<OsString> {
-    use winsafe::{HPROCESS, HPROCESSLIST, co};
-    let mut snapshot =
-        HPROCESSLIST::CreateToolhelp32Snapshot(co::TH32CS::SNAPPROCESS, None).ok()?;
-    snapshot
-        .iter_processes()
-        .filter_map(Result::ok)
-        .filter(|p| p.szExeFile().eq_ignore_ascii_case("opencode-cli.exe"))
-        .find_map(|p| {
-            HPROCESS::OpenProcess(
-                co::PROCESS::QUERY_LIMITED_INFORMATION,
-                false,
-                p.th32ProcessID,
-            )
-            .ok()?
-            .QueryFullProcessImageName(co::PROCESS_NAME::WIN32)
-            .ok()
-            .map(Into::into)
-        })
-}
-
-#[cfg(not(windows))]
-fn desktop_cli() -> Option<OsString> {
-    None
 }
