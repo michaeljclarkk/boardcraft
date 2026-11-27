@@ -16,7 +16,7 @@ Any deviation from that is the worst thing you can do here — an orchestrator, 
 
 One screen per session. Then the owner decides what is next.
 
-A handoff names **one area** from the [port map](README.md#port-map) — for example “port the automation engine”. That area includes its Rust rules, its UI and its desktop/browser/Android behaviour. Work one screen at a time inside it, and update the area's percentage only after verified work.
+A handoff names **one area** from the [port map](README.md#port-map) — for example “port the automation engine”. That area includes its Rust rules, its UI and its desktop/browser/Android behaviour. Work one screen at a time inside it, and update the area's percentage only after verified work. Use [`areas/HANDOFF.md`](areas/HANDOFF.md) as the template.
 
 The approved areas are exactly the files under `areas/`. Anything outside them — a new area, feature, subsystem, harness or process — is out of scope and is a failure. Ask the owner; do not invent work.
 

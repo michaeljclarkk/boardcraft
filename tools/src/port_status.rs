@@ -71,6 +71,9 @@ fn read_areas(root: &Path) -> Result<Vec<Area>> {
             continue;
         }
         let text = fs::read_to_string(&path)?;
+        if !text.trim_start().starts_with("---") {
+            continue;
+        }
         areas.push(parse_area(&path, &text)?);
     }
     areas.sort_by_key(|a| a.order);
