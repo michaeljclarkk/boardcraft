@@ -2,10 +2,10 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-mod cli;
+mod commands;
 mod device;
 mod package;
 mod prepare;
 mod process;
 
-pub use cli::run;
+pub use commands::run;

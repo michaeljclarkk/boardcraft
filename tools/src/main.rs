@@ -1,4 +1,4 @@
-mod cli;
+mod commands;
 mod dev;
 mod port_status;
 #[cfg(windows)]
@@ -7,7 +7,7 @@ mod viewer_lifetime;
 mod web_platform;
 
 fn main() -> std::process::ExitCode {
-    match cli::run() {
+    match commands::run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{e:#}");
