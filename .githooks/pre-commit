@@ -1,4 +1,10 @@
 #!/bin/sh
+# Regenerate the port-status table and chart before checking the diff size.
+if command -v node >/dev/null 2>&1 && [ -f tools/port-status.mjs ]; then
+  node tools/port-status.mjs || exit 1
+  git add README.md docs/port-status.svg
+fi
+
 # Count the index, not the working tree. Skip patch generation and rename detection.
 stats=$(git diff --cached --numstat --no-renames --no-ext-diff) || exit 1
 printf '%s\n' "$stats" | awk -F '\t' '

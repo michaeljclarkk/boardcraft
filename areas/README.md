@@ -1,0 +1,18 @@
+# Areas
+
+One file per port area. These are the structural units for handoffs and progress.
+
+**This list is closed.** The approved work is exactly these areas. Do not add an area, feature, subsystem, harness or process outside them. If a task does not fit one of these files, it is out of scope — ask the owner, do not invent work.
+
+Each `<area>.md` has frontmatter with `id`, `name`, `order`, `percent` and `code`, then the scope, a workflow checklist and notes.
+
+Rules:
+
+- A handoff names one area. Port its Rust rules, its UI and its desktop/browser/Android behaviour together.
+- Work one screen at a time inside the area.
+- Change `percent` only after verifying behaviour in the running app. 0 = not started; 100 = every workflow matches on every active client, behaviour and UI.
+- Never count code written, tests or scaffolding.
+- Put new code under the `code` path listed in the area. Create the module when the first real workflow lands, not before.
+- Regenerate the README table and chart with `node tools/port-status.mjs`. The pre-commit hook does it automatically.
+
+The table and chart are generated. Do not edit them by hand.
