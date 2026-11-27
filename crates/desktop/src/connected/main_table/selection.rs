@@ -152,7 +152,11 @@ impl Connected {
         let Page::Items(board, table) = &mut nav.page else {
             return;
         };
-        if table.pending || table.reconcile || table.move_dialog.is_some() {
+        if table.pending
+            || table.reconcile
+            || table.move_dialog.is_some()
+            || table.item_move.is_some()
+        {
             return;
         }
         if table.selection_cache {

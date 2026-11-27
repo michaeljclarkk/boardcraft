@@ -6,6 +6,7 @@ pub(super) mod board_link;
 pub(super) mod group_fields;
 pub(super) mod group_order;
 pub(super) mod grouped_entry;
+pub(super) mod item_placement;
 pub(super) mod login;
 pub(super) mod logout;
 pub(super) mod main_table;

@@ -34,6 +34,79 @@ pub struct Snapshot {
     folds: Vec<Value>,
 }
 impl Snapshot {
+    pub fn moved_root(&self, f: &Fixture, item: u128, group: &str) -> Self {
+        let mut expected = self.clone();
+        let row = expected
+            .items
+            .iter_mut()
+            .find(|r| r["id"] == json!(Uuid::from_u128(item)))
+            .unwrap();
+        if row["group_id"] != group {
+            row["group_id"] = json!(group);
+            let revision = row["revision"].as_i64().unwrap() + 1;
+            row["revision"] = json!(revision);
+            row["group_revision"] = json!(revision);
+        }
+        // In particular: no board revision, position stamp or receipt changes.
+        assert_eq!(Self::read(f), expected);
+        expected
+    }
+    pub fn reordered_root(&self, f: &Fixture, actor: Uuid, after: bool) -> Self {
+        let mut expected = self.clone();
+        let board = expected
+            .boards
+            .iter_mut()
+            .find(|r| r["id"] == json!(SELECTED))
+            .unwrap();
+        let board_revision = board["revision"].as_i64().unwrap();
+        board["revision"] = json!(board_revision + 1);
+        let item = expected
+            .items
+            .iter_mut()
+            .find(|r| r["id"] == json!(Uuid::from_u128(67)))
+            .unwrap();
+        let item_revision = item["revision"].as_i64().unwrap();
+        for key in ["revision", "group_revision", "position_revision"] {
+            item[key] = json!(item_revision + 1);
+        }
+        let order = if after {
+            [73, 61, 67, 77]
+        } else {
+            [73, 67, 61, 77]
+        };
+        for (position, n) in order.iter().enumerate() {
+            expected
+                .items
+                .iter_mut()
+                .find(|r| r["id"] == json!(Uuid::from_u128(*n)))
+                .unwrap()["position"] = json!(position);
+        }
+        let now = Self::read(f);
+        let op = &now.receipts.last().unwrap()["operation_id"];
+        assert!(!Uuid::parse_str(op.as_str().unwrap()).unwrap().is_nil());
+        expected.receipts.push(json!({"operation_id":op,"actor_id":actor,"board_id":SELECTED,"item_id":Uuid::from_u128(67),"group_id":"g-90","anchor_id":Uuid::from_u128(61),"after_anchor":after,"board_revision":board_revision,"item_revision":item_revision}));
+        assert_eq!(now, expected);
+        let board = BoardId::new(SELECTED).unwrap();
+        let flat = store::load_items(&mut f.connect(), board).unwrap().unwrap();
+        assert_eq!(
+            flat.iter()
+                .map(|r| r.id.as_uuid().as_u128())
+                .collect::<Vec<_>>(),
+            [order.to_vec(), vec![59]].concat()
+        );
+        let (_, groups) = store::load_group_snapshot(&mut f.connect(), board)
+            .ok()
+            .unwrap();
+        assert_eq!(
+            groups[0]
+                .items
+                .iter()
+                .map(|r| r.id.as_uuid().as_u128())
+                .collect::<Vec<_>>(),
+            order
+        );
+        now
+    }
     pub fn folded(&self, f: &Fixture, revision: i64, ids: &[&str]) -> Self {
         let mut expected = self.clone();
         let b = expected

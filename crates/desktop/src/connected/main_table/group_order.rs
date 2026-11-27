@@ -43,6 +43,7 @@ impl MainTable {
                             || !t.manageable
                             || t.group_dialog.is_some()
                             || t.move_dialog.is_some()
+                            || t.item_move.is_some()
                             || t.archive.is_some()
                             || t.root_command.is_some()
                         {
@@ -203,6 +204,7 @@ impl Connected {
             || !t.manageable
             || t.group_dialog.is_some()
             || t.move_dialog.is_some()
+            || t.item_move.is_some()
         {
             return;
         }

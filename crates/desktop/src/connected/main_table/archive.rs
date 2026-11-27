@@ -79,6 +79,7 @@ impl MainTable {
     ) -> impl IntoElement {
         let v = cx.weak_entity();
         let allowed = self.manageable;
+        let movable = self.editable;
         Button::new(SharedString::from(format!("item-menu-{id}")))
             .track_focus(self.archive_triggers.get(&id).expect("active root trigger"))
             .small()
@@ -86,6 +87,12 @@ impl MainTable {
             .label("More options")
             .disabled(self.pending || self.reconcile)
             .dropdown_menu(move |menu, _, _| {
+                let moving = v.clone();
+                let menu = menu.item(PopupMenuItem::new("Move to…").disabled(!movable).on_click(
+                    move |_, w, cx| {
+                        _ = moving.update(cx, |v, cx| v.open_item_move(id, w, cx));
+                    },
+                ));
                 let v = v.clone();
                 menu.item(PopupMenuItem::new("Archive…").disabled(!allowed).on_click(
                     move |_, w, cx| {

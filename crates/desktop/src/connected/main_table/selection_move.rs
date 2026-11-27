@@ -6,9 +6,9 @@ use gpui_kit::component::{
 };
 
 #[derive(Clone)]
-struct GroupChoice {
-    id: SharedString,
-    name: SharedString,
+pub(super) struct GroupChoice {
+    pub(super) id: SharedString,
+    pub(super) name: SharedString,
 }
 impl SelectItem for GroupChoice {
     type Value = SharedString;
@@ -216,6 +216,7 @@ impl Connected {
             || !table.editable
             || table.selection.ids.is_empty()
             || table.move_dialog.is_some()
+            || table.item_move.is_some()
         {
             return;
         }

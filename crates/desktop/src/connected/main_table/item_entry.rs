@@ -108,6 +108,9 @@ impl MainTable {
     pub(super) fn set_busy(&mut self, pending: bool, cx: &mut App) {
         if pending {
             self.drag.borrow_mut().cancel();
+            for h in &self.headings {
+                h.row_drag.borrow_mut().cancel();
+            }
         }
         self.pending = pending;
         let enabled = self.editable && !pending && !self.reconcile;

@@ -13,6 +13,8 @@ mod archive;
 mod group_fields;
 mod group_order;
 mod item_entry;
+mod item_move;
+mod item_order;
 mod selection;
 mod selection_move;
 use archive::{Archive, RootCommand, Undo};
@@ -32,6 +34,7 @@ struct Heading {
     entry: Entity<GroupEntry>,
     collapsed: bool,
     focus: FocusHandle,
+    row_drag: std::rc::Rc<std::cell::RefCell<boardcraft_ui::HeadingDrag>>,
 }
 
 pub(super) struct MainTable {
@@ -48,6 +51,9 @@ pub(super) struct MainTable {
     move_dialog: Option<Entity<MoveDialog>>,
     move_focus: FocusHandle,
     _move_subscription: Option<Subscription>,
+    item_move: Option<Entity<item_move::ItemMoveDialog>>,
+    _item_move_subscription: Option<Subscription>,
+    failed_moves: Vec<item_move::FailedMove>,
     group_dialog: Option<Entity<GroupDialog>>,
     group_focus: FocusHandle,
     _group_subscription: Option<Subscription>,
@@ -154,6 +160,11 @@ impl MainTable {
                             })
                             .collect();
                     Heading {
+                        row_drag: std::rc::Rc::new(std::cell::RefCell::new(
+                            boardcraft_ui::HeadingDrag::new(
+                                g.items().iter().map(|r| r.id.to_string().into()),
+                            ),
+                        )),
                         id: g.id().to_owned().into(),
                         name: g.name().to_owned().into(),
                         colour: g.colour().to_owned().into(),
@@ -217,6 +228,9 @@ impl MainTable {
                 .map(|t| t.move_focus.clone())
                 .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
             _move_subscription: None,
+            item_move: None,
+            _item_move_subscription: None,
+            failed_moves: previous.map(|t| t.failed_moves.clone()).unwrap_or_default(),
             group_dialog: None,
             group_focus: previous
                 .map(|t| t.group_focus.clone())
@@ -254,6 +268,7 @@ impl MainTable {
                 "Board items · Read only"
             }));
         column = column.child(self.new_group_options(cx));
+        column = column.child(self.failed_item_moves(cx));
         column = column.child(
             Button::new("open-archive")
                 .small()
@@ -322,6 +337,18 @@ impl MainTable {
                     cx.stop_propagation();
                     cx.notify();
                 }
+                if event.keystroke.key == "escape"
+                    && let Screen::Navigation(nav) = &mut v.screen
+                    && let Page::Items(_, table) = &mut nav.page
+                {
+                    for h in &table.headings {
+                        if h.row_drag.borrow().is_held() {
+                            h.row_drag.borrow_mut().cancel();
+                            cx.stop_propagation();
+                            cx.notify();
+                        }
+                    }
+                }
             }));
         for h in &self.headings {
             groups = groups.child(self.render_heading(h, cx));
@@ -354,7 +381,11 @@ impl MainTable {
                     .child(Label::new(format!("Moving {}", h.name))),
             );
         }
-        column = column.child(groups.child(self.group_drag_events(cx)));
+        column = column.child(
+            groups
+                .child(self.group_drag_events(cx))
+                .child(self.item_drag_events(cx)),
+        );
         column
     }
 
@@ -495,7 +526,18 @@ impl MainTable {
     }
 
     fn render_heading_body(&self, h: &Heading, cx: &mut Context<Connected>) -> impl IntoElement {
-        let mut body = div().flex().flex_col().gap_1().pl_8();
+        let geometry = h.row_drag.clone();
+        let mut body = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .pl_8()
+            .on_prepaint(move |bounds, w, _| {
+                geometry
+                    .borrow_mut()
+                    .set_viewport(bounds.intersect(&w.visual_viewport_bounds()));
+            });
         let group = h.id.clone();
         let selected = h
             .rows
@@ -524,12 +566,22 @@ impl MainTable {
             let id = r.read(cx).edit.identity().1.as_uuid();
             let checked = self.selection.ids.contains(&id);
             let name = r.read(cx).edit.accepted().to_owned();
+            let geometry = h.row_drag.clone();
+            let key = id.to_string();
             body = body.child(
                 div()
                     .id(SharedString::from(format!("selected-row-{id}")))
+                    .test_support()
+                    .relative()
                     .flex()
                     .items_center()
                     .gap_2()
+                    .on_prepaint(move |bounds, _, _| {
+                        if let Some(row) = geometry.borrow_mut().section_mut(&key) {
+                            row.set_heading(bounds);
+                            row.set_section(bounds);
+                        }
+                    })
                     .bg(if checked {
                         cx.theme().accent
                     } else {
@@ -545,8 +597,10 @@ impl MainTable {
                                 v.select_main_table_row(id, *checked, w.modifiers().shift, w, cx)
                             })),
                     )
+                    .child(self.item_grip(h, id, &name))
                     .child(r.clone())
-                    .child(self.root_archive_menu(id, cx)),
+                    .child(self.root_archive_menu(id, cx))
+                    .child(self.item_drop_marker(h, id, cx)),
             );
             if matches!(
                 r.read(cx).edit.phase(),

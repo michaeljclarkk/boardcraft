@@ -26,8 +26,17 @@ mod native_group_order_checks;
 fn native_group_order_checks_current_owner() {
     native_group_order_checks::current_owner();
 }
+#[path = "fixture/native_placement.rs"]
+mod native_placement;
+#[path = "fixture/native_placement_checks.rs"]
+mod native_placement_checks;
 #[path = "fixture/native_selection.rs"]
 mod native_selection;
+
+#[test]
+fn native_single_root_placement_checks_access() {
+    native_placement_checks::access();
+}
 
 #[test]
 fn native_group_fields_check_current_owner() {

@@ -7,9 +7,11 @@ use uuid::Uuid;
 mod archive;
 mod group_fields;
 mod group_order;
+mod item_placement;
 mod main_table;
 pub use archive::{ArchiveRead, ArchivedGroup, ArchivedItem};
 pub use group_fields::GroupFields;
+pub use item_placement::ItemReorder;
 pub use main_table::{MainTableGroup, MainTableRead};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

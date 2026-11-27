@@ -28,6 +28,22 @@ mod group_edit;
 mod group_fields;
 #[path = "windows/group_order.rs"]
 mod group_order;
+#[path = "windows/item_placement.rs"]
+mod item_placement;
+#[path = "../../mobile-edit-host/tests/fixture/move_state.rs"]
+#[allow(dead_code, reason = "shared fixture includes browser move assertions")]
+mod move_state;
+#[path = "../../mobile-edit-host/tests/fixture/native_placement.rs"]
+mod native_placement;
+
+#[test]
+fn windows_moves_and_reorders_single_roots() {
+    item_placement::moves();
+}
+#[test]
+fn windows_recovers_single_root_placement() {
+    item_placement::recovers();
+}
 #[path = "../../mobile-edit-host/tests/fixture/native_group_order.rs"]
 mod native_group_order;
 #[test]

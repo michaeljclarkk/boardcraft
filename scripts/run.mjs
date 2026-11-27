@@ -158,6 +158,10 @@ const groupFields = packets.at(-1);
 packets.push({ ...groupFields, id: '49-windows-group-order',
   cases: [...groupFields.cases, 'native_group_order_checks_current_owner'],
   windowsCases: [...groupFields.windowsCases, 'windows_reorders_physical_groups', 'windows_recovers_group_reorder'] });
+const groupOrder = packets.at(-1);
+packets.push({ ...groupOrder, id: '50-windows-item-placement',
+  cases: [...groupOrder.cases, 'native_single_root_placement_checks_access'],
+  windowsCases: [...groupOrder.windowsCases, 'windows_moves_and_reorders_single_roots', 'windows_recovers_single_root_placement'] });
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
 const text = value => typeof value === 'string' && value.trim().length > 0;

@@ -174,6 +174,17 @@ impl HeadingDrag {
         self.cancel();
         order
     }
+    /// The relative target of a changed drop, for callers whose command accepts
+    /// an anchor rather than a complete permutation. Same cancellation/click rules.
+    pub fn release_edge(&mut self, pointer: Point<Pixels>) -> Option<(SharedString, bool)> {
+        if let Some(c) = &mut self.candidate {
+            c.pointer = pointer;
+        }
+        let edge = self
+            .edge()
+            .map(|(id, after)| (SharedString::from(id.to_owned()), after));
+        self.release(pointer).and(edge)
+    }
     /// Escape, pointer loss, disabled state or visit departure: no order is emitted.
     pub fn cancel(&mut self) {
         self.generation = self.generation.wrapping_add(1);
@@ -253,5 +264,38 @@ mod tests {
         d.move_pointer(point(px(13.), px(214.)));
         assert!(d.release(point(px(13.), px(214.))).is_none());
         assert!(!d.is_held());
+    }
+    #[test]
+    fn grip_only_relative_drop_uses_row_midpoint_and_release_position() {
+        let mut d = fixture();
+        for (ix, id) in ["a", "b", "c"].iter().enumerate() {
+            let row = Bounds::new(
+                point(px(0.), px(ix as f32 * 100.)),
+                size(px(200.), px(100.)),
+            );
+            let s = d.section_mut(id).unwrap();
+            s.set_heading(row);
+            s.set_name(Bounds::new(row.origin, size(px(20.), px(20.))));
+        }
+        d.press(point(px(40.), px(210.))); // Name/selection lane, not the grip.
+        assert!(!d.is_held());
+        d.press(point(px(10.), px(210.)));
+        d.move_pointer(point(px(13.), px(214.)));
+        assert!(d.release_edge(point(px(10.), px(50.))).is_none());
+        assert!(!d.consume_click());
+        d.press(point(px(10.), px(210.)));
+        d.move_pointer(point(px(16.), px(210.)));
+        d.move_pointer(point(px(10.), px(50.)));
+        assert_eq!(d.edge(), Some(("a", false)));
+        assert_eq!(
+            d.release_edge(point(px(10.), px(51.))),
+            Some(("a".into(), true))
+        );
+        assert!(d.consume_click());
+        d.press(point(px(10.), px(210.)));
+        d.move_pointer(point(px(10.), px(50.)));
+        assert!(d.release_edge(point(px(300.), px(50.))).is_none());
+        assert!(!d.is_held());
+        assert!(d.marker().is_none());
     }
 }
