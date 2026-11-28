@@ -11,7 +11,7 @@ Everything here is our own work: our schema, our rules, our controls, our names 
 <!-- PORT-STATUS:START -->
 ## Port map
 
-**Overall: 12%** — mean across 16 areas. A handoff names one area; it includes its Rust rules, UI and desktop/browser/Android behaviour. Once the contract is stable, UI and cross-platform work run as two concurrent subagents.
+**Overall: 13%** — mean across 16 areas. A handoff names one area; it includes its Rust rules, UI and desktop/browser/Android behaviour. Once the contract is stable, UI and cross-platform work run as two concurrent subagents.
 
 | Area | What it covers | Code home | Ported |
 |---|---|---|---|
@@ -20,7 +20,7 @@ Everything here is our own work: our schema, our rules, our controls, our names 
 | [Teams and users](areas/teams.md) | Users, roles, teams and membership: create and manage accounts, assign roles, add people to teams and keep access rules consistent with board permissions. | `crates/account/src/users`, `crates/account/src/teams` | 5% |
 | [Boards, groups and items](areas/boards.md) | The board list, groups, items, rename, ordering, selection, move, archive and trash, across desktop, browser and Android. | `crates/board/src`, `crates/desktop/src/connected`, `crates/web/src/groups` | 50% |
 | [Columns and cells](areas/columns.md) | Every column type: setup, defaults, validation, editors, display, formulas, linked items and file cells. The same rule serves direct edits, batch writes and imports. | `crates/board/src/columns`, `crates/boardcraft-ui/src/columns` | 5% |
-| [Views and charts](areas/views.md) | Saved views, filters, sorting, grouping, chart settings and forms. Shared and personal settings stay distinct. | `crates/board/src/views`, `crates/web/src/views` | 0% |
+| [Views and charts](areas/views.md) | Saved views, filters, sorting, grouping, chart settings and forms. Shared and personal settings stay distinct. | `crates/board/src/views`, `crates/web/src/views` | 10% |
 | [Automation engine](areas/automation.md) | Triggers, conditions, actions, scheduling and retries. Port the rule engine, its editor UI and its desktop/browser/Android behaviour together. | `crates/board/src/automation`, `crates/desktop/src/automation`, `crates/web/src/automation` | 0% |
 | [Notifications](areas/notifications.md) | Inbox, preferences, seen state and email/push delivery. A notification points at the record and action that produced it. | `crates/notifications`, `crates/boardcraft-ui/src/notifications` | 0% |
 | [History and activity](areas/history.md) | Activity log, updates, revisions and undo. History is append-only and survives restart. | `crates/board/src/history` | 5% |
