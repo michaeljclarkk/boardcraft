@@ -16,8 +16,11 @@ use wasm_bindgen::{JsCast, closure::Closure};
 use crate::{
     binding,
     groups::{AccessLost, Table},
+    navigation::{Navigation, NavigationEvent},
     session,
 };
+
+mod workspace;
 
 enum Screen {
     Checking,
@@ -36,8 +39,7 @@ enum HostKind {
 }
 enum Page {
     Loading,
-    List(Vec<BoardSummary>),
-    ListUnavailable,
+    List,
     Board(Entity<Table>),
     Denied,
     BoardUnavailable,
@@ -47,10 +49,12 @@ pub(super) struct Shell {
     host: HostKind,
     screen: Screen,
     page: Page,
+    boards: Option<Vec<BoardSummary>>,
     destination: Option<Uuid>,
     binding: Option<String>,
     identifier: Entity<InputState>,
     password: Entity<InputState>,
+    navigation: Entity<Navigation>,
     message: &'static str,
     logging_out: bool,
     focus: FocusHandle,
@@ -59,6 +63,7 @@ pub(super) struct Shell {
     request: Option<Task<()>>,
     saves: Vec<Task<()>>,
     events: Vec<Subscription>,
+    _navigation_events: Subscription,
     changes: Option<web_sys::BroadcastChannel>,
     _changed: Closure<dyn FnMut()>,
     history: Closure<dyn FnMut()>,
@@ -74,6 +79,13 @@ impl Shell {
                 .placeholder("Password")
                 .masked(true)
         });
+        let navigation = cx.new(|cx| Navigation::new(window, cx));
+        let navigation_events =
+            cx.subscribe_in(&navigation, window, |shell, _, event, w, cx| match event {
+                NavigationEvent::Open(id) => shell.navigate(*id, w, cx),
+                NavigationEvent::Refresh => shell.check(w, cx),
+                NavigationEvent::LogOut => shell.logout(w, cx),
+            });
         let mut events = Vec::new();
         for field in [&identifier, &password] {
             events.push(cx.subscribe_in(field, window, |shell, _, event, w, cx| {
@@ -95,6 +107,9 @@ impl Shell {
         let history = Closure::new(move || {
             let _ = handle.update(&mut app, |_, w, cx| {
                 let _ = weak.update(cx, |shell: &mut Self, cx| {
+                    shell
+                        .navigation
+                        .update(cx, |navigation, cx| navigation.dismiss(w, cx));
                     shell.destination = address();
                     shell.check(w, cx);
                 });
@@ -111,10 +126,12 @@ impl Shell {
             host: HostKind::Unknown,
             screen: Screen::Checking,
             page: Page::Loading,
+            boards: None,
             destination: address(),
             binding: None,
             identifier,
             password,
+            navigation,
             message: "",
             logging_out: false,
             focus,
@@ -123,6 +140,7 @@ impl Shell {
             request: None,
             saves: Vec::new(),
             events,
+            _navigation_events: navigation_events,
             changes,
             _changed: changed,
             history,
@@ -132,8 +150,16 @@ impl Shell {
     }
 
     fn signed_out(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        self.navigation = cx.new(|cx| Navigation::new(w, cx));
+        self._navigation_events =
+            cx.subscribe_in(&self.navigation, w, |shell, _, event, w, cx| match event {
+                NavigationEvent::Open(id) => shell.navigate(*id, w, cx),
+                NavigationEvent::Refresh => shell.check(w, cx),
+                NavigationEvent::LogOut => shell.logout(w, cx),
+            });
         self.binding = None;
         self.page = Page::Loading;
+        self.boards = None;
         self.saves.clear();
         self.events.truncate(2);
         self.logging_out = false;
@@ -153,6 +179,7 @@ impl Shell {
         self.logging_out = false;
         self.screen = Screen::Checking;
         self.page = Page::Loading;
+        self.boards = None;
         self.saves.clear();
         self.events.truncate(2);
         if self.host == HostKind::Viewer {
@@ -167,9 +194,8 @@ impl Shell {
                 let host = session::viewer_board(&executor).await;
                 let _ = view.update_in(cx, |view, w, cx| match host {
                     Ok(board) => {
-                        view.host = if let Some(board) = board {
+                        view.host = if board.is_some() {
                             view.binding = Some(DISPOSABLE_VIEWER.to_owned());
-                            view.destination.get_or_insert(board);
                             HostKind::Viewer
                         } else {
                             HostKind::Authenticated
@@ -273,6 +299,11 @@ impl Shell {
     }
 
     fn navigate(&mut self, destination: Option<Uuid>, w: &mut Window, cx: &mut Context<Self>) {
+        if self.logging_out || destination == self.destination {
+            return;
+        }
+        self.navigation
+            .update(cx, |navigation, cx| navigation.dismiss(w, cx));
         let path = destination.map_or_else(|| "/web/".into(), |id| format!("/web/boards/{id}"));
         let changed = web_sys::window()
             .and_then(|b| b.history().ok())
@@ -286,7 +317,13 @@ impl Shell {
             return;
         }
         self.destination = destination;
-        self.check(w, cx);
+        if matches!(self.page, Page::Board(_)) {
+            w.close_dialog(cx);
+        }
+        self.saves.clear();
+        self.events.truncate(2);
+        self.scroll = gpui_kit::ScrollHandle::new();
+        self.load(w, cx);
     }
 
     fn load(&mut self, w: &mut Window, cx: &mut Context<Self>) {
@@ -295,30 +332,52 @@ impl Shell {
         };
         self.page = Page::Loading;
         self.message = "";
+        self.navigation.update(cx, |navigation, cx| {
+            navigation.loading(self.host == HostKind::Authenticated, cx)
+        });
         let destination = self.destination;
         let viewer = self.host == HostKind::Viewer;
         let executor = cx.background_executor().clone();
         // Defer replacing the resolving task until its callback returns.
         self.request = Some(cx.spawn_in(w, async move |view, cx| {
-            let result = if let Some(board) = destination {
-                session::table(&binding, board, &executor)
-                    .await
-                    .map(|read| (Vec::new(), Some(read)))
-            } else {
-                session::list(&binding, &executor)
-                    .await
-                    .map(|boards| (boards, None))
-            };
-            if !viewer && matches!(result, Err(EditError::SessionRejected)) {
-                let _ = binding::forget(&binding).await;
+            // Listing is bounded. Even a board outside that list can be opened by
+            // address: the host checks access again on the table read.
+            let (boards, detail) = futures::join!(session::list(&binding, &executor), async {
+                match destination {
+                    Some(id) => Some((id, session::table(&binding, id, &executor).await)),
+                    None => None,
+                }
+            });
+            if matches!(boards, Err(EditError::SessionRejected))
+                || matches!(detail, Some((_, Err(EditError::SessionRejected))))
+            {
+                if !viewer {
+                    let _ = binding::forget(&binding).await;
+                }
+                let _ = view.update_in(cx, |view, w, cx| {
+                    if viewer {
+                        view.boards = None;
+                        view.page = Page::Denied;
+                        view.navigation.update(cx, |navigation, cx| {
+                            navigation.loaded(None, view.destination, true, w, cx)
+                        });
+                        cx.notify();
+                    } else {
+                        view.signed_out(w, cx);
+                    }
+                });
+                return;
             }
             let _ = view.update_in(cx, |view, w, cx| {
-                match result {
-                    Ok((boards, None)) => view.page = Page::List(boards),
-                    Ok((_, Some(read))) => {
-                        let Some(board) = destination else {
-                            return;
-                        };
+                let list_denied = matches!(
+                    boards,
+                    Err(EditError::PermissionDenied | EditError::Missing)
+                );
+                view.boards = boards.ok();
+                view.page = match detail {
+                    None if list_denied => Page::Denied,
+                    None => Page::List,
+                    Some((board, Ok(read))) => {
                         let table = cx.new(|cx| {
                             Table::new(binding.clone(), board, read, view.scroll.clone(), w, cx)
                         });
@@ -327,21 +386,25 @@ impl Shell {
                             w,
                             |view, _, _: &AccessLost, w, cx| view.check(w, cx),
                         ));
-                        view.page = Page::Board(table);
+                        Page::Board(table)
                     }
-                    Err(EditError::SessionRejected) if viewer => view.page = Page::Denied,
-                    Err(EditError::SessionRejected) => view.signed_out(w, cx),
-                    Err(EditError::PermissionDenied | EditError::Missing) => {
-                        view.page = Page::Denied
-                    }
-                    Err(_) => {
-                        view.page = if destination.is_some() {
-                            Page::BoardUnavailable
-                        } else {
-                            Page::ListUnavailable
+                    Some((id, Err(EditError::PermissionDenied | EditError::Missing))) => {
+                        if let Some(boards) = &mut view.boards {
+                            boards.retain(|board| board.id != id);
                         }
+                        Page::Denied
                     }
-                }
+                    Some((_, Err(_))) => Page::BoardUnavailable,
+                };
+                view.navigation.update(cx, |navigation, cx| {
+                    navigation.loaded(
+                        view.boards.as_deref(),
+                        view.destination,
+                        matches!(view.page, Page::Denied),
+                        w,
+                        cx,
+                    )
+                });
                 cx.notify();
             });
         }));
@@ -356,16 +419,21 @@ impl Shell {
             return;
         };
         self.logging_out = true;
+        self.navigation
+            .update(cx, |navigation, cx| navigation.set_busy(true, cx));
         let executor = cx.background_executor().clone();
         self.request = Some(cx.spawn_in(w, async move |view, cx| {
             let acknowledged = session::logout(&binding, &executor).await.is_ok();
             let forgotten = acknowledged && binding::forget(&binding).await.is_ok();
             let _ = view.update_in(cx, |view, w, cx| {
                 view.logging_out = false;
+                view.navigation
+                    .update(cx, |navigation, cx| navigation.set_busy(false, cx));
                 if forgotten {
                     view.signed_out(w, cx);
                 } else if acknowledged {
                     view.screen = Screen::StorageUnavailable;
+                    view.boards = None;
                     view.page = Page::Loading;
                 } else {
                     view.message = "Could not log out. Try again.";
@@ -436,83 +504,14 @@ impl Render for Shell {
             Screen::StorageUnavailable => {
                 content.child(status("session-status", "Could not read session storage"))
             }
-            Screen::SignedIn => {
-                let mut page = if self.host == HostKind::Viewer {
-                    content
-                } else {
-                    content
-                        .child(status("session-status", "Signed in"))
-                        .child("Your session is ready.")
-                };
-                page = match &self.page {
-                    Page::Loading => page.child(status(
-                        "page-status",
-                        if self.destination.is_some() {
-                            "Loading board…"
-                        } else {
-                            "Loading boards…"
-                        },
-                    )),
-                    Page::List(boards) => {
-                        if boards.is_empty() {
-                            page = page.child(status("page-status", "No boards"));
-                        }
-                        for board in boards {
-                            let id = board.id;
-                            page = page.child(
-                                Button::new(gpui_kit::SharedString::from(format!("board-{id}")))
-                                    .label(board.name.clone())
-                                    .accessibility_id(id.to_string())
-                                    .on_click(
-                                        cx.listener(move |s, _, w, cx| s.navigate(Some(id), w, cx)),
-                                    ),
-                            );
-                        }
-                        page.child(
-                            Button::new("refresh")
-                                .label("Refresh")
-                                .on_click(cx.listener(|s, _, w, cx| s.check(w, cx))),
-                        )
-                    }
-                    Page::Board(table) => page.child(table.clone()),
-                    Page::ListUnavailable => page
-                        .child(status("page-status", "Could not load boards"))
-                        .child(
-                            Button::new("retry-list")
-                                .label("Retry board list")
-                                .on_click(cx.listener(|s, _, w, cx| s.check(w, cx))),
-                        ),
-                    Page::Denied | Page::BoardUnavailable => page
-                        .child(status(
-                            "page-status",
-                            if matches!(self.page, Page::Denied) {
-                                "Destination unavailable"
-                            } else {
-                                "Could not load board"
-                            },
-                        ))
-                        .child(
-                            Button::new("retry-destination")
-                                .label("Retry destination")
-                                .on_click(cx.listener(|s, _, w, cx| s.check(w, cx))),
-                        ),
-                };
-                if self.destination.is_some() {
-                    page = page.child(
-                        Button::new("back")
-                            .label("Back to boards")
-                            .on_click(cx.listener(|s, _, w, cx| s.navigate(None, w, cx))),
-                    );
-                }
-                page
-            }
+            Screen::SignedIn => return self.workspace(cx).into_any_element(),
         };
         let action = match self.screen {
             Screen::Unavailable => "Retry connection",
             Screen::StorageUnavailable => "Retry storage",
             _ => "Check session",
         };
-        let mut actions = div().flex().gap_2().child(
+        let actions = div().flex().gap_2().child(
             Button::new("check-session")
                 .track_focus(&self.action_focus)
                 .label(action)
@@ -520,15 +519,6 @@ impl Render for Shell {
                 .disabled(checking)
                 .on_click(cx.listener(|s, _, w, cx| s.check(w, cx))),
         );
-        if matches!(self.screen, Screen::SignedIn) {
-            actions = actions.child(
-                Button::new("logout")
-                    .label("Log out")
-                    .disabled(self.logging_out)
-                    .loading(self.logging_out)
-                    .on_click(cx.listener(|s, _, w, cx| s.logout(w, cx))),
-            );
-        }
         div()
             .id("web-shell")
             .role(Role::Application)
@@ -553,6 +543,7 @@ impl Render for Shell {
             )
             .child(status("notice", self.message))
             .children((self.host != HostKind::Viewer).then_some(actions))
+            .into_any_element()
     }
 }
 

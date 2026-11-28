@@ -4,6 +4,8 @@ mod browser;
 #[allow(dead_code)]
 #[path = "../tests/fixture/mod.rs"]
 mod fixture;
+#[path = "web_board_view/lifetime.rs"]
+mod lifetime;
 
 use std::{io, path::PathBuf, process::Command};
 
@@ -23,17 +25,15 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run() -> Result<(), &'static str> {
-    match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
-        [] => (),
-        [arg] if arg == "--help" => {
-            println!(
-                "web_board_view: build wasm, seed a disposable editable board, and serve until Enter."
-            );
-            println!("Open the printed address to edit Review as its local fixture owner.");
-            return Ok(());
-        }
-        _ => return Err("usage: web_board_view [--help]"),
-    };
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args == ["--help"] {
+        println!("web_board_view [--for-seconds N]: build wasm and serve a disposable board list.");
+        println!(
+            "Default: open the browser and serve until Enter. Timed: print the address and serve for 1 to 900 seconds."
+        );
+        return Ok(());
+    }
+    let duration = lifetime::duration(&args)?;
     let web = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../web");
     println!("Building the locked wasm client…");
     let status = Command::new("trunk")
@@ -54,6 +54,8 @@ fn run() -> Result<(), &'static str> {
         .connect(NoTls)
         .map_err(|_| "Cannot seed viewer database.")?;
     seed_review_board(&mut db, board_id, REVIEW_OWNER)?;
+    let backlog = BoardId::new(Uuid::new_v4()).ok_or("Cannot allocate board identity.")?;
+    store::create_board(&mut db, &Board::new(backlog)).map_err(|_| "Cannot seed Backlog.")?;
     let workspace = Uuid::new_v4();
     let mut tx = db.transaction().map_err(|_| "Cannot seed viewer access.")?;
     tx.execute(
@@ -61,23 +63,29 @@ fn run() -> Result<(), &'static str> {
         &[&workspace, &REVIEW_OWNER],
     ).map_err(|_| "Cannot seed viewer access.")?;
     tx.execute(
-        "INSERT INTO board_policies(board_id,workspace_id,name,position,kind,creator_id,active) VALUES ($1,$2,'Review',0,'private',$3,true)",
-        &[&board_id.as_uuid(), &workspace, &REVIEW_OWNER],
+        "INSERT INTO board_policies(board_id,workspace_id,name,position,kind,creator_id,active) VALUES ($1,$2,'Review',0,'private',$3,true), ($4,$2,'Backlog',1,'private',$3,true)",
+        &[&board_id.as_uuid(), &workspace, &REVIEW_OWNER, &backlog.as_uuid()],
     ).map_err(|_| "Cannot seed viewer access.")?;
     tx.commit().map_err(|_| "Cannot commit viewer access.")?;
-    browser::open_board(host.port, board_id.as_uuid());
+    let url = format!("http://127.0.0.1:{}/web/", host.port);
+    println!("Open in your normal browser: {url}");
+    println!("Choose Review for the rename journey, or Backlog for an empty board.");
     println!(
         "Review has two Work groups: the first has one Review, the second has Review and Sketch. Reserve starts empty."
     );
-    println!(
-        "Keep this terminal open. Press Enter here to stop this viewer and remove its synthetic data."
-    );
-    if io::stdin()
-        .read_line(&mut String::new())
-        .map_err(|_| "Cannot read viewer console.")?
-        == 0
-    {
-        return Err("Viewer input closed; stopping this viewer.");
+    if let Some(duration) = duration {
+        println!("Serving for {} seconds before cleanup.", duration.as_secs());
+        std::thread::sleep(duration);
+    } else {
+        browser::open_board_list(url);
+        println!("Press Enter here to stop this viewer and remove its synthetic data.");
+        if io::stdin()
+            .read_line(&mut String::new())
+            .map_err(|_| "Cannot read viewer console.")?
+            == 0
+        {
+            return Err("Viewer input closed; stopping this viewer.");
+        }
     }
     drop(host);
     drop(db);

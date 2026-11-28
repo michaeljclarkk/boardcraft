@@ -1,11 +1,8 @@
 use std::process::{Command, Stdio};
-use uuid::Uuid;
 
-/// Open the seeded board once the fixture is ready. Keep the printed address
+/// Open the board list once the fixture is ready. Keep the printed address
 /// usable when the machine has no graphical browser or file association.
-pub(super) fn open_board(port: u16, board: Uuid) {
-    let url = format!("http://127.0.0.1:{port}/web/boards/{board}");
-    println!("Open in your normal browser: {url}");
+pub(super) fn open_board_list(url: String) {
     #[cfg(target_os = "windows")]
     let mut opener = {
         let mut cmd = Command::new("rundll32.exe");

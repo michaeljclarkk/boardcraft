@@ -1,10 +1,32 @@
 //! Composition of stock Kit controls with the shared native/wasm drag state.
 use super::*;
+use gpui_kit::assets::IconName;
 use gpui_kit::base::ElementExt;
 use gpui_kit::component::{Sizable, button::ButtonVariants};
 use gpui_kit::{
     AnyElement, DispatchPhase, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, canvas,
 };
+
+// Keep the selection column aligned through the header, item and entry bands.
+// The leading slot gives the existing drag handle its own hit target.
+fn selection_cell() -> gpui_kit::Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_end()
+        .pr_2()
+        .w(gpui_kit::rems(3.5))
+        .flex_shrink_0()
+}
+
+fn table_band(cx: &App) -> gpui_kit::Div {
+    div()
+        .flex()
+        .items_center()
+        .min_h_9()
+        .border_t_1()
+        .border_color(cx.theme().border)
+}
 
 impl Table {
     pub(super) fn render_groups(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -15,7 +37,7 @@ impl Table {
             .relative()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_6()
             .on_prepaint(move |bounds, w, _| {
                 geometry.borrow_mut().set_viewport(
                     bounds
@@ -40,7 +62,7 @@ impl Table {
                 .iter()
                 .filter(|r| self.selection.contains(&r.id))
                 .count();
-            let mut header = div().flex().items_center().gap_2();
+            let mut header = div().flex().min_h_9().items_center().gap_1();
             let geometry = self.drag.clone();
             let gid = id.clone();
             header = header.on_prepaint(move |bounds, _, _| {
@@ -53,7 +75,11 @@ impl Table {
                 Button::new(key(format!("fold-{id}")))
                     .small()
                     .ghost()
-                    .label(if collapsed { "▸" } else { "▾" })
+                    .icon(if collapsed {
+                        IconName::ChevronRight
+                    } else {
+                        IconName::ChevronDown
+                    })
                     .accessibility_label(format!("Toggle {name}"))
                     .accessibility_id(id.clone())
                     .aria_expanded(!collapsed)
@@ -77,7 +103,7 @@ impl Table {
                             .small()
                             .ghost()
                             .accessibility_label(name.clone())
-                            .child(div().text_color(hue).child(name.clone()))
+                            .child(div().text_lg().text_color(hue).child(name.clone()))
                             .accessibility_id(format!("heading-{id}"))
                             .disabled(self.busy() || !self.read.is_manageable())
                             .on_click(cx.listener(move |t, e: &gpui_kit::ClickEvent, w, cx| {
@@ -88,7 +114,7 @@ impl Table {
                     ),
             );
             let count = match g.items().len() {
-                0 => "No items".into(),
+                0 => "No Items".into(),
                 1 => "1 item".into(),
                 n => format!("{n} items"),
             };
@@ -109,7 +135,7 @@ impl Table {
                     .small()
                     .ghost()
                     .accessibility_label(format!("Group menu for {name}"))
-                    .label("Group options")
+                    .icon(IconName::Ellipsis)
                     .accessibility_id(id.clone())
                     .disabled(busy)
                     .dropdown_menu(move |menu, _, _| {
@@ -208,10 +234,6 @@ impl Table {
                 .relative()
                 .flex()
                 .flex_col()
-                .gap_2()
-                .border_l_2()
-                .border_color(hue)
-                .pl_2()
                 .on_prepaint(move |bounds, _, _| {
                     if let Some(s) = geometry.borrow_mut().section_mut(&gid) {
                         s.set_section(bounds);
@@ -220,33 +242,72 @@ impl Table {
                 .child(header);
             if !collapsed {
                 let ids: Vec<_> = g.items().iter().map(|r| r.id).collect();
-                section = section.child(
-                    Checkbox::new(key(format!("check-group-{id}")))
-                        .label(format!("Select all items in {name}"))
-                        .checked(!ids.is_empty() && selected == ids.len())
-                        .indeterminate(selected > 0 && selected < ids.len())
-                        .disabled(self.busy() || ids.is_empty())
-                        .on_change(cx.listener(move |t, checked, w, cx| {
-                            t.select(ids.clone(), *checked, w, cx)
-                        })),
-                );
+                // the internal tool's default system Item column is 360px at normal zoom.
+                // Only this column is returned by this viewer's table read.
+                let mut grid = div()
+                    .id(key(format!("grid-{id}")))
+                    .role(Role::Table)
+                    .aria_label(name.clone())
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .max_w(gpui_kit::rems(26.5))
+                    .border_l(gpui_kit::rems(0.375))
+                    .border_color(hue)
+                    .child(
+                        table_band(cx)
+                            .id(key(format!("columns-{id}")))
+                            .role(Role::Row)
+                            .border_r_1()
+                            .child(
+                                selection_cell()
+                                    .id(key(format!("selection-header-{id}")))
+                                    .role(Role::ColumnHeader)
+                                    .child(
+                                        Checkbox::new(key(format!("check-group-{id}")))
+                                            .small()
+                                            .accessibility_label(format!(
+                                                "Select all items in {name}"
+                                            ))
+                                            .checked(!ids.is_empty() && selected == ids.len())
+                                            .indeterminate(selected > 0 && selected < ids.len())
+                                            .disabled(self.busy() || ids.is_empty())
+                                            .on_change(cx.listener(move |t, checked, w, cx| {
+                                                t.select(ids.clone(), *checked, w, cx)
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id(key(format!("name-header-{id}")))
+                                    .role(Role::ColumnHeader)
+                                    .flex()
+                                    .flex_1()
+                                    .items_center()
+                                    .justify_center()
+                                    .h_9()
+                                    .border_l_1()
+                                    .border_color(cx.theme().border)
+                                    .text_sm()
+                                    .child("Item"),
+                            ),
+                    );
                 if let Some(drag) = self.row_drags.get(&id) {
                     let geometry = drag.clone();
                     let scroll = self.scroll.clone();
-                    let mut rows =
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .on_prepaint(move |bounds, w, _| {
-                                geometry.borrow_mut().set_viewport(
-                                    bounds
-                                        .intersect(&scroll.bounds())
-                                        .intersect(&w.visual_viewport_bounds()),
-                                )
-                            });
+                    let mut rows = div().flex().flex_col().on_prepaint(move |bounds, w, _| {
+                        geometry.borrow_mut().set_viewport(
+                            bounds
+                                .intersect(&scroll.bounds())
+                                .intersect(&w.visual_viewport_bounds()),
+                        )
+                    });
                     for item in g.items() {
                         let item_id = item.id;
+                        let Some(name_row) = self.rows.get(&item_id) else {
+                            continue;
+                        };
+                        let title = name_row.read(cx).accepted_title();
                         let checked = self.selection.contains(&item_id);
                         let hover = if checked {
                             cx.theme().list_active
@@ -255,12 +316,11 @@ impl Table {
                         };
                         let geometry = drag.clone();
                         let rid = item_id.to_string();
-                        let mut row = div()
+                        let mut row = table_band(cx)
                             .id(key(format!("row-{item_id}")))
+                            .role(Role::Row)
                             .relative()
-                            .flex()
-                            .items_center()
-                            .gap_2()
+                            .border_r_1()
                             .hover(move |s| s.bg(hover))
                             .bg(if checked {
                                 cx.theme().list_active
@@ -272,73 +332,102 @@ impl Table {
                                     s.set_heading(bounds);
                                     s.set_section(bounds);
                                 }
-                            })
-                            .child(
-                                Checkbox::new(key(format!("check-{item_id}")))
-                                    .accessibility_label(format!("Select {}", item.title))
-                                    .checked(checked)
-                                    .disabled(self.busy())
-                                    .on_change(cx.listener(move |t, checked, w, cx| {
-                                        t.select_row(item_id, *checked, w.modifiers().shift, w, cx)
-                                    })),
-                            );
+                            });
                         let geometry = drag.clone();
                         let rid = item_id.to_string();
+                        let grip = div()
+                            .on_prepaint(move |bounds, _, _| {
+                                if let Some(s) = geometry.borrow_mut().section_mut(&rid) {
+                                    s.set_name(bounds);
+                                }
+                            })
+                            .child(
+                                Button::new(key(format!("grip-{item_id}")))
+                                    .small()
+                                    .ghost()
+                                    .icon(IconName::GripVertical)
+                                    .accessibility_label(format!("Drag {title}"))
+                                    .accessibility_id(format!("grip-{item_id}"))
+                                    .disabled(
+                                        self.busy()
+                                            || !self.read.is_editable()
+                                            || (checked && self.selection.len() > 1),
+                                    ),
+                            );
                         row = row.child(
-                            div()
-                                .on_prepaint(move |bounds, _, _| {
-                                    if let Some(s) = geometry.borrow_mut().section_mut(&rid) {
-                                        s.set_name(bounds);
-                                    }
-                                })
+                            selection_cell()
+                                .id(key(format!("selection-cell-{item_id}")))
+                                .role(Role::Cell)
+                                .child(grip)
                                 .child(
-                                    Button::new(key(format!("grip-{item_id}")))
-                                        .label("⋮⋮")
-                                        .accessibility_label(format!("Drag {}", item.title))
-                                        .accessibility_id(format!("grip-{item_id}"))
-                                        .disabled(
-                                            self.busy()
-                                                || !self.read.is_editable()
-                                                || (checked && self.selection.len() > 1),
-                                        ),
+                                    Checkbox::new(key(format!("check-{item_id}")))
+                                        .small()
+                                        .accessibility_label(format!("Select {title}"))
+                                        .checked(checked)
+                                        .disabled(self.busy())
+                                        .on_change(cx.listener(move |t, checked, w, cx| {
+                                            t.select_row(
+                                                item_id,
+                                                *checked,
+                                                w.modifiers().shift,
+                                                w,
+                                                cx,
+                                            )
+                                        })),
                                 ),
                         );
-                        if let Some(name) = self.rows.get(&item_id) {
-                            row = row.child(name.clone());
-                        }
                         let weak = cx.weak_entity();
                         let editable = self.read.is_editable();
                         let manageable = self.read.is_manageable();
                         row = row.child(
-                            Button::new(key(format!("item-menu-{item_id}")))
-                                .label("More options")
-                                .small()
-                                .ghost()
-                                .accessibility_label(format!("More options for {}", item.title))
-                                .accessibility_id(format!("menu-{item_id}"))
-                                .disabled(self.busy())
-                                .dropdown_menu(move |menu, _, _| {
-                                    let moving = weak.clone();
-                                    let archive = weak.clone();
-                                    menu.item(
-                                        PopupMenuItem::new("Move to…")
-                                            .disabled(!editable)
-                                            .on_click(move |_, w, cx| {
-                                                let _ = moving.update(cx, |t, cx| {
-                                                    t.open_editor(Kind::Move(item_id), w, cx)
-                                                });
-                                            }),
-                                    )
-                                    .item(
-                                        PopupMenuItem::new("Archive item…")
-                                            .disabled(!manageable)
-                                            .on_click(move |_, w, cx| {
-                                                let _ = archive.update(cx, |t, cx| {
-                                                    t.open_editor(Kind::ArchiveRoot(item_id), w, cx)
-                                                });
-                                            }),
-                                    )
-                                }),
+                            div()
+                                .id(key(format!("name-cell-{item_id}")))
+                                .role(Role::Cell)
+                                .flex()
+                                .items_center()
+                                .flex_1()
+                                .min_w_0()
+                                .pr_1()
+                                .child(name_row.clone())
+                                .child(
+                                    Button::new(key(format!("item-menu-{item_id}")))
+                                        .icon(IconName::Ellipsis)
+                                        .small()
+                                        .ghost()
+                                        .accessibility_label(format!("More options for {title}"))
+                                        .accessibility_id(format!("menu-{item_id}"))
+                                        .disabled(self.busy())
+                                        .dropdown_menu(move |menu, _, _| {
+                                            let moving = weak.clone();
+                                            let archive = weak.clone();
+                                            menu.item(
+                                                PopupMenuItem::new("Move to…")
+                                                    .disabled(!editable)
+                                                    .on_click(move |_, w, cx| {
+                                                        let _ = moving.update(cx, |t, cx| {
+                                                            t.open_editor(
+                                                                Kind::Move(item_id),
+                                                                w,
+                                                                cx,
+                                                            )
+                                                        });
+                                                    }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new("Archive item…")
+                                                    .disabled(!manageable)
+                                                    .on_click(move |_, w, cx| {
+                                                        let _ = archive.update(cx, |t, cx| {
+                                                            t.open_editor(
+                                                                Kind::ArchiveRoot(item_id),
+                                                                w,
+                                                                cx,
+                                                            )
+                                                        });
+                                                    }),
+                                            )
+                                        }),
+                                ),
                         );
                         if let Some((target, after)) = drag.borrow().edge()
                             && target == item_id.to_string()
@@ -353,15 +442,17 @@ impl Table {
                         }
                         rows = rows.child(row);
                     }
-                    section = section.child(rows);
+                    grid = grid.child(rows);
                 }
                 if let Some(entry) = self.entries.get(&id) {
                     let group = id.clone();
                     let cancel_id = id.clone();
-                    section = section.child(
-                        div()
-                            .flex()
-                            .gap_2()
+                    grid = grid.child(
+                        table_band(cx)
+                            .id(key(format!("add-row-{id}")))
+                            .role(Role::Row)
+                            .border_b_1()
+                            .border_r_1()
                             .capture_key_down(cx.listener(
                                 move |t, event: &gpui_kit::KeyDownEvent, w, cx| {
                                     if event.keystroke.key == "escape"
@@ -377,25 +468,47 @@ impl Table {
                                 },
                             ))
                             .child(
-                                Input::new(&entry.input)
-                                    .w_64()
-                                    .aria_label(format!("Add item to {name}"))
-                                    .disabled(self.busy() || !self.read.is_editable()),
+                                selection_cell()
+                                    .h_9()
+                                    .border_r_1()
+                                    .border_color(cx.theme().border),
                             )
                             .child(
-                                Button::new(key(format!("create-{id}")))
-                                    .label("Add item")
-                                    .accessibility_id(id.clone())
-                                    .disabled(self.busy() || !self.read.is_editable())
-                                    .on_click(
-                                        cx.listener(move |t, _, w, cx| t.create(&group, w, cx)),
+                                div()
+                                    .id(key(format!("add-cell-{id}")))
+                                    .role(Role::Cell)
+                                    .flex()
+                                    .items_center()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .px_1()
+                                    .child(
+                                        Input::new(&entry.input)
+                                            .small()
+                                            .bordered(false)
+                                            .flex_1()
+                                            .min_w_0()
+                                            .aria_label(format!("Add item to {name}"))
+                                            .disabled(self.busy() || !self.read.is_editable()),
+                                    )
+                                    .child(
+                                        Button::new(key(format!("create-{id}")))
+                                            .small()
+                                            .ghost()
+                                            .label("Add item")
+                                            .accessibility_id(id.clone())
+                                            .disabled(self.busy() || !self.read.is_editable())
+                                            .on_click(cx.listener(move |t, _, w, cx| {
+                                                t.create(&group, w, cx)
+                                            })),
                                     ),
                             ),
                     );
                     if !entry.notice.is_empty() {
-                        section = section.child(status(entry.notice));
+                        grid = grid.child(status(entry.notice));
                     }
                 }
+                section = section.child(grid);
             }
             groups = groups.child(section);
         }

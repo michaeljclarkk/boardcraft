@@ -467,7 +467,7 @@ pub enum SaveError {
 
 /// Re-read just the name targeted by a user-requested retry.
 pub fn current_item(
-    client: &mut Client,
+    client: &mut impl postgres::GenericClient,
     board: BoardId,
     item: ItemId,
 ) -> Result<StoredItem, SaveError> {

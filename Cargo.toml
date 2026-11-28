@@ -16,3 +16,9 @@ gpui-pre-web = { path = "crates/web/.deps/gpui-pre-web" }
 [profile.dev]
 # Keep cold GPUI builds manageable on a developer workstation.
 debug = "line-tables-only"
+
+# Unoptimized GPUI builder chains retain large temporaries on the wasm stack
+# while laying out a grouped board. Keep the viewer debuggable, but eliminate
+# those temporaries without rebuilding the toolkit at a higher optimization.
+[profile.dev.package.boardcraft-web]
+opt-level = 1

@@ -10,7 +10,21 @@ thread_local! {
 }
 
 // All icons used by the shell are embedded, including Kit's loading indicator.
-gpui_kit::assets::icon_assets!(ShellAssets, [LoaderCircle]);
+gpui_kit::assets::icon_assets!(
+    ShellAssets,
+    [
+        LoaderCircle,
+        Check,
+        Minus,
+        ChevronDown,
+        ChevronLeft,
+        ChevronRight,
+        Ellipsis,
+        GripVertical,
+        Search,
+        PanelsTopLeft
+    ]
+);
 
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {

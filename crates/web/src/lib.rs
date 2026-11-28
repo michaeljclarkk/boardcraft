@@ -5,9 +5,13 @@
 #[cfg(target_family = "wasm")]
 mod binding;
 #[cfg(any(target_family = "wasm", test))]
+mod board_search;
+#[cfg(any(target_family = "wasm", test))]
 mod board_view;
 #[cfg(any(target_family = "wasm", test))]
 mod groups;
+#[cfg(any(target_family = "wasm", test))]
+mod navigation;
 #[cfg(any(target_family = "wasm", test))]
 mod session;
 #[cfg(target_family = "wasm")]

@@ -25,9 +25,11 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use uuid::Uuid;
 mod editor;
 mod gestures;
+mod rename;
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests;
 use editor::{Editor, Kind, Phase};
+use rename::FailedRename;
 
 pub(super) struct AccessLost;
 impl EventEmitter<AccessLost> for Table {}
@@ -60,6 +62,7 @@ pub(super) struct Table {
     scroll: gpui_kit::ScrollHandle,
     request: Option<Task<()>>,
     saves: Vec<Task<()>>,
+    failed_renames: Vec<FailedRename>,
     subscriptions: Vec<Subscription>,
 }
 impl Table {
@@ -93,6 +96,7 @@ impl Table {
             scroll,
             request: None,
             saves: Vec::new(),
+            failed_renames: Vec::new(),
             subscriptions: Vec::new(),
         };
         table.mount(w, cx);
@@ -123,7 +127,8 @@ impl Table {
         if self.anchor.is_some_and(|id| !available.contains(&id)) {
             self.anchor = None;
         }
-        self.rows.retain(|id, _| available.contains(id));
+        self.rows
+            .retain(|id, row| available.contains(id) || row.read(cx).has_request());
         self.entries
             .retain(|id, _| self.read.groups().iter().any(|g| g.id() == id));
         self.subscriptions.clear();
@@ -139,7 +144,7 @@ impl Table {
                 ))),
             );
             if !self.entries.contains_key(group.id()) {
-                let input = cx.new(|cx| InputState::new(w, cx));
+                let input = cx.new(|cx| InputState::new(w, cx).placeholder("+ Add item"));
                 let id = group.id().to_owned();
                 let events = cx.subscribe_in(&input, w, move |t, _, event, w, cx| {
                     if matches!(event, InputEvent::PressEnter { .. }) {
@@ -169,7 +174,7 @@ impl Table {
                 self.subscriptions.push(cx.subscribe_in(
                     &row,
                     w,
-                    |t, row, intent: &Rename, w, cx| t.rename(row.clone(), intent, w, cx),
+                    |t, _, intent: &Rename, w, cx| t.rename(intent.clone(), w, cx),
                 ));
             }
         }
@@ -544,55 +549,6 @@ impl Table {
         }));
         cx.notify();
     }
-    fn rename(
-        &mut self,
-        row: Entity<NameRow>,
-        intent: &Rename,
-        w: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let (binding, board, executor) = (
-            self.binding.clone(),
-            self.board,
-            cx.background_executor().clone(),
-        );
-        let (edit, item, retry) = (intent.edit(), intent.item(), intent.is_retry());
-        self.saves.retain(|t| !t.is_ready());
-        self.saves.push(cx.spawn_in(w, async move |t, cx| {
-            let mut accepted = None;
-            let read = if retry {
-                match session::board(&binding, board, &executor).await {
-                    Ok((rows, true)) => {
-                        accepted = rows.into_iter().find(|r| r.id == item);
-                        if accepted.is_some() {
-                            Ok(())
-                        } else {
-                            Err(EditError::Missing)
-                        }
-                    }
-                    Ok(_) => Err(EditError::PermissionDenied),
-                    Err(e) => Err(e),
-                }
-            } else {
-                Ok(())
-            };
-            let result = match read {
-                Ok(()) => session::rename(&binding, board, item, &edit, &executor).await,
-                Err(e) => Err(e),
-            };
-            let denied = matches!(
-                result,
-                Err(EditError::SessionRejected | EditError::PermissionDenied)
-            );
-            let _ = t.update_in(cx, |_, _, cx| {
-                row.update(cx, |r, cx| r.finished(result, accepted, cx));
-                if denied {
-                    cx.emit(AccessLost);
-                }
-                cx.notify();
-            });
-        }));
-    }
     fn group_order(&mut self, id: &str, delta: isize, w: &mut Window, cx: &mut Context<Self>) {
         if self.busy() || !self.read.is_manageable() {
             return;
@@ -869,6 +825,9 @@ impl Render for Table {
                                 })),
                         ),
                 );
+            }
+            for failure in &self.failed_renames {
+                body = body.child(self.rename_notice(failure, cx));
             }
             body = body.child(self.render_groups(cx));
         }

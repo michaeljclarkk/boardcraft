@@ -65,6 +65,39 @@ fn viewer_fold_keeps_the_hidden_anchor_and_the_other_duplicate_visible(cx: &mut 
 }
 
 #[gpui_kit::test]
+fn f2_edits_only_the_focused_duplicate_and_escape_returns_to_it(cx: &mut TestAppContext) {
+    let (handle, t) = visit(cx, true);
+    let first = Uuid::from_u128(59);
+    let second = Uuid::from_u128(61);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.click(format!("item-{second}"), cx);
+        w.press("f2", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert_eq!(w.find(format!("edit-name-{second}")).value(), Some("Ink"));
+        assert!(w.try_find(format!("edit-name-{first}")).is_none());
+        w.input(" draft", cx);
+        w.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert_eq!(w.find(format!("item-{second}")).focused(), Some(true));
+        assert!(w.try_find(format!("edit-name-{second}")).is_none());
+        let t = t.read(cx);
+        assert!(t.saves.is_empty());
+        assert_eq!(t.rows[&first].read(cx).accepted_title(), "Ink");
+        assert_eq!(t.rows[&second].read(cx).accepted_title(), "Ink");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn editing_the_second_heading_and_cancelling_keeps_both_groups(cx: &mut TestAppContext) {
     let (handle, t) = visit(cx, true);
     cx.update_window(handle, |_, w, cx| {

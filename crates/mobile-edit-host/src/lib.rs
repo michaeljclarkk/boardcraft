@@ -11,8 +11,7 @@ use std::{io::Read, sync::Arc, thread};
 
 use boardcraft_account::Token;
 use boardcraft_board::{
-    BoardId, ItemId, RenameError,
-    automation,
+    BoardId, ItemId, RenameError, automation,
     store::{self, SaveError, StoredItem},
     views,
 };
@@ -185,10 +184,9 @@ impl Host {
                             continue;
                         }
                         _ if navigation
-                            && path
-                                .split('?')
-                                .next()
-                                .is_some_and(|path| path.starts_with("/navigation/notifications")) =>
+                            && path.split('?').next().is_some_and(|path| {
+                                path.starts_with("/navigation/notifications")
+                            }) =>
                         {
                             let actor = access::bearer(&req).map(access::Actor::Session);
                             notifications::route(&mut db, &mut req, &path, actor)
@@ -514,14 +512,10 @@ fn handle(
         {
             (board, SelectedWrite, None)
         }
-        (Method::Get, ["", "navigation", "boards", board, "views"])
-            if mode != Mode::Scoped =>
-        {
+        (Method::Get, ["", "navigation", "boards", board, "views"]) if mode != Mode::Scoped => {
             (board, SelectedRead, None)
         }
-        (Method::Post, ["", "navigation", "boards", board, "views"])
-            if mode != Mode::Scoped =>
-        {
+        (Method::Post, ["", "navigation", "boards", board, "views"]) if mode != Mode::Scoped => {
             (board, SelectedRead, None)
         }
         (Method::Get, ["", "navigation", "boards", board, "automations"])
@@ -620,6 +614,11 @@ fn handle(
         (Method::Put, ["", "boards", board, "items", id, "name"]) => {
             (board, ScopedRename, Some(id))
         }
+        (Method::Get, ["", "navigation", "boards", board, "items", id, "name"])
+            if mode == Mode::Web && matches!(shape, ReadShape::Grouped) =>
+        {
+            (board, SelectedRead, Some(id))
+        }
         (Method::Put, ["", "navigation", "boards", board, "items", id, "name"])
             if mode == Mode::Web =>
         {
@@ -652,6 +651,7 @@ fn handle(
     // validation or board data before the caller has been authorized.
     enum Action {
         Read,
+        ReadName(ItemId),
         Views,
         CreateView(Result<ViewDraft, u16>),
         Automations,
@@ -672,6 +672,7 @@ fn handle(
         Reorder(ItemId, Result<ReorderDraft, u16>),
     }
     let action = match target {
+        Some(item) if req.method() == &Method::Get => Action::ReadName(item),
         Some(item) if path.last() == Some(&"archive") => {
             Action::Lifecycle(item, store::Lifecycle::Archive, read_json(req))
         }
@@ -1042,6 +1043,10 @@ fn handle(
             let items: Vec<_> = rows.into_iter().map(wire).collect();
             serde_json::to_vec(&items).expect("serializable item list")
         }
+        Action::ReadName(item) => {
+            let current = store::current_item(&mut tx, board, item).map_err(name_status)?;
+            serde_json::to_vec(&wire(current)).expect("serializable item")
+        }
         Action::Rename(item, edit) => {
             let edit = edit?;
             let actor_name: String = tx
@@ -1057,12 +1062,7 @@ fn handle(
                 account.id,
                 &actor_name,
             )
-            .map_err(|error| match error {
-                SaveError::Rejected(RenameError::MissingItem(_)) => 404u16,
-                SaveError::Rejected(_) => 422,
-                SaveError::Conflict { .. } => 409,
-                SaveError::Database(_) => 500,
-            })?;
+            .map_err(name_status)?;
             if changed {
                 renamed = Some(item);
                 automation::run_renamed(&mut tx, board, item, &saved.title).map_err(|error| {
@@ -1118,6 +1118,15 @@ fn handle(
 enum Side {
     Before,
     After,
+}
+
+fn name_status(error: SaveError) -> u16 {
+    match error {
+        SaveError::Rejected(RenameError::MissingItem(_)) => 404,
+        SaveError::Rejected(_) => 422,
+        SaveError::Conflict { .. } => 409,
+        SaveError::Database(_) => 500,
+    }
 }
 
 fn view_error(error: views::ViewError) -> u16 {

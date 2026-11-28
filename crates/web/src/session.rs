@@ -182,19 +182,27 @@ pub(super) async fn list(
         .await
         .map(|(rows, _)| rows)
 }
-pub(super) async fn board(
+pub(super) async fn name_for_retry(
     binding: &str,
     board: Uuid,
+    item: Uuid,
     executor: &gpui_kit::BackgroundExecutor,
-) -> Result<(Vec<SavedItem>, bool), EditError> {
-    let read = table(binding, board, executor).await?;
-    Ok((
-        read.groups()
-            .iter()
-            .flat_map(|g| g.items().to_vec())
-            .collect(),
-        read.is_editable(),
-    ))
+) -> Result<SavedItem, EditError> {
+    let (row, meta) = request::<SavedItem>(
+        binding,
+        "GET",
+        &format!("/navigation/boards/{board}/items/{item}/name"),
+        None,
+        executor,
+    )
+    .await?;
+    if !meta.editable {
+        return Err(EditError::PermissionDenied);
+    }
+    if row.id != item || row.revision < 1 {
+        return Err(EditError::Transport);
+    }
+    Ok(row)
 }
 pub(super) async fn table(
     binding: &str,

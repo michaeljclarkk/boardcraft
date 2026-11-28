@@ -1,11 +1,12 @@
-use boardcraft_mobile_edit_client::{EditError, NameEdit, SavedItem};
+use boardcraft_mobile_edit_client::{NameEdit, SavedItem};
 use gpui_kit::StatefulInteractiveElement;
 use gpui_kit::{
     AppContext, Context, Entity, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
     ParentElement, Render, Role, Styled, Subscription, Window,
     base::Disableable,
     component::{
-        button::Button,
+        Sizable,
+        button::{Button, ButtonVariants},
         input::{Input, InputEvent, InputState},
     },
     div,
@@ -14,32 +15,36 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub(super) struct Rename {
-    item: Uuid,
+    accepted: SavedItem,
     raw: String,
-    revision: i64,
-    retry: bool,
 }
 impl Rename {
     pub(super) fn item(&self) -> Uuid {
-        self.item
+        self.accepted.id
+    }
+    pub(super) fn accepted_title(&self) -> &str {
+        &self.accepted.title
     }
     pub(super) fn edit(&self) -> NameEdit {
         NameEdit {
             title: self.raw.clone(),
-            revision: self.revision,
+            revision: self.accepted.revision,
         }
     }
-    pub(super) fn is_retry(&self) -> bool {
-        self.retry
+    pub(super) fn at_current_item(&self, current: SavedItem) -> Self {
+        Self {
+            accepted: current,
+            raw: self.raw.clone(),
+        }
     }
 }
 impl EventEmitter<Rename> for NameRow {}
 
 enum Phase {
     Display,
-    Editing,
-    Pending(Rename),
-    Rejected(Rename, &'static str),
+    Editing(SavedItem),
+    ReadingForRetry,
+    Pending(String),
 }
 pub(super) struct NameRow {
     accepted: SavedItem,
@@ -50,12 +55,21 @@ pub(super) struct NameRow {
     _events: Subscription,
 }
 impl NameRow {
+    pub(super) fn accepted_title(&self) -> &str {
+        &self.accepted.title
+    }
     pub(super) fn sync(&mut self, saved: &SavedItem, editable: bool, cx: &mut Context<Self>) {
         self.editable = editable;
-        if matches!(self.phase, Phase::Display) {
+        self.observe(saved);
+        cx.notify();
+    }
+    fn observe(&mut self, saved: &SavedItem) {
+        if saved.revision >= self.accepted.revision {
             self.accepted = saved.clone();
         }
-        cx.notify();
+    }
+    pub(super) fn has_request(&self) -> bool {
+        matches!(self.phase, Phase::ReadingForRetry | Phase::Pending(_))
     }
     pub(super) fn new(
         accepted: SavedItem,
@@ -82,10 +96,10 @@ impl NameRow {
         }
     }
     fn open(&mut self, w: &mut Window, cx: &mut Context<Self>) {
-        if !self.editable || matches!(self.phase, Phase::Pending(_) | Phase::Editing) {
+        if !self.editable || !matches!(self.phase, Phase::Display) {
             return;
         }
-        self.phase = Phase::Editing;
+        self.phase = Phase::Editing(self.accepted.clone());
         self.input.update(cx, |input, cx| {
             input.set_value(self.accepted.title.clone(), w, cx);
             input.focus(w, cx);
@@ -93,20 +107,18 @@ impl NameRow {
         cx.notify();
     }
     fn submit(&mut self, return_focus: bool, w: &mut Window, cx: &mut Context<Self>) {
-        if !matches!(self.phase, Phase::Editing) {
+        let Phase::Editing(entry) = &self.phase else {
             return;
-        }
+        };
         let raw = self.input.read(cx).value().to_string();
-        if raw == self.accepted.title {
+        if raw == entry.title {
             self.phase = Phase::Display;
         } else {
             let intent = Rename {
-                item: self.accepted.id,
+                accepted: entry.clone(),
                 raw,
-                revision: self.accepted.revision,
-                retry: false,
             };
-            self.phase = Phase::Pending(intent.clone());
+            self.phase = Phase::Pending(intent.raw.clone());
             cx.emit(intent);
         }
         if return_focus {
@@ -114,35 +126,23 @@ impl NameRow {
         }
         cx.notify();
     }
-    pub(super) fn finished(
-        &mut self,
-        result: Result<SavedItem, EditError>,
-        read: Option<SavedItem>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(read) = read {
-            self.accepted = read;
+    pub(super) fn begin_retry_read(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.editable || !matches!(self.phase, Phase::Display) {
+            return false;
         }
-        match result {
-            Ok(row) => {
-                self.accepted = row;
-                self.phase = Phase::Display;
-            }
-            Err(error) => {
-                let reason = match error {
-                    EditError::InvalidDraft => "Name rejected",
-                    EditError::Conflict => "Name changed elsewhere",
-                    EditError::PermissionDenied => "Editing is no longer allowed",
-                    EditError::Missing => "Item unavailable",
-                    _ => "Could not save name",
-                };
-                if let Phase::Pending(mut request) =
-                    std::mem::replace(&mut self.phase, Phase::Display)
-                {
-                    request.retry = true;
-                    self.phase = Phase::Rejected(request, reason);
-                }
-            }
+        self.phase = Phase::ReadingForRetry;
+        cx.notify();
+        true
+    }
+    pub(super) fn project_retry(&mut self, request: &Rename, cx: &mut Context<Self>) {
+        self.observe(&request.accepted);
+        self.phase = Phase::Pending(request.raw.clone());
+        cx.notify();
+    }
+    pub(super) fn finished(&mut self, saved: Option<&SavedItem>, cx: &mut Context<Self>) {
+        self.phase = Phase::Display;
+        if let Some(saved) = saved {
+            self.observe(saved);
         }
         cx.notify();
     }
@@ -150,8 +150,15 @@ impl NameRow {
 impl Render for NameRow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let id = self.accepted.id;
-        let mut row = div().flex().flex_col().gap_2();
-        if matches!(self.phase, Phase::Editing) {
+        let mut row = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .items_start()
+            .justify_center()
+            .gap_1();
+        if matches!(self.phase, Phase::Editing(_)) {
             row = row
                 .capture_action(
                     cx.listener(|row, _: &gpui_kit::component::input::Enter, w, cx| {
@@ -167,16 +174,17 @@ impl Render for NameRow {
                         cx.notify();
                     },
                 ))
-                // A horizontal table row gives an input no intrinsic text width.
-                // Reserve a usable editor cell instead of shrinking to padding.
                 .child(
                     Input::new(&self.input)
-                        .w_64()
-                        .aria_label(format!("Item name {id}")),
+                        .id(gpui_kit::SharedString::from(format!("edit-name-{id}")))
+                        .small()
+                        .w_full()
+                        .accessibility_id(format!("edit-name-{id}"))
+                        .aria_label("Edit item name"),
                 );
         } else {
-            let label = if let Phase::Pending(request) = &self.phase {
-                request.raw.clone()
+            let label = if let Phase::Pending(raw) = &self.phase {
+                raw.clone()
             } else {
                 self.accepted.title.clone()
             };
@@ -189,60 +197,31 @@ impl Render for NameRow {
                 }))
                 .child(
                     Button::new(gpui_kit::SharedString::from(format!("item-{id}")))
+                        .ghost()
+                        .max_w_full()
                         .track_focus(&self.focus)
                         .label(label)
                         .accessibility_id(id.to_string())
-                        .disabled(!self.editable || matches!(self.phase, Phase::Pending(_)))
+                        .disabled(!self.editable || !matches!(self.phase, Phase::Display))
                         .on_click(cx.listener(|row, event: &gpui_kit::ClickEvent, w, cx| {
                             row.focus.focus(w, cx);
-                            if event.click_count() == 2 || event.is_keyboard() {
+                            if event.click_count() == 2
+                                || event.is_keyboard()
+                                || w.last_input_was_touch()
+                            {
                                 row.open(w, cx);
                             }
                         })),
                 );
         }
-        match &self.phase {
-            Phase::Pending(_) => {
-                row = row.child(
-                    div()
-                        .id("name-status")
-                        .role(Role::Status)
-                        .aria_label("Saving…")
-                        .child("Saving…"),
-                )
-            }
-            Phase::Rejected(_, reason) => {
-                row = row
-                    .child(
-                        div()
-                            .id("name-status")
-                            .role(Role::Status)
-                            .aria_label(*reason)
-                            .child(*reason),
-                    )
-                    .child(
-                        Button::new("retry-name")
-                            .label("Retry change")
-                            .on_click(cx.listener(|row, _, _, cx| {
-                                if let Phase::Rejected(request, _) =
-                                    std::mem::replace(&mut row.phase, Phase::Display)
-                                {
-                                    row.phase = Phase::Pending(request.clone());
-                                    cx.emit(request);
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("dismiss-name")
-                            .label("Dismiss")
-                            .on_click(cx.listener(|row, _, _, cx| {
-                                row.phase = Phase::Display;
-                                cx.notify();
-                            })),
-                    )
-            }
-            _ => (),
+        if matches!(self.phase, Phase::Pending(_)) {
+            row = row.child(
+                div()
+                    .id("name-status")
+                    .role(Role::Status)
+                    .aria_label("Saving…")
+                    .child("Saving…"),
+            );
         }
         row
     }

@@ -180,6 +180,8 @@ pub(super) fn groups() {
         assert!(matches!(reply.status, 401 | 403) && reply.body.is_empty());
     }
     let row = |n, title| json!({"id":Uuid::from_u128(n),"title":title,"revision":1});
+    let get_name = |item: Uuid| call("GET", &format!("{path}/items/{item}/name"), &pair, "");
+    let second_ink = Uuid::from_u128(59);
     let expected = json!([
         {"id":"g-90","name":"Work","colour":"#579bfc","revision":1,"collapsed":false,"items":[row(73,"Sketch"),row(61,"Ink")]},
         {"id":"g-10","name":"Reserve","colour":"#579bfc","revision":1,"collapsed":false,"items":[]},
@@ -195,7 +197,15 @@ pub(super) fn groups() {
             serde_json::from_str::<Value>(&reply.body).unwrap(),
             expected
         );
+        let name = get_name(second_ink);
+        assert_eq!((name.status, name.access.as_deref()), (200, Some(hint)));
+        assert_eq!(
+            serde_json::from_str::<Value>(&name.body).unwrap(),
+            row(59, "Ink")
+        );
     }
+    // An ID on the other board cannot be read through this board's grant.
+    assert_eq!(get_name(super::fixture::FIRST).status, 404);
     let deny_put = |id| {
         let reply = call(
             "PUT",
@@ -219,9 +229,11 @@ pub(super) fn groups() {
     };
     active(SELECTED, "g-20", false);
     deny_put(59);
+    assert_eq!(get_name(second_ink).status, 404);
     active(SELECTED, "g-20", true);
     catalog.membership(&f, false);
     assert_eq!(call("GET", &path, &pair, "").status, 403);
+    assert_eq!(get_name(second_ink).status, 403);
     catalog.membership(&f, true);
     assert!(StoredSession::only(&f, member) == session);
     let native = boardcraft_account::sign_in(&f.schema.config, "reader", &password).unwrap();
