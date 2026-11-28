@@ -95,12 +95,18 @@ impl MainTable {
                         _ = moving.update(cx, |v, cx| v.open_item_move(id, w, cx));
                     },
                 ));
-                let v = v.clone();
-                menu.item(PopupMenuItem::new("Archive…").disabled(!allowed).on_click(
+                let archive = v.clone();
+                let menu = menu.item(PopupMenuItem::new("Archive…").disabled(!allowed).on_click(
                     move |_, w, cx| {
-                        _ = v.update(cx, |v, cx| v.confirm_root_archive(id, w, cx));
+                        _ = archive.update(cx, |v, cx| v.confirm_root_archive(id, w, cx));
                     },
-                ))
+                ));
+                let activity = v.clone();
+                menu.item(
+                    PopupMenuItem::new("Activity Log").on_click(move |_, w, cx| {
+                        _ = activity.update(cx, |view, cx| view.open_item_activity(id, w, cx));
+                    }),
+                )
             })
     }
     pub(super) fn render_archive(&self, a: &Archive, cx: &mut Context<Connected>) -> Div {

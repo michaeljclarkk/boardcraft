@@ -2,6 +2,7 @@ use uuid::Uuid;
 
 pub mod automation;
 pub mod columns;
+pub mod history;
 pub mod notifications;
 pub mod store;
 pub mod views;

@@ -10,6 +10,7 @@ use gpui_kit::component::{
     input::InputEvent,
     menu::{DropdownMenu, PopupMenuItem},
 };
+mod activity;
 mod archive;
 mod group_fields;
 mod group_order;

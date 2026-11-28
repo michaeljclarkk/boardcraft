@@ -198,6 +198,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
         tx.batch_execute(include_str!("../migrations/0017_status_cells.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (17)", &[])?;
     }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version=18",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0018_item_activity.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (18)", &[])?;
+    }
     tx.commit()
 }
 
@@ -559,6 +569,26 @@ fn save_title(
     condition: Condition<'_>,
     draft: &str,
 ) -> Result<StoredItem, SaveError> {
+    save_title_with_previous(client, board, item, condition, draft).map(|(_, saved)| saved)
+}
+
+pub(crate) fn rename_with_previous(
+    tx: &mut postgres::Transaction<'_>,
+    board: BoardId,
+    item: ItemId,
+    revision: i64,
+    draft: &str,
+) -> Result<(String, StoredItem), SaveError> {
+    save_title_with_previous(tx, board, item, Condition::KnownRevision(revision), draft)
+}
+
+fn save_title_with_previous(
+    client: &mut impl postgres::GenericClient,
+    board: BoardId,
+    item: ItemId,
+    condition: Condition<'_>,
+    draft: &str,
+) -> Result<(String, StoredItem), SaveError> {
     let title = interactive_title(draft).map_err(SaveError::Rejected)?;
     let fault = |error: Error| {
         log::error!(
@@ -592,7 +622,7 @@ fn save_title(
     }
     let mut saved = StoredItem {
         id: item,
-        title: current,
+        title: current.clone(),
         revision,
     };
     if title != saved.title {
@@ -604,5 +634,5 @@ fn save_title(
         saved.revision = updated.try_get(1).map_err(fault)?;
     }
     tx.commit().map_err(fault)?;
-    Ok(saved)
+    Ok((current, saved))
 }

@@ -1,5 +1,7 @@
 use super::*;
+mod activity;
 mod status;
+use activity::ItemActivity;
 use boardcraft_mobile_edit_client::{
     Automation, BoardSummary, InboxNotification, NotificationInbox, SavedView, view_filter_matches,
 };
@@ -20,6 +22,7 @@ pub(super) enum Page {
         filter: String,
     },
     Inbox(Inbox),
+    Activity(ItemActivity),
     Denied,
     Fault,
 }
@@ -54,6 +57,7 @@ impl Page {
     pub(super) fn pending(&self) -> bool {
         match self {
             Page::Loading => true,
+            Page::Activity(activity) => activity.loading(),
             Page::Inbox(inbox) => inbox.pending,
             Page::Selected { status, .. } => status.pending.is_some(),
             _ => false,
@@ -124,10 +128,12 @@ impl BoardView {
             Some(id) => match page {
                 Page::List(boards) => boards.iter().any(|board| board.id == id),
                 Page::Inbox(inbox) => inbox.notifications.iter().any(|row| row.board_id == id),
+                Page::Activity(activity) => activity.board == id,
                 _ => false,
             },
         };
-        if self.logging_out || page.pending() || !reachable {
+        if self.logging_out || (page.pending() && !matches!(page, Page::Activity(_))) || !reachable
+        {
             return;
         }
         // Loading exposes no actions. Only this completion can replace it.
@@ -484,11 +490,22 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> Div {
         let scroller = div()
-            .id("browse-scroll")
+            .id(if matches!(page, Page::Activity(_)) {
+                "activity-scroll"
+            } else {
+                "browse-scroll"
+            })
             .size_full()
             .overflow_y_scroll()
             .track_focus(&self.navigation_focus)
             .on_key_down(cx.listener(|view, event: &KeyDownEvent, w, cx| {
+                if event.keystroke.key == "escape"
+                    && let Some(Page::Activity(activity)) = &view.navigation
+                {
+                    view.navigate(Some(activity.board), w, cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 if event.keystroke.key == "escape"
                     && matches!(
                         view.navigation,
@@ -600,6 +617,17 @@ impl BoardView {
                     .iter()
                     .filter(|row| view_filter_matches(filter, &row.title))
                 {
+                    let (board_id, item) = (*board, row.id);
+                    let history = Button::new(SharedString::from(format!("item-activity-{item}")))
+                        .large()
+                        .label("Activity log")
+                        .accessibility_label(format!("Activity log for {}", row.title))
+                        .disabled(
+                            self.logging_out || self.automation_pending || status.pending.is_some(),
+                        )
+                        .on_click(cx.listener(move |view, _, w, cx| {
+                            view.open_activity(board_id, item, w, cx)
+                        }));
                     column = column.child(
                         div()
                             .flex()
@@ -609,7 +637,12 @@ impl BoardView {
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .child(Label::new(row.title.clone())),
+                                    .flex()
+                                    .flex_col()
+                                    .items_start()
+                                    .gap_1()
+                                    .child(Label::new(row.title.clone()))
+                                    .child(history),
                             )
                             .child(status.cell(
                                 *board,
@@ -620,6 +653,10 @@ impl BoardView {
                     );
                 }
                 "Back to boards"
+            }
+            Page::Activity(activity) => {
+                column = self.render_activity(activity, column, cx);
+                "Back to board"
             }
             Page::Inbox(inbox) => {
                 let busy = self.logging_out || inbox.pending;
@@ -717,12 +754,16 @@ impl BoardView {
                 "Retry board list"
             }
         };
+        let parent_board = match page {
+            Page::Activity(activity) => Some(activity.board),
+            _ => None,
+        };
         column = column.child(
             Button::new("boards")
                 .large()
                 .label(action)
-                .disabled(self.logging_out || page.pending())
-                .on_click(cx.listener(|view, _, w, cx| view.navigate(None, w, cx))),
+                .disabled(self.logging_out || (page.pending() && parent_board.is_none()))
+                .on_click(cx.listener(move |view, _, w, cx| view.navigate(parent_board, w, cx))),
         );
         if !self.message.is_empty() {
             column = column.child(Label::new(self.message));

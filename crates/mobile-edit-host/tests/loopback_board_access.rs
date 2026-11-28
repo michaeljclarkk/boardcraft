@@ -2,6 +2,72 @@
 mod browser_transport;
 
 #[test]
+fn item_activity_only_commits_with_a_changed_rename() {
+    use boardcraft_mobile_edit_client::{EditClient, EditError, NameEdit};
+    use selection::{SELECTED, Selection};
+    let f = fixture::Fixture::start();
+    let s = Selection::new(&f);
+    let c = EditClient::with_bearer(s.host.port, s.token.encoded()).unwrap();
+    let item = uuid::Uuid::from_u128(61);
+    let rename = |title: &str, revision| {
+        c.rename_main_table_item(
+            SELECTED,
+            item,
+            &NameEdit {
+                title: title.into(),
+                revision,
+            },
+        )
+    };
+    assert!(c.item_activity(SELECTED, item).unwrap().is_empty());
+    assert_eq!(rename(" Ink ", 1).unwrap().revision, 1);
+    assert_eq!(rename("", 1), Err(EditError::InvalidDraft));
+    assert_eq!(rename("Ink with wash", 1).unwrap().revision, 2);
+    assert_eq!(rename("Ink with wash", 2).unwrap().revision, 2);
+    let entries = c.item_activity(SELECTED, item).unwrap();
+    assert_eq!(entries.len(), 1);
+    let row = &entries[0];
+    assert_eq!(
+        (
+            &*row.before,
+            &*row.after,
+            &*row.actor_name,
+            &*row.field,
+            row.revision
+        ),
+        ("Ink", "Ink with wash", "reader", "name", 2)
+    );
+    assert!(row.occurred_at.ends_with('Z'));
+    assert!(
+        c.item_activity(SELECTED, uuid::Uuid::from_u128(73))
+            .unwrap()
+            .is_empty()
+    );
+    // Force a failure at the history insert after the title update has run.
+    f.connect()
+        .batch_execute("ALTER TABLE item_activity ADD CHECK (after_value <> 'rollback')")
+        .unwrap();
+    assert!(rename("rollback", 2).is_err());
+    assert_eq!(
+        c.read_main_table_item(SELECTED, item).unwrap().title,
+        "Ink with wash"
+    );
+    assert_eq!(c.item_activity(SELECTED, item).unwrap(), entries);
+    let reopened = boardcraft_mobile_edit_host::Host::start_with_navigation(
+        &f.schema.config,
+        boardcraft_board::BoardId::new(f.board).unwrap(),
+    )
+    .unwrap();
+    let fresh = EditClient::with_bearer(reopened.port, s.token.encoded()).unwrap();
+    assert_eq!(fresh.item_activity(SELECTED, item).unwrap(), entries);
+    s.membership(&f, false);
+    assert_eq!(
+        fresh.item_activity(SELECTED, item),
+        Err(EditError::PermissionDenied)
+    );
+}
+
+#[test]
 fn status_cell_conflict_clear_and_recovery() {
     use boardcraft_mobile_edit_client::{EditClient, EditError};
     use selection::{SELECTED, SIBLING, Selection};

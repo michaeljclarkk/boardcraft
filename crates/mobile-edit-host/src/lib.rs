@@ -1,7 +1,8 @@
 //! Single-board host for a disposable database. No database configuration crosses HTTP.
 mod access;
-mod directory;
+mod activity;
 mod columns;
+mod directory;
 mod notifications;
 mod realtime;
 mod web_assets;
@@ -165,6 +166,9 @@ impl Host {
                                 access::bearer(&req).map(access::Actor::Session),
                             )
                             .expect("directory route")
+                        }
+                        _ if navigation && path.starts_with("/navigation/activity/") => {
+                            activity::read(&mut db, &req, &path)
                         }
                         _ if navigation && path.starts_with("/navigation/status/") => {
                             let actor = access::bearer(&req).map(access::Actor::Session);
@@ -756,15 +760,8 @@ fn handle(
     let owner = account.role == boardcraft_account::Role::Owner;
     let mut revision = None;
     let fold = matches!(action, Action::Fold(_));
-    // Realtime publishing is best effort and never changes the write result.
-    // Read the prior accepted row before the match consumes the action.
-    let rename_before = match &action {
-        Action::Rename(item, Ok(_)) => realtime::current_row(&mut tx, board, *item)
-            .ok()
-            .flatten()
-            .map(|row| (*item, row.title)),
-        _ => None,
-    };
+    // Publish only the changed rename acknowledged by the transaction.
+    let mut renamed = None;
     let body = match action {
         Action::Views => {
             let rows = views::list(&mut tx, board, account.id).map_err(view_error)?;
@@ -1047,25 +1044,27 @@ fn handle(
         }
         Action::Rename(item, edit) => {
             let edit = edit?;
-            let before = realtime::current_row(&mut tx, board, item)
-                .map_err(|error| {
-                    log::error!(
-                        "current item board={requested} item={} sqlstate={:?}",
-                        item.as_uuid(),
-                        error.code()
-                    );
-                    500u16
-                })?
-                .ok_or(404u16)?;
-            let saved =
-                store::rename_item_at_revision(&mut tx, board, item, edit.revision, &edit.title)
-                    .map_err(|error| match error {
-                        SaveError::Rejected(RenameError::MissingItem(_)) => 404u16,
-                        SaveError::Rejected(_) => 422,
-                        SaveError::Conflict { .. } => 409,
-                        SaveError::Database(_) => 500,
-                    })?;
-            if saved.title != before.title {
+            let actor_name: String = tx
+                .query_one("SELECT username FROM accounts WHERE id=$1", &[&account.id])
+                .map_err(|_| 503u16)?
+                .get(0);
+            let (saved, changed) = boardcraft_board::history::rename_item(
+                &mut tx,
+                board,
+                item,
+                edit.revision,
+                &edit.title,
+                account.id,
+                &actor_name,
+            )
+            .map_err(|error| match error {
+                SaveError::Rejected(RenameError::MissingItem(_)) => 404u16,
+                SaveError::Rejected(_) => 422,
+                SaveError::Conflict { .. } => 409,
+                SaveError::Database(_) => 500,
+            })?;
+            if changed {
+                renamed = Some(item);
                 automation::run_renamed(&mut tx, board, item, &saved.title).map_err(|error| {
                     log::error!(
                         "run_renamed board={requested} item={} sqlstate={:?}",
@@ -1099,10 +1098,7 @@ fn handle(
         log::error!("board request commit failed board={requested}");
         500u16
     })?;
-    if let Some((item, before)) = rename_before
-        && let Ok(saved) = serde_json::from_slice::<SavedItem>(&body)
-        && saved.title != before
-    {
+    if let Some(item) = renamed {
         events.publish_rename(requested, item.as_uuid());
     }
     let hint = matches!(operation, ScopedRead)
