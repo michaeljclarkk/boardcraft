@@ -104,7 +104,7 @@ impl Table {
             binding,
             board,
             read,
-            status: StatusColumn::new(),
+            status: StatusColumn::new(cx),
             view_filters: ViewFilters::default(),
             filter_dialog: None,
             saved_views: None,
@@ -295,6 +295,7 @@ impl Table {
 
     fn selection_bar(&self, cx: &mut Context<Self>) -> BoardSelectionBar {
         BoardSelectionBar::new(self.selection.len())
+            .status_controls(self.bulk_status_controls(cx))
             .archive(
                 Button::new("archive-selected")
                     .track_focus(&self.archive_focus)
@@ -327,6 +328,7 @@ impl Table {
                     .disabled(self.pending)
                     .on_click(cx.listener(|t, _, w, cx| {
                         t.selection.clear();
+                        t.reset_bulk_status_choice();
                         t.search.update(cx, |input, cx| input.focus(w, cx));
                         cx.notify();
                     })),

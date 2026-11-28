@@ -365,6 +365,7 @@ impl MainTable {
                 .text_sm(),
             );
         column = column.child(self.failed_item_moves(cx));
+        column = column.children(self.bulk_status_failures(cx));
         if self.search_invalid {
             column = column.child(Label::new("Search must be 240 characters or fewer."));
         }
@@ -939,7 +940,9 @@ impl MainTable {
                     .child(self.item_drop_marker(h, id, cx)),
             );
             if let Some(message) = self.status.notice_for(id) {
-                body = body.child(Label::new(message));
+                body = body.child(
+                    Label::new(message).id(SharedString::from(format!("status-notice-{id}"))),
+                );
             }
             if matches!(
                 r.read(cx).edit.phase(),

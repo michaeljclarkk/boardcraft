@@ -293,7 +293,7 @@ impl BoardView {
         }
         let item = match &self.navigation {
             Some(navigation::Page::Selected { rows, status, .. })
-                if status.editable && status.pending.is_none() =>
+                if status.editable && !status.is_pending() =>
             {
                 rows.iter()
                     .find(|row| row.id == id)

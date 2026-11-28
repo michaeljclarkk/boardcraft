@@ -14,6 +14,7 @@ use gpui_kit::{
     rems,
 };
 use std::cell::Cell;
+mod bulk;
 
 pub(super) struct StatusColumn {
     generation: Uuid,
@@ -24,6 +25,7 @@ pub(super) struct StatusColumn {
     notice: Option<String>,
     pending: Option<Uuid>,
     request: Option<Task<()>>,
+    bulk: bulk::BulkStatus,
 }
 
 struct CellFocus {
@@ -41,7 +43,7 @@ struct Target {
 }
 
 impl StatusColumn {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(cx: &mut App) -> Self {
         Self {
             generation: Uuid::new_v4(),
             accepted: None,
@@ -51,6 +53,7 @@ impl StatusColumn {
             notice: None,
             pending: None,
             request: None,
+            bulk: bulk::BulkStatus::new(cx),
         }
     }
 
@@ -70,7 +73,7 @@ impl StatusColumn {
     }
 
     pub(super) fn is_saving(&self) -> bool {
-        self.pending.is_some()
+        self.pending.is_some() || self.bulk.active()
     }
 
     pub(super) fn snapshot(&self) -> Option<&StatusTable> {
@@ -130,7 +133,7 @@ impl Table {
             .choices
             .iter()
             .find(|choice| Some(&choice.key) == cell.value.as_ref());
-        let saving = self.status.pending == Some(item);
+        let saving = self.status.pending == Some(item) || self.status.bulk.is_pending(item);
         let bg = if saving {
             gpui_kit::rgb(0x757575).into()
         } else {
@@ -306,6 +309,7 @@ impl Table {
                 .gap_2()
                 .text_sm()
                 .child(notice.clone())
+                .children(self.bulk_status_failures(cx))
                 .children(self.status.failed.then(|| {
                     Button::new("reload-status")
                         .small()
@@ -350,8 +354,9 @@ impl Table {
         self.status.loading = false;
         match result {
             Ok(read) => {
+                self.status.bulk.review(&read);
                 self.status.accept(read, cx);
-                self.status.notice = None;
+                self.status.notice = self.status.bulk.notice();
             }
             Err(error) => {
                 self.status.failed = true;
@@ -453,6 +458,7 @@ impl Table {
         self.status.pending = None;
         match result {
             Ok(saved) => {
+                self.status.bulk.clear_failure(target.item);
                 if let Some(table) = &mut self.status.accepted
                     && let Some(cell) = table
                         .cells
@@ -462,7 +468,7 @@ impl Table {
                 {
                     *cell = saved;
                 }
-                self.status.notice = None;
+                self.status.notice = self.status.bulk.notice();
             }
             Err(EditError::SessionRejected | EditError::PermissionDenied) => {
                 self.status.failed = true;

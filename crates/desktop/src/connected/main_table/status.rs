@@ -9,6 +9,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder;
 use std::{collections::HashMap, rc::Rc};
+mod bulk;
 
 pub(super) struct StatusColumn {
     // A board can be reloaded or revisited while its old read is still running.
@@ -17,6 +18,7 @@ pub(super) struct StatusColumn {
     requires_reload: bool,
     pending: Option<Uuid>,
     notice: Option<(Uuid, String)>,
+    bulk: bulk::BulkStatus,
 }
 
 enum ColumnRead {
@@ -56,7 +58,7 @@ impl StatusColumn {
             _ => Vec::new(),
         }
     }
-    pub(super) fn load(board: Uuid, w: &Window, cx: &mut Context<Connected>) -> Self {
+    pub(super) fn load(board: Uuid, w: &mut Window, cx: &mut Context<Connected>) -> Self {
         let visit = Uuid::new_v4();
         // MainTable::new is also used for reload, insert, restore and move.
         // Start after the replacement has been installed as the current page.
@@ -67,6 +69,7 @@ impl StatusColumn {
             requires_reload: false,
             pending: None,
             notice: None,
+            bulk: bulk::BulkStatus::new(w, cx),
         }
     }
 
@@ -109,8 +112,11 @@ impl StatusColumn {
     }
 
     pub(super) fn notice_for(&self, item: Uuid) -> Option<String> {
-        if self.pending == Some(item) {
+        if self.pending == Some(item) || self.bulk.pending.contains(&item) {
             return None;
+        }
+        if let Some(notice) = self.bulk.failures.get(&item) {
+            return Some(notice.clone());
         }
         self.notice
             .as_ref()
@@ -172,7 +178,7 @@ impl MainTable {
             .iter()
             .find(|c| Some(&c.key) == cell.saved.value.as_ref());
         // The palette (including the reference UI's empty grey) is cell content.
-        let pending = self.status.pending == Some(id);
+        let pending = self.status.pending == Some(id) || self.status.bulk.pending.contains(&id);
         let bg = if pending {
             // The source's saving prompt is cell content, not a table notice.
             rgb(0x757575).into()

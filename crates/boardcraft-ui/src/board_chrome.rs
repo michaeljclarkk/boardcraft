@@ -193,6 +193,7 @@ impl RenderOnce for BoardFindDock {
 #[derive(IntoElement)]
 pub struct BoardSelectionBar {
     count: usize,
+    status_controls: Option<AnyElement>,
     archive: Option<Button>,
     delete: Option<Button>,
     move_to: Option<Button>,
@@ -203,11 +204,17 @@ impl BoardSelectionBar {
     pub fn new(count: usize) -> Self {
         Self {
             count,
+            status_controls: None,
             archive: None,
             delete: None,
             move_to: None,
             clear: None,
         }
+    }
+    /// Column choice and label picker, owned by the client's accepted Status state.
+    pub fn status_controls(mut self, controls: impl IntoElement) -> Self {
+        self.status_controls = Some(controls.into_any_element());
+        self
     }
     pub fn archive(mut self, button: Button) -> Self {
         self.archive = Some(button);
@@ -234,7 +241,8 @@ impl RenderOnce for BoardSelectionBar {
             .id("board-selection-actions")
             .flex()
             .min_w_0()
-            .overflow_x_scroll();
+            .overflow_x_scroll()
+            .children(self.status_controls);
         for (button, caption, icon) in [
             (self.archive, "Archive", "icons/archive.svg"),
             (self.delete, "Delete", "icons/trash.svg"),

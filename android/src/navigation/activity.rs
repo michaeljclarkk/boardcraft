@@ -50,7 +50,7 @@ impl BoardView {
                 status,
                 filter,
                 ..
-            }) if board == *selected && status.pending.is_none() => {
+            }) if board == *selected && !status.is_pending() => {
                 let Some(row) = rows
                     .iter()
                     .find(|row| row.id == item && view_filter_matches(filter, &row.title))

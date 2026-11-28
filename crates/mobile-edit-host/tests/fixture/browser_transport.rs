@@ -343,6 +343,55 @@ fn browser_status_set_replace_clear_reload_and_access() {
         (row.get::<_, i64>(0), row.get::<_, String>(1)),
         (1, "Ink".into())
     );
+    // The selection toolbar submits independent cell edits. A stale selected
+    // item must not undo another selected item's successful change.
+    let captured = read();
+    let sibling = Uuid::from_u128(73);
+    let sibling_cell = captured
+        .cells
+        .iter()
+        .find(|c| c.item_id == sibling)
+        .unwrap();
+    let sibling_path = format!("{path}/{}/{sibling}", table.column_id);
+    assert_eq!(write(3, Some("done")).status, 200); // Another editor wins first.
+    assert_eq!(write(3, Some("stuck")).status, 409);
+    let saved = call(
+        "PUT",
+        &sibling_path,
+        &[pair[0], pair[1], ("Origin", &origin)],
+        &json!({"revision":sibling_cell.revision,"value":"stuck"}).to_string(),
+    );
+    assert_eq!(saved.status, 200);
+    let after = read();
+    let failed = after.cells.iter().find(|c| c.item_id == item).unwrap();
+    let successful = after.cells.iter().find(|c| c.item_id == sibling).unwrap();
+    assert_eq!(
+        (failed.revision, failed.value.as_deref()),
+        (4, Some("done"))
+    );
+    assert_eq!(
+        (successful.revision, successful.value.as_deref()),
+        (1, Some("stuck"))
+    );
+    // An explicit retry uses the reread revision. It never resubmits the success.
+    assert_eq!(write(failed.revision, Some("stuck")).status, 200);
+    let reopened = read();
+    assert!(
+        reopened
+            .cells
+            .iter()
+            .filter(|c| [item, sibling].contains(&c.item_id))
+            .all(|c| c.value.as_deref() == Some("stuck"))
+    );
+    assert_eq!(
+        reopened
+            .cells
+            .iter()
+            .find(|c| c.item_id == sibling)
+            .unwrap()
+            .revision,
+        1
+    );
     f.connect()
         .execute("UPDATE accounts SET role='viewer' WHERE id=$1", &[&member])
         .unwrap();

@@ -96,6 +96,7 @@ impl MainTable {
         cx: &mut Context<Connected>,
     ) -> impl IntoElement {
         boardcraft_ui::BoardSelectionBar::new(self.selection.ids.len())
+            .status_controls(self.selection_status_controls(cx))
             .move_to(
                 Button::new("selection-move")
                     .track_focus(&self.move_focus)

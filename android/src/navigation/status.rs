@@ -3,6 +3,8 @@ use boardcraft_mobile_edit_client::{MainTableGroup, StatusCell, StatusChoice};
 use gpui_kit::component::{Colorize, button::ButtonCustomVariant, popover::Popover};
 use std::{collections::HashMap, sync::Arc};
 
+mod selection;
+
 pub(crate) struct StatusColumn {
     id: Uuid,
     pub(super) title: String,
@@ -10,6 +12,9 @@ pub(crate) struct StatusColumn {
     pub(super) cells: HashMap<Uuid, StatusCell>,
     pub(crate) editable: bool,
     pub(crate) pending: Option<Uuid>,
+    selection_column: bool,
+    selection_pending: bool,
+    selection_errors: Vec<(String, &'static str)>,
     needs_reload: bool,
 }
 
@@ -37,6 +42,9 @@ impl StatusColumn {
                 cells: table.cells.into_iter().map(|c| (c.item_id, c)).collect(),
                 editable: board_rows.is_editable(),
                 pending: None,
+                selection_column: false,
+                selection_pending: false,
+                selection_errors: Vec::new(),
                 needs_reload: false,
             },
         ))
@@ -66,18 +74,10 @@ impl StatusColumn {
             .and_then(|c| Hsla::parse_hex(&c.color).ok())
             .unwrap_or_else(empty_color);
         let label = selected.map(|c| c.label.as_str()).unwrap_or("");
-        let disabled = busy || self.pending.is_some() || self.needs_reload || !self.editable;
+        let disabled = busy || self.is_pending() || self.needs_reload || !self.editable;
         let trigger_focus = window
             .use_keyed_state(
                 SharedString::from(format!("status-trigger-focus-{item}")),
-                cx,
-                |_, cx| cx.focus_handle().tab_stop(true),
-            )
-            .read(cx)
-            .clone();
-        let selected_focus = window
-            .use_keyed_state(
-                SharedString::from(format!("status-selected-focus-{item}")),
                 cx,
                 |_, cx| cx.focus_handle().tab_stop(true),
             )
@@ -104,21 +104,72 @@ impl StatusColumn {
         if disabled {
             return trigger.into_any_element();
         }
-        let choices = self.choices.clone();
-        let current = cell.value.clone();
         let target = Target {
             board,
             column: self.id,
             item,
             revision: cell.revision,
         };
+        Picker {
+            id: item.to_string(),
+            choices: self.choices.clone(),
+            current: cell.value.clone(),
+            target: PickerTarget::Cell(target),
+            trigger: trigger.on_mouse_down(MouseButton::Left, move |_, w, cx| {
+                trigger_focus.focus(w, cx);
+            }),
+        }
+        .render(window, cx)
+    }
+
+    pub(crate) fn is_pending(&self) -> bool {
+        self.pending.is_some() || self.selection_pending
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PickerTarget {
+    Cell(Target),
+    Selection(SelectionTarget),
+}
+
+#[derive(Clone, Copy)]
+struct SelectionTarget {
+    board: Uuid,
+    column: Uuid,
+    visit: Uuid,
+}
+
+struct Picker {
+    id: String,
+    choices: Arc<[StatusChoice]>,
+    current: Option<String>,
+    target: PickerTarget,
+    trigger: Button,
+}
+
+impl Picker {
+    fn render(self, window: &mut Window, cx: &mut Context<BoardView>) -> AnyElement {
+        let Self {
+            id: item,
+            choices,
+            current,
+            target,
+            trigger,
+        } = self;
+        let selected_focus = window
+            .use_keyed_state(
+                SharedString::from(format!("status-selected-focus-{item}")),
+                cx,
+                |_, cx| cx.focus_handle().tab_stop(true),
+            )
+            .read(cx)
+            .clone();
         let view = cx.weak_entity();
         Popover::new(SharedString::from(format!("status-picker-{item}")))
             .anchor(Anchor::TopRight)
             .track_focus(&selected_focus)
-            .trigger(trigger.on_mouse_down(MouseButton::Left, move |_, w, cx| {
-                trigger_focus.focus(w, cx);
-            }))
+            .trigger(trigger)
             .content(move |_, w, cx| {
                 let popup = cx.weak_entity();
                 let button = |id: String, label: String, value: Option<String>| {
@@ -129,8 +180,13 @@ impl StatusColumn {
                         .label(label)
                         .on_click(move |_, w, cx| {
                             _ = popup.update(cx, |state, cx| state.dismiss(w, cx));
-                            _ = owner.update(cx, |view, cx| {
-                                view.set_status(target, value.clone(), w, cx)
+                            _ = owner.update(cx, |view, cx| match target {
+                                PickerTarget::Cell(target) => {
+                                    view.set_status(target, value.clone(), w, cx)
+                                }
+                                PickerTarget::Selection(target) => {
+                                    view.set_selected_status(target, value.clone(), w, cx)
+                                }
                             });
                         })
                 };
@@ -149,7 +205,8 @@ impl StatusColumn {
                     let color = choice
                         .and_then(|c| Hsla::parse_hex(&c.color).ok())
                         .unwrap_or_else(empty_color);
-                    let marked = if current == value {
+                    let checked = matches!(target, PickerTarget::Cell(_)) && current == value;
+                    let marked = if checked {
                         format!("✓ {label}")
                     } else {
                         label.to_owned()
@@ -158,16 +215,16 @@ impl StatusColumn {
                         Some(key) => format!("status-option-{item}-{key}"),
                         None => format!("status-empty-{item}"),
                     };
-                    let focus = if current == value {
-                        selected_focus.clone()
-                    } else {
-                        w.use_keyed_state(SharedString::from(id.clone()), cx, |_, cx| {
-                            cx.focus_handle().tab_stop(true)
-                        })
-                        .read(cx)
-                        .clone()
-                    };
-                    let checked = current == value;
+                    let focus =
+                        if checked || (matches!(target, PickerTarget::Selection(_)) && ix == 0) {
+                            selected_focus.clone()
+                        } else {
+                            w.use_keyed_state(SharedString::from(id.clone()), cx, |_, cx| {
+                                cx.focus_handle().tab_stop(true)
+                            })
+                            .read(cx)
+                            .clone()
+                        };
                     handles.push(focus.clone());
                     grid_row = grid_row.child(
                         button(id, marked, value)
@@ -260,7 +317,7 @@ impl BoardView {
             || self.logging_out
             || self.automation_pending
             || self.editor.is_some()
-            || status.pending.is_some()
+            || status.is_pending()
             || status.needs_reload
             || !status
                 .cells

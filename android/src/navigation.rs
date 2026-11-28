@@ -68,7 +68,7 @@ impl Page {
             Page::Loading => true,
             Page::Activity(activity) => activity.loading(),
             Page::Inbox(inbox) => inbox.pending,
-            Page::Selected { status, .. } => status.pending.is_some(),
+            Page::Selected { status, .. } => status.is_pending(),
             _ => false,
         }
     }
@@ -687,7 +687,7 @@ impl BoardView {
             } => {
                 let busy = self.logging_out
                     || self.automation_pending
-                    || status.pending.is_some()
+                    || status.is_pending()
                     || self.editor.is_some();
                 let owner = cx.weak_entity();
                 let board_id = *board;
@@ -778,7 +778,7 @@ impl BoardView {
                 if self.automations_open {
                     column = column.child(self.render_automations(
                         automations,
-                        status.editable && status.pending.is_none(),
+                        status.editable && !status.is_pending(),
                         *board,
                         cx,
                     ));
@@ -1047,19 +1047,38 @@ impl BoardView {
                     column = column.child(
                         div()
                             .flex()
+                            .flex_wrap()
                             .items_center()
                             .gap_2()
                             .child(Label::new(format!("{} selected", self.selected.len())))
+                            .child(status.selection_controls(
+                                *board,
+                                self.navigation_visit,
+                                busy || self.filters_open,
+                                window,
+                                cx,
+                            ))
                             .child(
                                 Button::new("mobile-clear-selection")
+                                    .large()
                                     .label("Clear selection")
+                                    .disabled(status.is_pending())
                                     .on_click(cx.listener(|view, _, _, cx| {
+                                        if view.navigation.as_ref().is_some_and(Page::pending) {
+                                            return;
+                                        }
                                         view.selected.clear();
+                                        if let Some(Page::Selected { status, .. }) =
+                                            &mut view.navigation
+                                        {
+                                            status.clear_selection_state();
+                                        }
                                         cx.notify();
                                     })),
                             ),
                     );
                 }
+                column = column.child(status.selection_feedback(cx));
                 "Back to boards"
             }
             Page::Activity(activity) => {
