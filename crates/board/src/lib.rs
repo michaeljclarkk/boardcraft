@@ -1,5 +1,6 @@
 use uuid::Uuid;
 
+pub mod automation;
 pub mod store;
 pub mod views;
 

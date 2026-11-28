@@ -8,6 +8,7 @@ use std::{io::Read, sync::Arc, thread};
 use boardcraft_account::Token;
 use boardcraft_board::{
     BoardId, ItemId, RenameError,
+    automation,
     store::{self, SaveError, StoredItem},
     views,
 };
@@ -482,6 +483,16 @@ fn handle(
         {
             (board, SelectedRead, None)
         }
+        (Method::Get, ["", "navigation", "boards", board, "automations"])
+            if mode != Mode::Scoped =>
+        {
+            (board, SelectedRead, None)
+        }
+        (Method::Post, ["", "navigation", "boards", board, "automations"])
+            if mode != Mode::Scoped =>
+        {
+            (board, SelectedWrite, None)
+        }
         (Method::Post, ["", "navigation", "boards", board, "main-table", "items"])
             if mode != Mode::Scoped =>
         {
@@ -602,6 +613,8 @@ fn handle(
         Read,
         Views,
         CreateView(Result<ViewDraft, u16>),
+        Automations,
+        CreateAutomation(Result<AutomationDraft, u16>),
         CreateGroup(Result<CreateGroupDraft, u16>),
         GroupOrder(Result<GroupOrderDraft, u16>),
         Fold(Result<FoldDraft, u16>),
@@ -629,6 +642,10 @@ fn handle(
         }
         None if path.get(4) == Some(&"views") && req.method() == &Method::Get => Action::Views,
         None if path.get(4) == Some(&"views") => Action::CreateView(read_json(req)),
+        None if path.get(4) == Some(&"automations") && req.method() == &Method::Get => {
+            Action::Automations
+        }
+        None if path.get(4) == Some(&"automations") => Action::CreateAutomation(read_json(req)),
         None if path.get(4) == Some(&"groups") && path.len() == 5 => {
             Action::CreateGroup(read_json(req))
         }
@@ -731,6 +748,41 @@ fn handle(
                 "owner": saved.owner,
             }))
             .expect("serializable view")
+        }
+        Action::Automations => {
+            let rows = automation::list(&mut tx, board).map_err(automation_error)?;
+            let rows: Vec<_> = rows
+                .into_iter()
+                .map(|rule| {
+                    serde_json::json!({
+                        "id": rule.id,
+                        "name": rule.name,
+                        "trigger": rule.trigger,
+                        "action": rule.action,
+                        "enabled": rule.enabled,
+                        "last_item_id": rule.last_item_id,
+                        "last_item_title": rule.last_item_title,
+                        "last_ran_at": rule.last_ran_at,
+                    })
+                })
+                .collect();
+            serde_json::to_vec(&rows).expect("serializable automations")
+        }
+        Action::CreateAutomation(draft) => {
+            let d = draft?;
+            let saved = automation::create(&mut tx, board, d.id, &d.name, account.id)
+                .map_err(automation_error)?;
+            serde_json::to_vec(&serde_json::json!({
+                "id": saved.id,
+                "name": saved.name,
+                "trigger": saved.trigger,
+                "action": saved.action,
+                "enabled": saved.enabled,
+                "last_item_id": saved.last_item_id,
+                "last_item_title": saved.last_item_title,
+                "last_ran_at": saved.last_ran_at,
+            }))
+            .expect("serializable automation")
         }
         Action::Fold(draft) => {
             let d = draft?;
@@ -949,6 +1001,12 @@ fn handle(
         }
         Action::Rename(item, edit) => {
             let edit = edit?;
+            let before = store::current_item(&mut tx, board, item).map_err(|error| match error {
+                SaveError::Rejected(RenameError::MissingItem(_)) => 404u16,
+                SaveError::Rejected(_) => 422,
+                SaveError::Conflict { .. } => 409,
+                SaveError::Database(_) => 500,
+            })?;
             let saved =
                 store::rename_item_at_revision(&mut tx, board, item, edit.revision, &edit.title)
                     .map_err(|error| match error {
@@ -957,6 +1015,16 @@ fn handle(
                         SaveError::Conflict { .. } => 409,
                         SaveError::Database(_) => 500,
                     })?;
+            if saved.title != before.title {
+                automation::run_renamed(&mut tx, board, item, &saved.title).map_err(|error| {
+                    log::error!(
+                        "run_renamed board={requested} item={} sqlstate={:?}",
+                        item.as_uuid(),
+                        error.code()
+                    );
+                    500u16
+                })?;
+            }
             serde_json::to_vec(&wire(saved)).expect("serializable item")
         }
     };
@@ -1017,6 +1085,24 @@ struct ViewDraft {
     id: Uuid,
     name: String,
     filter: String,
+}
+
+fn automation_error(error: automation::AutomationError) -> u16 {
+    match error {
+        automation::AutomationError::Invalid => 422,
+        automation::AutomationError::Conflict => 409,
+        automation::AutomationError::Database(error) => {
+            log::error!("automation sqlstate={:?}", error.code());
+            500
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AutomationDraft {
+    id: Uuid,
+    name: String,
 }
 
 fn order_error(err: store::ReorderError, board: Uuid, op: &str) -> u16 {

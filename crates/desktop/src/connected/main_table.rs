@@ -1,7 +1,7 @@
 //! The visit owns local folds and focus. Only a confirmed authorized read replaces saved state.
 use super::navigation::Page;
 use super::*;
-use boardcraft_mobile_edit_client::{MainTableRead, SavedView};
+use boardcraft_mobile_edit_client::{Automation, MainTableRead, SavedView};
 use gpui_kit::base::ElementExt;
 use gpui_kit::component::{
     ActiveTheme, IconName, Sizable,
@@ -43,9 +43,11 @@ pub(super) struct MainTable {
     revision: i64,
     board_revision: i64,
     pub(super) views: Vec<SavedView>,
+    pub(super) automations: Vec<Automation>,
     pub(super) filter: String,
     view_filter: Entity<InputState>,
     view_name: Entity<InputState>,
+    automation_name: Entity<InputState>,
     editable: bool,
     manageable: bool,
     pending: bool,
@@ -220,6 +222,9 @@ impl MainTable {
         let view_name = previous
             .map(|t| t.view_name.clone())
             .unwrap_or_else(|| cx.new(|cx| InputState::new(w, cx).placeholder("View name")));
+        let automation_name = previous
+            .map(|t| t.automation_name.clone())
+            .unwrap_or_else(|| cx.new(|cx| InputState::new(w, cx).placeholder("Automation name")));
         subscriptions.push(
             cx.subscribe_in(&view_name, w, |v, _, event: &InputEvent, w, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
@@ -246,9 +251,11 @@ impl MainTable {
             revision: read.view_revision(),
             board_revision: read.revision(),
             views: previous.map(|t| t.views.clone()).unwrap_or_default(),
+            automations: previous.map(|t| t.automations.clone()).unwrap_or_default(),
             filter: previous.map(|t| t.filter.clone()).unwrap_or_default(),
             view_filter,
             view_name,
+            automation_name,
             editable,
             manageable: read.is_manageable(),
             pending: false,
@@ -313,6 +320,7 @@ impl MainTable {
         column = column.child(self.new_group_options(cx));
         column = column.child(self.failed_item_moves(cx));
         column = column.child(self.render_views(cx));
+        column = column.child(self.render_automations(cx));
         column = column.child(
             div()
                 .flex()
@@ -501,6 +509,59 @@ impl MainTable {
                 }
                 panel = panel.child(row);
             }
+        }
+        panel
+    }
+
+    fn render_automations(&self, cx: &mut Context<Connected>) -> impl IntoElement {
+        let mut panel = div()
+            .id("automations")
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(Label::new("Automations"));
+        if self.editable {
+            panel = panel.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(Input::new(&self.automation_name).id("automation-name"))
+                    .child(
+                        Button::new("create-automation")
+                            .small()
+                            .label("Create automation")
+                            .on_click(cx.listener(|view, _, w, cx| view.create_automation(w, cx))),
+                    ),
+            );
+        }
+        if self.automations.is_empty() {
+            panel = panel.child(Label::new("No automations"));
+        }
+        for rule in &self.automations {
+            let id = rule.id;
+            let last = rule
+                .last_item_title
+                .as_ref()
+                .map(|title| format!("Last run: {title}"))
+                .unwrap_or_else(|| "Never run".to_owned());
+            panel = panel.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        Label::new(rule.name.clone())
+                            .id(SharedString::from(format!("automation-{id}"))),
+                    )
+                    .child(
+                        Label::new("When item renamed → Record a run")
+                            .id(SharedString::from(format!("automation-rule-{id}"))),
+                    )
+                    .child(
+                        Label::new(last).id(SharedString::from(format!("automation-last-{id}"))),
+                    ),
+            );
         }
         panel
     }
@@ -888,6 +949,74 @@ impl Connected {
                         }
                         Err(EditError::InvalidDraft) => message = "Enter a view name.",
                         Err(_) => message = "Could not save the view.",
+                    }
+                }
+                view.message = message;
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+}
+
+impl Connected {
+    fn create_automation(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        let (client, board, name, name_input) = {
+            let Screen::Navigation(nav) = &self.screen else {
+                return;
+            };
+            let Page::Items(board, table) = &nav.page else {
+                return;
+            };
+            (
+                nav.client.clone(),
+                *board,
+                table.automation_name.read(cx).value().trim().to_owned(),
+                table.automation_name.clone(),
+            )
+        };
+        if name.is_empty() {
+            self.message = "Enter an automation name.";
+            cx.notify();
+            return;
+        }
+        self.message = "";
+        let work = cx
+            .background_executor()
+            .spawn(async move { client.create_automation(board, Uuid::new_v4(), &name) });
+        cx.spawn_in(w, async move |view, cx| {
+            let result = work.await;
+            _ = view.update_in(cx, |view, w, cx| {
+                if matches!(&result, Err(EditError::SessionRejected)) {
+                    view.link_input = None;
+                    view.message = "Session expired. Sign in again.";
+                    view.screen = Self::identifier(w, cx);
+                    return;
+                }
+                let message;
+                {
+                    let Screen::Navigation(nav) = &mut view.screen else {
+                        return;
+                    };
+                    let Page::Items(current, table) = &mut nav.page else {
+                        return;
+                    };
+                    if *current != board {
+                        return;
+                    }
+                    match result {
+                        Ok(saved) => {
+                            table.automations.push(saved);
+                            table.automations.sort_by_key(|a| a.name.to_lowercase());
+                            name_input.update(cx, |input, cx| input.set_value("", w, cx));
+                            message = "Automation created";
+                        }
+                        Err(EditError::Conflict) => {
+                            message = "An automation with that name already exists.";
+                        }
+                        Err(EditError::InvalidDraft) => message = "Enter an automation name.",
+                        Err(_) => message = "Could not create the automation.",
                     }
                 }
                 view.message = message;
