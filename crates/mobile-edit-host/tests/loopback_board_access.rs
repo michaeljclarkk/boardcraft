@@ -1,5 +1,51 @@
 #[path = "fixture/browser_transport.rs"]
 mod browser_transport;
+
+#[test]
+fn status_cell_conflict_clear_and_recovery() {
+    use boardcraft_mobile_edit_client::{EditClient, EditError};
+    use selection::{SELECTED, SIBLING, Selection};
+
+    let f = fixture::Fixture::start();
+    let s = Selection::new(&f);
+    let client = || EditClient::with_bearer(s.host.port, s.token.encoded()).unwrap();
+    let c = client();
+    let t = c.read_status(SELECTED).unwrap();
+    let col = t.column_id;
+    let ink = uuid::Uuid::from_u128(61);
+    let set =
+        |rev, key: Option<&str>| c.set_status(SELECTED, col, ink, rev, key.map(str::to_owned));
+    assert!(
+        t.cells
+            .iter()
+            .all(|cell| cell.value.is_none() && cell.revision == 0)
+    );
+    assert_eq!(set(0, Some("working")).unwrap().revision, 1);
+    assert_eq!(set(0, None), Err(EditError::Conflict));
+    assert_eq!(set(1, Some("unknown")), Err(EditError::InvalidDraft));
+    assert_eq!(
+        c.set_status(SIBLING, col, ink, 1, None),
+        Err(EditError::Missing)
+    );
+    s.membership(&f, false);
+    assert_eq!(set(1, None), Err(EditError::PermissionDenied));
+    assert_eq!(c.read_status(SELECTED), Err(EditError::PermissionDenied));
+    s.membership(&f, true);
+    let recovered = client().read_status(SELECTED).unwrap();
+    assert_eq!(col, recovered.column_id);
+    let current = recovered
+        .cells
+        .iter()
+        .find(|cell| cell.item_id == ink)
+        .unwrap();
+    assert_eq!(current.value.as_deref(), Some("working"));
+    assert_eq!(set(current.revision, Some("done")).unwrap().revision, 2);
+    assert_eq!(set(2, None).unwrap().revision, 3);
+    assert_eq!(set(0, Some("stuck")), Err(EditError::Conflict));
+    let rows = client().read_status(SELECTED).unwrap().cells;
+    assert!(rows.iter().all(|r| r.value.is_none()));
+    assert_eq!(rows.iter().find(|r| r.item_id == ink).unwrap().revision, 3);
+}
 #[path = "fixture/caller.rs"]
 mod caller;
 #[path = "fixture/create.rs"]

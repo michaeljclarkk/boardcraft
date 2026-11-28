@@ -1,6 +1,7 @@
 use uuid::Uuid;
 
 pub mod automation;
+pub mod columns;
 pub mod notifications;
 pub mod store;
 pub mod views;

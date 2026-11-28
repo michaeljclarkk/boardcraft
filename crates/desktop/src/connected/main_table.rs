@@ -18,6 +18,7 @@ mod item_move;
 mod item_order;
 mod selection;
 mod selection_move;
+mod status;
 use archive::{Archive, RootCommand, Undo};
 use group_fields::GroupDialog;
 use item_entry::GroupEntry;
@@ -39,6 +40,7 @@ struct Heading {
 }
 
 pub(super) struct MainTable {
+    status: status::StatusColumn,
     headings: Vec<Heading>,
     revision: i64,
     board_revision: i64,
@@ -257,6 +259,7 @@ impl MainTable {
             })
             .collect();
         Self {
+            status: status::StatusColumn::load(board, w, cx),
             drag: std::rc::Rc::new(std::cell::RefCell::new(boardcraft_ui::HeadingDrag::new(
                 headings.iter().map(|h| h.id.clone()),
             ))),
@@ -753,15 +756,24 @@ impl MainTable {
             })
             .count();
         body = body.child(
-            Checkbox::new(SharedString::from(format!("select-group-{group}")))
-                .small()
-                .accessibility_label(format!("Select all items in {}", h.name))
-                .checked(!h.rows.is_empty() && selected == h.rows.len())
-                .indeterminate(selected > 0 && selected < h.rows.len())
-                .disabled(h.rows.is_empty() || self.pending || self.reconcile)
-                .on_change(cx.listener(move |v, checked, w, cx| {
-                    v.select_main_table_group(&group, *checked, w, cx)
-                })),
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    Checkbox::new(SharedString::from(format!("select-group-{group}")))
+                        .small()
+                        .accessibility_label(format!("Select all items in {}", h.name))
+                        .checked(!h.rows.is_empty() && selected == h.rows.len())
+                        .indeterminate(selected > 0 && selected < h.rows.len())
+                        .disabled(h.rows.is_empty() || self.pending || self.reconcile)
+                        .on_change(cx.listener(move |v, checked, w, cx| {
+                            v.select_main_table_group(&group, *checked, w, cx)
+                        })),
+                )
+                .child(div().flex_1().child(Label::new("Item")))
+                .child(self.status.header())
+                .child(div().w_24().flex_none()),
         );
         let visible = h
             .rows
@@ -815,10 +827,19 @@ impl MainTable {
                             })),
                     )
                     .child(self.item_grip(h, id, &name))
-                    .child(r.clone())
-                    .child(self.root_archive_menu(id, cx))
+                    .child(div().min_w_0().flex_1().child(r.clone()))
+                    .child(self.status_cell(id, &name, cx))
+                    .child(
+                        div()
+                            .w_24()
+                            .flex_none()
+                            .child(self.root_archive_menu(id, cx)),
+                    )
                     .child(self.item_drop_marker(h, id, cx)),
             );
+            if let Some(message) = self.status.notice_for(id) {
+                body = body.child(Label::new(message));
+            }
             if matches!(
                 r.read(cx).edit.phase(),
                 boardcraft_desktop::Phase::Failed(_)

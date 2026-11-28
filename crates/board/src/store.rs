@@ -188,6 +188,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
         tx.batch_execute(include_str!("../migrations/0016_inbox_notifications.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (16)", &[])?;
     }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version=17",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0017_status_cells.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (17)", &[])?;
+    }
     tx.commit()
 }
 
@@ -195,6 +205,10 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
 pub fn create_board(client: &mut Client, board: &Board) -> Result<(), Error> {
     let mut tx = client.transaction()?;
     tx.execute("INSERT INTO boards (id) VALUES ($1)", &[&board.id.0])?;
+    tx.execute(
+        "INSERT INTO status_columns(board_id) VALUES ($1)",
+        &[&board.id.0],
+    )?;
     tx.execute("INSERT INTO board_groups (board_id,id,name,position,active) VALUES ($1,'main','Items',0,true)", &[&board.id.0])?;
     let ids: Vec<_> = board.items.iter().map(|item| item.id.0).collect();
     let titles: Vec<_> = board.items.iter().map(|item| item.title.as_str()).collect();

@@ -1,7 +1,9 @@
 use super::*;
+mod status;
 use boardcraft_mobile_edit_client::{
     Automation, BoardSummary, InboxNotification, NotificationInbox, SavedView, view_filter_matches,
 };
+use status::StatusColumn;
 
 /// The host accepts at most this many ids in one seen request.
 const SEEN_BATCH: usize = 100;
@@ -12,6 +14,7 @@ pub(super) enum Page {
     Selected {
         board: Uuid,
         rows: Vec<SavedItem>,
+        status: StatusColumn,
         views: Vec<SavedView>,
         automations: Vec<Automation>,
         filter: String,
@@ -52,6 +55,7 @@ impl Page {
         match self {
             Page::Loading => true,
             Page::Inbox(inbox) => inbox.pending,
+            Page::Selected { status, .. } => status.pending.is_some(),
             _ => false,
         }
     }
@@ -123,7 +127,7 @@ impl BoardView {
                 _ => false,
             },
         };
-        if self.logging_out || matches!(page, Page::Loading) || !reachable {
+        if self.logging_out || page.pending() || !reachable {
             return;
         }
         // Loading exposes no actions. Only this completion can replace it.
@@ -134,12 +138,13 @@ impl BoardView {
         let identifier = Login::identifier(window, cx);
         let work = cx.background_executor().spawn(async move {
             match board {
-                Some(id) => client.read_selected_board(id).and_then(|rows| {
+                Some(id) => StatusColumn::load(&client, id).and_then(|(rows, status)| {
                     let views = client.list_views(id)?;
                     let automations = client.list_automations(id)?;
                     Ok(Page::Selected {
                         board: id,
                         rows,
+                        status,
                         views,
                         automations,
                         filter: String::new(),
@@ -540,6 +545,7 @@ impl BoardView {
             Page::Selected {
                 board,
                 rows,
+                status,
                 views,
                 automations,
                 filter,
@@ -567,7 +573,7 @@ impl BoardView {
                 }
                 column = column.child(self.render_automations(
                     automations,
-                    self.connection.is_some(),
+                    status.editable && status.pending.is_none(),
                     *board,
                     cx,
                 ));
@@ -582,11 +588,36 @@ impl BoardView {
                         "No items"
                     }));
                 }
+                column = column.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().flex_1().child(Label::new("Name")))
+                        .child(div().w_32().child(Label::new(status.title.clone()))),
+                );
                 for row in rows
                     .iter()
                     .filter(|row| view_filter_matches(filter, &row.title))
                 {
-                    column = column.child(Label::new(row.title.clone()));
+                    column = column.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(Label::new(row.title.clone())),
+                            )
+                            .child(status.cell(
+                                *board,
+                                row,
+                                self.logging_out || self.automation_pending,
+                                cx,
+                            )),
+                    );
                 }
                 "Back to boards"
             }
@@ -690,7 +721,7 @@ impl BoardView {
             Button::new("boards")
                 .large()
                 .label(action)
-                .disabled(self.logging_out)
+                .disabled(self.logging_out || page.pending())
                 .on_click(cx.listener(|view, _, w, cx| view.navigate(None, w, cx))),
         );
         if !self.message.is_empty() {

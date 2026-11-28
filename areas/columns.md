@@ -2,8 +2,8 @@
 id: columns
 name: Columns and cells
 order: 5
-percent: 5
-code: crates/board/src/columns, crates/boardcraft-ui/src/columns
+percent: 10
+code: crates/board/src/columns, crates/mobile-edit-host/src/columns.rs, crates/mobile-edit-client/src/status.rs, crates/desktop/src/connected/main_table/status.rs, android/src/navigation/status.rs
 ---
 # Columns and cells
 
@@ -20,4 +20,4 @@ Every column type: setup, defaults, validation, editors, display, formulas, link
 
 ## Notes
 
-Only the name cell exists. Create `crates/board/src/columns` and the matching UI module as the first real column lands.
+Status: set, replace, clear and reload observed on Windows. Android has the editor; device observation is open. Other types, column management and browser Status cells remain open.

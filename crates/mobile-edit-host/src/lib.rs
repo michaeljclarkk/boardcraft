@@ -1,6 +1,7 @@
 //! Single-board host for a disposable database. No database configuration crosses HTTP.
 mod access;
 mod directory;
+mod columns;
 mod notifications;
 mod realtime;
 mod web_assets;
@@ -164,6 +165,10 @@ impl Host {
                                 access::bearer(&req).map(access::Actor::Session),
                             )
                             .expect("directory route")
+                        }
+                        _ if navigation && path.starts_with("/navigation/status/") => {
+                            let actor = access::bearer(&req).map(access::Actor::Session);
+                            columns::route(&mut db, &mut req, &path, actor)
                         }
                         _ if navigation && path.starts_with("/navigation/events/items/") => {
                             let actor = access::bearer(&req).map(access::Actor::Session);
