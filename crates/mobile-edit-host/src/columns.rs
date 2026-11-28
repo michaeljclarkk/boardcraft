@@ -1,6 +1,8 @@
 use crate::{ApiResult, access, read_json};
 use boardcraft_board::{BoardId, ItemId, columns};
-use boardcraft_mobile_edit_client::{StatusCell, StatusChoice, StatusEdit, StatusTable};
+use boardcraft_mobile_edit_client::{
+    StatusCell, StatusChoice, StatusEdit, StatusLabelEdit, StatusLabels, StatusTable,
+};
 use postgres::Client;
 use tiny_http::{Method, Request};
 use uuid::Uuid;
@@ -12,6 +14,9 @@ pub(super) fn route(
     actor: Result<access::Actor, u16>,
 ) -> ApiResult {
     let actor = actor?;
+    if path.contains("/labels") {
+        return labels_route(db, req, path, actor);
+    }
     let mut path = path.trim_start_matches("/navigation/status/").split('/');
     let board = path
         .next()
@@ -59,6 +64,70 @@ pub(super) fn route(
     .map_err(|_| 503u16)?;
     tx.commit().map_err(|_| 503u16)?;
     Ok((body, None))
+}
+
+fn labels_route(db: &mut Client, req: &mut Request, path: &str, actor: access::Actor) -> ApiResult {
+    let parts: Vec<_> = path
+        .trim_start_matches("/navigation/status/")
+        .split('/')
+        .collect();
+    let [board, column, "labels", ..] = parts.as_slice() else {
+        return Err(404);
+    };
+    let board = board.parse().ok().and_then(BoardId::new).ok_or(404u16)?;
+    let column = column.parse::<Uuid>().map_err(|_| 404u16)?;
+    let write = match (req.method(), parts.len()) {
+        (&Method::Get, 3) => None,
+        (&Method::Put, 4) => Some((parts[3], read_json::<StatusLabelEdit>(req)?)),
+        _ => return Err(404),
+    };
+    let mut tx = db.transaction().map_err(|_| 503u16)?;
+    let account = actor.resolve(&mut tx)?;
+    access::authorize(
+        &mut tx,
+        &account,
+        board,
+        if write.is_some() {
+            access::Operation::SelectedOwner
+        } else {
+            access::Operation::SelectedRead
+        },
+    )?;
+    let bytes = if let Some((key, patch)) = write {
+        let saved = columns::save_status_label(
+            &mut tx,
+            board,
+            column,
+            key,
+            patch.label.as_deref(),
+            patch.color.as_deref(),
+        )
+        .map_err(status)?;
+        serde_json::to_vec(&StatusChoice {
+            key: saved.key,
+            label: saved.label,
+            color: saved.color,
+        })
+    } else {
+        let choices = columns::read_status_labels(&mut tx, board, column)
+            .map_err(status)?
+            .into_iter()
+            .map(|c| StatusChoice {
+                key: c.key,
+                label: c.label,
+                color: c.color,
+            })
+            .collect();
+        serde_json::to_vec(&StatusLabels {
+            actor_id: account.id,
+            column_id: column,
+            choices,
+            can_edit: account.role == boardcraft_account::Role::Owner,
+        })
+    }
+    .map_err(|_| 503u16)?;
+    tx.commit().map_err(|_| 503u16)?;
+    Ok((bytes, None))
 }
 fn cell(c: columns::Cell) -> StatusCell {
     StatusCell {

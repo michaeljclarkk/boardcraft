@@ -1,6 +1,8 @@
 //! Reusable native interaction behavior. No domain, storage or service dependencies.
 mod board_chrome;
 mod heading_drag;
+mod status_labels;
+pub use status_labels::{LabelEntry, STATUS_LABEL_COLORS, StatusLabelEditor, StatusLabelEvent};
 pub use board_chrome::{
     BoardFindDock, BoardHeader, BoardRow, BoardSelectionBar, BoardTabs, BoardToolbar,
 };

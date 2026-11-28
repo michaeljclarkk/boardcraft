@@ -27,6 +27,7 @@ impl MainTable {
 
     pub(super) fn view_actions_blocked(&self, cx: &App) -> bool {
         self.pending
+            || self.status.label_edits_active(cx)
             || self.reconcile
             || self.filters_open
             || self.view_save_id.is_some()

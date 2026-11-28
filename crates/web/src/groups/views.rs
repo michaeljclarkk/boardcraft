@@ -176,7 +176,7 @@ impl Render for FilterDialog {
         );
         if let Some(table) = &self.status {
             let mut choices = div().flex().flex_col().gap_1p5().w(gpui_kit::rems(9.375));
-            for choice in &table.choices {
+            for choice in table.choices.iter().filter(|choice| choice.key != "empty") {
                 let value = choice.key.clone();
                 let color = Hsla::parse_hex(&choice.color).unwrap_or(cx.theme().muted_foreground);
                 let count = self.count(Some(&choice.key));

@@ -6,9 +6,10 @@ Updated 2026-11-28. This file holds the one task to work on next. The delivery o
 
 ## Next task
 
-**Columns — label management for the existing Status column.** Bulk Change label is implemented and its Windows/browser set, clear, partial failure/retry and reload journeys were observed. Continue from the source Edit labels control in a subsequent focused slice: compare configured labels and the distinct Empty choice before extending the Rust contract. Bulk Android connected touch/focus/recovery and exact visual differences remain in the workflow register. Michael's separate automation-engine agents are working concurrently; do not edit or include their changes.
+**Columns — finish native verification of the existing Status Edit labels screen.** The screen's Rust rules, per-column palette persistence, transports and Windows/WASM/Android controls are implemented. Browser autosave, configured default name/color, New label and rejected-save reload/single Retry were observed. Windows awaits manual local Review sign-in; Android emulator-5580 is currently unavailable. Continue this same screen's native save/reopen, failure/recovery, keyboard/focus, touch/Back/resume and reference comparison before selecting another screen. Final browser Custom hex save, odd choice widths and Escape focus were observed; its Kit Custom chooser and palette dismissal still differ from source. Preserve the separate automation-engine edits.
 
-Android's updated companion reaches sign-in. Connected Status and frozen-name verification remain pending user test sign-in, with no percentage credit. Current estimates: UI 43%, Columns 13%; scoped native Main table Windows 45%, Android 38%. Exact reference sizing, native mobile comparison, configured columns, label management and summaries remain open in the workflow register.
+Current estimates: Columns15%, UI43%; scoped native Main table Windows45%, Android38%, unchanged because native label interactions remain unobserved.
+
 Acceptance:
 
 - **Workflow, UI and UX parity are all required.** Match the same journey, defaults, action order, feedback, keyboard/touch interactions, focus, dismissal, loading, failure/retry and draft preservation. A working operation or a similar screenshot alone does not close a screen. Verify these in the running clients against the reference and record any remaining difference.

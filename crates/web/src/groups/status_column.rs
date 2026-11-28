@@ -15,6 +15,7 @@ use gpui_kit::{
 };
 use std::cell::Cell;
 mod bulk;
+mod labels;
 
 pub(super) struct StatusColumn {
     generation: Uuid,
@@ -26,12 +27,14 @@ pub(super) struct StatusColumn {
     pending: Option<Uuid>,
     request: Option<Task<()>>,
     bulk: bulk::BulkStatus,
+    labels: labels::LabelManagement,
 }
 
 struct CellFocus {
     trigger: FocusHandle,
     selected: FocusHandle,
     baseline: Rc<Cell<Option<Target>>>,
+    open: Rc<Cell<bool>>,
 }
 
 #[derive(Clone, Copy)]
@@ -54,6 +57,7 @@ impl StatusColumn {
             pending: None,
             request: None,
             bulk: bulk::BulkStatus::new(cx),
+            labels: labels::LabelManagement::new(),
         }
     }
 
@@ -65,6 +69,7 @@ impl StatusColumn {
                 trigger: cx.focus_handle().tab_stop(true),
                 selected: cx.focus_handle().tab_stop(true),
                 baseline: Rc::new(Cell::new(None)),
+                open: Rc::new(Cell::new(false)),
             });
         }
         self.accepted = Some(read);
@@ -78,6 +83,10 @@ impl StatusColumn {
 
     pub(super) fn snapshot(&self) -> Option<&StatusTable> {
         self.accepted.as_ref()
+    }
+
+    pub(super) fn labels_active(&self) -> bool {
+        self.labels.item.is_some()
     }
 }
 
@@ -132,7 +141,7 @@ impl Table {
         let selected = table
             .choices
             .iter()
-            .find(|choice| Some(&choice.key) == cell.value.as_ref());
+            .find(|choice| choice.value() == cell.value);
         let saving = self.status.pending == Some(item) || self.status.bulk.is_pending(item);
         let bg = if saving {
             gpui_kit::rgb(0x757575).into()
@@ -142,7 +151,9 @@ impl Table {
         let label = if saving {
             "Saving…"
         } else {
-            selected.map_or("Empty", |choice| choice.label.as_str())
+            selected
+                .filter(|choice| !choice.label.is_empty())
+                .map_or("Empty", |choice| choice.label.as_str())
         };
         let trigger = Button::new(key(format!("status-{item}")))
             .track_focus(&focus.trigger)
@@ -162,7 +173,12 @@ impl Table {
                 .to_owned(),
             )
             .accessibility_label(format!("{} for {name}: {label}", table.title));
-        if self.busy() || !self.read.is_editable() || self.status.loading || self.status.failed {
+        let editing_here = self.status.labels.item == Some(item);
+        if (self.busy() && !editing_here)
+            || !self.read.is_editable()
+            || self.status.loading
+            || self.status.failed
+        {
             return lane().child(trigger.disabled(true)).into_any_element();
         }
         let target = Target {
@@ -178,19 +194,47 @@ impl Table {
         let return_focus = focus.trigger.clone();
         let baseline = focus.baseline.clone();
         let open_baseline = baseline.clone();
+        let open = focus.open.clone();
+        let open_change = open.clone();
+        let opening_view = view.clone();
+        let manageable = self.read.is_manageable();
         let picker = Popover::new(key(format!("status-popup-{item}")))
+            .open(open.get())
+            // The controlled close callback retains pending drafts and remembers
+            // the dismissal request until their acknowledgements arrive.
+            .overlay_closable(true)
             .trigger_style(StyleRefinement::default().w_full().h_full())
             .track_focus(&initial)
-            .on_open_change(move |open, _, _| {
-                if *open {
+            .on_open_change(move |is_open, w, cx| {
+                if *is_open {
                     open_baseline.set(Some(target));
                 }
+                let _ = opening_view.update(cx, |table, cx| {
+                    let blocked = !*is_open
+                        && table.status.labels.item == Some(item)
+                        && table.status.labels.blocked(cx);
+                    open_change.set(*is_open || blocked);
+                    if blocked {
+                        table.status.labels.close_requested = true;
+                    } else if !*is_open && table.status.labels.item == Some(item) {
+                        table.status.labels.item = None;
+                    }
+                    if blocked {
+                        table.status.labels.focus(w, cx);
+                    }
+                    cx.notify();
+                });
             })
             .trigger(
                 trigger.on_mouse_down(MouseButton::Left, move |_, w, cx| return_focus.focus(w, cx)),
             )
             .content(move |_, w, cx| {
                 let popup = cx.weak_entity();
+                if let Ok(Some(editor)) = view.update(cx, |table, cx| {
+                    table.status_labels_content(item, popup.clone(), w, cx)
+                }) {
+                    return editor;
+                }
                 let commit = |value: Option<String>| {
                     let view = view.clone();
                     let popup = popup.clone();
@@ -213,17 +257,25 @@ impl Table {
                     .gap_2();
                 let mut row = div().flex().gap_2();
                 let mut handles = Vec::new();
+                let options_count = choices.len()
+                    + usize::from(!choices.iter().any(|choice| choice.key == "empty"));
                 for (ix, option) in choices
                     .iter()
                     .map(Some)
-                    .chain(std::iter::once(None))
+                    .chain((!choices.iter().any(|choice| choice.key == "empty")).then_some(None))
                     .enumerate()
                 {
-                    let choice = option.map(|choice| choice.key.clone());
+                    let choice = option.and_then(StatusChoice::value);
                     let checked = value == choice;
                     let id = key(option.map_or_else(
                         || "status-empty".into(),
-                        |choice| format!("status-choice-{}", choice.key),
+                        |choice| {
+                            if choice.key == "empty" {
+                                "status-empty".into()
+                            } else {
+                                format!("status-choice-{}", choice.key)
+                            }
+                        },
                     ));
                     let handle = if checked {
                         initial.clone()
@@ -234,27 +286,33 @@ impl Table {
                     };
                     let bg = color(option, cx);
                     row = row.child(
-                        Button::new(id)
-                            .role(Role::ListBoxOption)
-                            .track_focus(&handle)
-                            .flex_1()
-                            .min_w_0()
-                            .h_8()
-                            .label(
-                                option
-                                    .map_or("Empty", |choice| choice.label.as_str())
-                                    .to_owned(),
-                            )
-                            .custom(tile_style(bg, cx))
-                            .bg(bg)
-                            .text_color(gpui_kit::white())
-                            .selected(checked)
-                            .toggled(checked)
-                            .when(checked, |button| button.icon(IconName::Check))
-                            .on_click(commit(choice)),
+                        div().flex_1().min_w_0().flex_basis(rems(0.)).child(
+                            Button::new(id)
+                                .role(Role::ListBoxOption)
+                                .track_focus(&handle)
+                                .w_full()
+                                .min_w_0()
+                                .h_8()
+                                .label(
+                                    option
+                                        .filter(|choice| !choice.label.is_empty())
+                                        .map_or("Empty", |choice| choice.label.as_str())
+                                        .to_owned(),
+                                )
+                                .custom(tile_style(bg, cx))
+                                .bg(bg)
+                                .text_color(gpui_kit::white())
+                                .selected(checked)
+                                .toggled(checked)
+                                .when(checked, |button| button.icon(IconName::Check))
+                                .on_click(commit(choice)),
+                        ),
                     );
                     handles.push(handle);
-                    if ix % 2 == 1 || ix == choices.len() {
+                    if ix % 2 == 1 || ix + 1 == options_count {
+                        if ix % 2 == 0 {
+                            row = row.child(div().flex_1().flex_basis(rems(0.)).min_w_0());
+                        }
                         options = options.child(row);
                         row = div().flex().gap_2();
                     }
@@ -265,6 +323,25 @@ impl Table {
                     .gap_2()
                     .w(rems(21.))
                     .child(options)
+                    .children(manageable.then(|| {
+                        let view = view.clone();
+                        div()
+                            .w_full()
+                            .mt_1()
+                            .border_t_1()
+                            .border_color(cx.theme().border)
+                            .child(
+                                Button::new("status-edit-labels")
+                                    .ghost()
+                                    .w_full()
+                                    .label("Edit labels")
+                                    .on_click(move |_, w, cx| {
+                                        let _ = view.update(cx, |table, cx| {
+                                            table.open_status_labels(item, target.column, w, cx)
+                                        });
+                                    }),
+                            )
+                    }))
                     .child(
                         Button::new("status-clear")
                             .w_full()
@@ -289,6 +366,7 @@ impl Table {
                         handles[next].focus(w, cx);
                         cx.stop_propagation();
                     })
+                    .into_any_element()
             });
         lane().child(picker).into_any_element()
     }
@@ -403,7 +481,8 @@ impl Table {
         let label = table
             .choices
             .iter()
-            .find(|choice| Some(&choice.key) == value.as_ref())
+            .find(|choice| choice.value() == value)
+            .filter(|choice| !choice.label.is_empty())
             .map_or("Empty", |choice| choice.label.as_str())
             .to_owned();
         self.pending = true;

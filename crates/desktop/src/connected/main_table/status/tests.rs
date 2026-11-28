@@ -2,6 +2,88 @@ use super::*;
 use core::prelude::v1::test;
 use gpui_kit::test::TestWindowExt;
 
+#[gpui_kit::test]
+fn configured_default_describes_null_without_a_second_empty_option(cx: &mut TestAppContext) {
+    let (window, view) = visit(cx, None, true);
+    cx.update_window(window, |_, w, cx| {
+        view.update(cx, |view, cx| {
+            let Screen::Navigation(nav) = &mut view.screen else {
+                panic!()
+            };
+            let Page::Items(_, table) = &mut nav.page else {
+                panic!()
+            };
+            let ColumnRead::Ready { choices, .. } = &mut table.status.read else {
+                panic!()
+            };
+            let mut palette = choices.to_vec();
+            palette.push(StatusChoice {
+                key: "empty".into(),
+                label: "Unassigned".into(),
+                color: "#e2445c".into(),
+            });
+            palette.push(StatusChoice {
+                key: "l-extra".into(),
+                label: "Queued".into(),
+                color: "#a25ddc".into(),
+            });
+            *choices = palette.into();
+            cx.notify();
+        });
+        w.render_frame(cx);
+        let trigger = format!("status-{}", Uuid::from_u128(42));
+        assert_eq!(
+            w.find(trigger.clone()).label(),
+            Some("Status for Review: Unassigned")
+        );
+        w.click(trigger, cx);
+        let first = w.find("status-choice-Working").bounds();
+        let last = w.find("status-choice-l-extra").bounds();
+        assert!(
+            (first.size.width - last.size.width).abs() <= px(1.),
+            "first {first:?} last {last:?}"
+        );
+        assert_eq!(w.find("status-empty").label(), Some("Unassigned"));
+        assert_eq!(w.find("status-empty").checked(), Some(true));
+        assert!(w.try_find("status-choice-empty").is_none());
+        w.press("enter", cx);
+        assert!(w.try_find("status-clear").is_none());
+        assert!(!table(view.read(cx)).pending);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn members_have_cell_choices_and_only_owner_hint_exposes_label_editor(cx: &mut TestAppContext) {
+    let (window, view) = visit(cx, None, true);
+    cx.update_window(window, |_, w, cx| {
+        let trigger = format!("status-{}", Uuid::from_u128(42));
+        w.render_frame(cx);
+        w.click(trigger.clone(), cx);
+        assert!(w.try_find("status-edit-labels").is_none());
+        assert!(w.try_find("status-choice-Done").is_some());
+        w.press("escape", cx);
+        view.update(cx, |view, cx| {
+            let Screen::Navigation(nav) = &mut view.screen else {
+                panic!()
+            };
+            let Page::Items(_, table) = &mut nav.page else {
+                panic!()
+            };
+            table.manageable = true;
+            cx.notify();
+        });
+        w.render_frame(cx);
+        w.click(trigger, cx);
+        assert!(w.try_find("status-edit-labels").is_some());
+        w.click("status-edit-labels", cx);
+        assert!(w.try_find("status-label-editor").is_some());
+        assert!(w.try_find("status-back-to-labels").is_some());
+        assert!(table(view.read(cx)).view_actions_blocked(cx));
+    })
+    .unwrap();
+}
+
 fn visit(
     cx: &mut TestAppContext,
     value: Option<&str>,

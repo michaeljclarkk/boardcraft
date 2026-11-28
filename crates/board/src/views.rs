@@ -116,7 +116,7 @@ pub fn create_with_filters(
     filters.group_ids.sort();
     filters.group_ids.dedup();
     let valid: bool = db.query_one(
-        "SELECT NOT EXISTS(SELECT 1 FROM unnest($1::text[]) AS wanted(value) WHERE NOT EXISTS(SELECT 1 FROM status_choices s WHERE s.key=wanted.value))
+        "SELECT NOT EXISTS(SELECT 1 FROM unnest($1::text[]) AS wanted(value) WHERE NOT EXISTS(SELECT 1 FROM status_labels s JOIN status_columns c ON c.id=s.column_id WHERE c.board_id=$3 AND s.key=wanted.value AND s.key<>'empty'))
          AND NOT EXISTS(SELECT 1 FROM unnest($2::text[]) AS wanted(value) WHERE NOT EXISTS(SELECT 1 FROM board_groups g WHERE g.board_id=$3 AND g.id=wanted.value AND g.active))",
         &[&filters.status_values, &filters.group_ids, &board.as_uuid()],
     ).map_err(ViewError::Database)?.get(0);

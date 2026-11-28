@@ -169,7 +169,12 @@ impl BoardView {
             baseline,
             groups: groups.clone(),
             rows: rows.clone(),
-            choices: status.choices.to_vec(),
+            choices: status
+                .choices
+                .iter()
+                .filter(|choice| choice.value().is_some())
+                .cloned()
+                .collect(),
             cells: status.cells.clone(),
             status_title: status.title.clone(),
             query: filter.clone(),

@@ -10,6 +10,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder;
 use std::{collections::HashMap, rc::Rc};
 mod bulk;
+mod labels;
 
 pub(super) struct StatusColumn {
     // A board can be reloaded or revisited while its old read is still running.
@@ -19,6 +20,7 @@ pub(super) struct StatusColumn {
     pending: Option<Uuid>,
     notice: Option<(Uuid, String)>,
     bulk: bulk::BulkStatus,
+    labels: Option<Entity<labels::Labels>>,
 }
 
 enum ColumnRead {
@@ -54,7 +56,11 @@ impl StatusColumn {
 
     pub(super) fn filter_choices(&self) -> Vec<StatusChoice> {
         match &self.read {
-            ColumnRead::Ready { choices, .. } => choices.to_vec(),
+            ColumnRead::Ready { choices, .. } => choices
+                .iter()
+                .filter(|c| c.key != "empty")
+                .cloned()
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -70,6 +76,7 @@ impl StatusColumn {
             pending: None,
             notice: None,
             bulk: bulk::BulkStatus::new(w, cx),
+            labels: None,
         }
     }
 
@@ -174,9 +181,7 @@ impl MainTable {
         let Some(cell) = cells.get(&id) else {
             return lane().child(Label::new("Reload board")).into_any_element();
         };
-        let selected = choices
-            .iter()
-            .find(|c| Some(&c.key) == cell.saved.value.as_ref());
+        let selected = choices.iter().find(|c| c.value() == cell.saved.value);
         // The palette (including the reference UI's empty grey) is cell content.
         let pending = self.status.pending == Some(id) || self.status.bulk.pending.contains(&id);
         let bg = if pending {
@@ -188,7 +193,9 @@ impl MainTable {
         let label = if pending {
             Some("Saving…")
         } else {
-            selected.map(|c| c.label.as_str())
+            selected
+                .filter(|c| !c.label.is_empty())
+                .map(|c| c.label.as_str())
         };
         let button = Button::new(SharedString::from(format!("status-{id}")))
             .track_focus(&cell.trigger)
@@ -200,7 +207,16 @@ impl MainTable {
             .h_full()
             .label(label.unwrap_or(" ").to_owned())
             .accessibility_label(format!("{title} for {name}: {}", label.unwrap_or("Empty")));
-        if !self.editable || self.pending || self.reconcile || self.status.requires_reload {
+        if !self.editable
+            || self.pending
+            || self.reconcile
+            || self.status.requires_reload
+            || self
+                .status
+                .labels
+                .as_ref()
+                .is_some_and(|labels| labels.read(cx).owns_other_cell(id))
+        {
             return lane().child(button.disabled(true)).into_any_element();
         }
         let target = Target {
@@ -215,12 +231,36 @@ impl MainTable {
         let trigger = cell.trigger.clone();
         let initial = cell.selected.clone();
         let chooser_label = format!("Choose {title}");
+        let manageable = self.manageable;
         let menu = Popover::new(SharedString::from(format!("status-popup-{id}")))
+            .overlay_closable(false)
             .trigger_style(StyleRefinement::default().w_full().h_full())
             .track_focus(&initial)
             .trigger(button.on_mouse_down(MouseButton::Left, move |_, w, cx| trigger.focus(w, cx)))
             .content(move |_, w, cx| {
                 let popup = cx.weak_entity();
+                if let Some(owner) = view.upgrade() {
+                    if let Screen::Navigation(nav) = &owner.read(cx).screen
+                        && let Page::Items(_, t) = &nav.page
+                        && let Some(labels) = &t.status.labels
+                        && labels.read(cx).active
+                    {
+                        let labels = labels.clone();
+                        let outside = labels.clone();
+                        return div()
+                            .flex()
+                            .flex_col()
+                            .w(rems(21.))
+                            .child(labels.clone())
+                            .on_mouse_down_out(move |_, w, cx| {
+                                outside.update(cx, |s, cx| s.request_close(w, cx));
+                            })
+                            .on_action(move |_: &gpui_kit::base::actions::Cancel, w, cx| {
+                                labels.update(cx, |s, cx| s.request_close(w, cx));
+                            })
+                            .into_any_element();
+                    }
+                }
                 let commit = |key: Option<String>| {
                     let view = view.clone();
                     let popup = popup.clone();
@@ -241,17 +281,17 @@ impl MainTable {
                     .gap_2();
                 let mut row = div().flex().gap_2();
                 let mut handles = Vec::with_capacity(choices.len() + 1);
-                for (ix, option) in choices
-                    .iter()
-                    .map(Some)
-                    .chain(std::iter::once(None))
-                    .enumerate()
-                {
-                    let key = option.map(|o| o.key.clone());
+                let mut available: Vec<_> = choices.iter().map(Some).collect();
+                if !choices.iter().any(|c| c.key == "empty") {
+                    available.push(None);
+                }
+                let count = available.len();
+                for (ix, option) in available.into_iter().enumerate() {
+                    let key = option.and_then(|o| o.value());
                     let checked = value == key;
                     let id: SharedString = match option {
-                        Some(o) => format!("status-choice-{}", o.key).into(),
-                        None => "status-empty".into(),
+                        Some(o) if o.key != "empty" => format!("status-choice-{}", o.key).into(),
+                        _ => "status-empty".into(),
                     };
                     let handle = if checked {
                         initial.clone()
@@ -268,7 +308,12 @@ impl MainTable {
                         .rounded_sm()
                         .role(Role::ListBoxOption)
                         .track_focus(&handle)
-                        .label(option.map_or("Empty", |c| c.label.as_str()).to_owned())
+                        .label(
+                            option
+                                .filter(|c| !c.label.is_empty())
+                                .map_or("Empty", |c| c.label.as_str())
+                                .to_owned(),
+                        )
                         .custom(tile_style(bg, cx))
                         .bg(bg)
                         .text_color(gpui_kit::white())
@@ -276,13 +321,50 @@ impl MainTable {
                         .when(checked, |b| b.icon(IconName::Check))
                         .on_click(commit(key));
                     handles.push(handle);
-                    row = row.child(tile);
-                    if ix % 2 == 1 || ix == choices.len() {
+                    row = row.child(
+                        div()
+                            .flex_1()
+                            .flex_basis(rems(0.))
+                            .min_w_0()
+                            .child(tile.w_full()),
+                    );
+                    if ix % 2 == 1 || ix + 1 == count {
+                        if ix % 2 == 0 {
+                            row = row.child(div().flex_1().flex_basis(rems(0.)).min_w_0());
+                        }
                         options = options.child(row);
                         row = div().flex().gap_2();
                     }
                 }
-                panel = panel.child(options).child(
+                panel = panel.child(options);
+                if manageable {
+                    let view = view.clone();
+                    let edit_popup = popup.clone();
+                    panel = panel.child(
+                        div()
+                            .border_t_1()
+                            .border_color(cx.theme().border)
+                            .pt_2()
+                            .child(
+                                Button::new("status-edit-labels")
+                                    .ghost()
+                                    .w_full()
+                                    .h_8()
+                                    .label("Edit labels")
+                                    .on_click(move |_, w, cx| {
+                                        _ = view.update(cx, |owner, cx| {
+                                            owner.open_status_labels(
+                                                target,
+                                                edit_popup.clone(),
+                                                w,
+                                                cx,
+                                            )
+                                        });
+                                    }),
+                            ),
+                    );
+                }
+                panel = panel.child(
                     Button::new("status-clear")
                         .w_full()
                         .h_8()
@@ -290,21 +372,27 @@ impl MainTable {
                         .label("Clear value")
                         .on_click(commit(None)),
                 );
-                panel.on_key_down(move |event: &KeyDownEvent, w, cx| {
-                    let Some(ix) = handles.iter().position(|h| h.is_focused(w)) else {
-                        return;
-                    };
-                    let n = handles.len();
-                    let next = match event.keystroke.key.as_str() {
-                        "down" => (ix + 1) % n,
-                        "up" => (ix + n - 1) % n,
-                        "home" => 0,
-                        "end" => n - 1,
-                        _ => return,
-                    };
-                    handles[next].focus(w, cx);
-                    cx.stop_propagation();
-                })
+                let dismiss = popup.clone();
+                panel
+                    .on_mouse_down_out(move |_, w, cx| {
+                        _ = dismiss.update(cx, |p, cx| p.dismiss(w, cx));
+                    })
+                    .on_key_down(move |event: &KeyDownEvent, w, cx| {
+                        let Some(ix) = handles.iter().position(|h| h.is_focused(w)) else {
+                            return;
+                        };
+                        let n = handles.len();
+                        let next = match event.keystroke.key.as_str() {
+                            "down" => (ix + 1) % n,
+                            "up" => (ix + n - 1) % n,
+                            "home" => 0,
+                            "end" => n - 1,
+                            _ => return,
+                        };
+                        handles[next].focus(w, cx);
+                        cx.stop_propagation();
+                    })
+                    .into_any_element()
             });
         lane().child(menu).into_any_element()
     }

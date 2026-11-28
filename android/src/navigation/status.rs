@@ -3,6 +3,7 @@ use boardcraft_mobile_edit_client::{MainTableGroup, StatusCell, StatusChoice};
 use gpui_kit::component::{Colorize, button::ButtonCustomVariant, popover::Popover};
 use std::{collections::HashMap, sync::Arc};
 
+mod labels;
 mod selection;
 
 pub(crate) struct StatusColumn {
@@ -16,6 +17,7 @@ pub(crate) struct StatusColumn {
     selection_pending: bool,
     selection_errors: Vec<(String, &'static str)>,
     needs_reload: bool,
+    label_controls: Box<labels::LabelControls>,
 }
 
 impl StatusColumn {
@@ -26,6 +28,7 @@ impl StatusColumn {
     ) -> Result<(Vec<SavedItem>, Vec<MainTableGroup>, Self), EditError> {
         let board_rows = client.read_main_table(board)?;
         let table = client.read_status(board)?;
+        let labels = client.read_status_labels(board, table.column_id)?;
         let rows = board_rows
             .groups()
             .iter()
@@ -38,7 +41,7 @@ impl StatusColumn {
             Self {
                 id: table.column_id,
                 title: table.title,
-                choices: table.choices.into(),
+                choices: labels.choices.into(),
                 cells: table.cells.into_iter().map(|c| (c.item_id, c)).collect(),
                 editable: board_rows.is_editable(),
                 pending: None,
@@ -46,6 +49,10 @@ impl StatusColumn {
                 selection_pending: false,
                 selection_errors: Vec::new(),
                 needs_reload: false,
+                label_controls: Box::new(labels::LabelControls::new(
+                    labels.can_edit,
+                    labels.actor_id,
+                )),
             },
         ))
     }
@@ -66,10 +73,7 @@ impl StatusColumn {
                 .child(Label::new("Unavailable"))
                 .into_any_element();
         };
-        let selected = self
-            .choices
-            .iter()
-            .find(|c| Some(&c.key) == cell.value.as_ref());
+        let selected = self.choices.iter().find(|c| c.value() == cell.value);
         let color = selected
             .and_then(|c| Hsla::parse_hex(&c.color).ok())
             .unwrap_or_else(empty_color);
@@ -101,7 +105,8 @@ impl StatusColumn {
             ))
             .loading(self.pending == Some(item))
             .disabled(disabled);
-        if disabled {
+        if disabled && self.label_controls.picker_open.as_deref() != Some(item.to_string().as_str())
+        {
             return trigger.into_any_element();
         }
         let target = Target {
@@ -115,6 +120,8 @@ impl StatusColumn {
             choices: self.choices.clone(),
             current: cell.value.clone(),
             target: PickerTarget::Cell(target),
+            open: self.label_controls.picker_open.as_deref() == Some(item.to_string().as_str()),
+            can_manage: self.label_controls.can_manage_labels,
             trigger: trigger.on_mouse_down(MouseButton::Left, move |_, w, cx| {
                 trigger_focus.focus(w, cx);
             }),
@@ -123,7 +130,13 @@ impl StatusColumn {
     }
 
     pub(crate) fn is_pending(&self) -> bool {
-        self.pending.is_some() || self.selection_pending
+        self.pending.is_some()
+            || self.selection_pending
+            || self
+                .label_controls
+                .labels
+                .as_ref()
+                .is_some_and(|labels| labels.dirty || labels.pending)
     }
 }
 
@@ -146,6 +159,8 @@ struct Picker {
     current: Option<String>,
     target: PickerTarget,
     trigger: Button,
+    open: bool,
+    can_manage: bool,
 }
 
 impl Picker {
@@ -156,6 +171,8 @@ impl Picker {
             current,
             target,
             trigger,
+            open,
+            can_manage,
         } = self;
         let selected_focus = window
             .use_keyed_state(
@@ -166,11 +183,24 @@ impl Picker {
             .read(cx)
             .clone();
         let view = cx.weak_entity();
+        let open_owner = view.clone();
+        let picker_id = item.clone();
         Popover::new(SharedString::from(format!("status-picker-{item}")))
+            .open(open)
+            .on_open_change(move |open, w, cx| {
+                _ = open_owner.update(cx, |view, cx| {
+                    view.status_picker_open(&picker_id, target, *open, w, cx);
+                });
+            })
             .anchor(Anchor::TopRight)
             .track_focus(&selected_focus)
             .trigger(trigger)
             .content(move |_, w, cx| {
+                if let Ok(Some(editor)) = view.update(cx, |view, cx| {
+                    view.status_labels_panel(target, selected_focus.clone(), w, cx)
+                }) {
+                    return editor;
+                }
                 let popup = cx.weak_entity();
                 let button = |id: String, label: String, value: Option<String>| {
                     let owner = view.clone();
@@ -194,16 +224,15 @@ impl Picker {
                 let mut panel = div().flex().flex_col().gap_2().w(rems(panel_width));
                 let mut grid_row = div().flex().gap_2();
                 let mut handles = Vec::with_capacity(choices.len() + 1);
-                for (ix, choice) in choices
-                    .iter()
-                    .map(Some)
-                    .chain(std::iter::once(None))
-                    .enumerate()
-                {
-                    let value = choice.map(|c| c.key.clone());
-                    let label = choice.map(|c| c.label.as_str()).unwrap_or("Empty");
-                    let color = choice
-                        .and_then(|c| Hsla::parse_hex(&c.color).ok())
+                for (ix, choice) in choices.iter().enumerate() {
+                    let value = choice.value();
+                    let label = if choice.label.is_empty() {
+                        "Empty"
+                    } else {
+                        &choice.label
+                    };
+                    let color = Hsla::parse_hex(&choice.color)
+                        .ok()
                         .unwrap_or_else(empty_color);
                     let checked = matches!(target, PickerTarget::Cell(_)) && current == value;
                     let marked = if checked {
@@ -236,13 +265,27 @@ impl Picker {
                             .text_color(gpui_kit::white())
                             .toggled(checked),
                     );
-                    if ix % 2 == 1 || ix == choices.len() {
+                    if ix % 2 == 1 || ix + 1 == choices.len() {
                         if ix % 2 == 0 {
                             grid_row = grid_row.child(div().flex_1());
                         }
                         panel = panel.child(grid_row);
                         grid_row = div().flex().gap_2();
                     }
+                }
+                if can_manage {
+                    let owner = view.clone();
+                    panel = panel.child(
+                        Button::new(SharedString::from(format!("status-edit-labels-{item}")))
+                            .large()
+                            .ghost()
+                            .w_full()
+                            .label("Edit labels")
+                            .on_click(move |_, w, cx| {
+                                _ = owner
+                                    .update(cx, |view, cx| view.open_status_labels(target, w, cx));
+                            }),
+                    );
                 }
                 panel
                     .child(
@@ -266,6 +309,7 @@ impl Picker {
                         handles[next].focus(w, cx);
                         cx.stop_propagation();
                     })
+                    .into_any_element()
             })
             .into_any_element()
     }

@@ -151,6 +151,54 @@ pub(super) async fn read_status(
     .map(|(table, _)| table)
 }
 
+pub(super) async fn read_status_labels(
+    binding: &str,
+    board: Uuid,
+    column: Uuid,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<boardcraft_mobile_edit_client::StatusLabels, EditError> {
+    let (labels, _) = request::<boardcraft_mobile_edit_client::StatusLabels>(
+        binding,
+        "GET",
+        &format!("/navigation/status/{board}/{column}/labels"),
+        None,
+        executor,
+    )
+    .await?;
+    if labels.column_id != column {
+        return Err(EditError::Transport);
+    }
+    Ok(labels)
+}
+
+pub(super) async fn save_status_label(
+    binding: &str,
+    board: Uuid,
+    column: Uuid,
+    key: &str,
+    edit: &boardcraft_mobile_edit_client::StatusLabelEdit,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<boardcraft_mobile_edit_client::StatusChoice, EditError> {
+    if key.is_empty() || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err(EditError::InvalidDraft);
+    }
+    let (saved, _) = request::<boardcraft_mobile_edit_client::StatusChoice>(
+        binding,
+        "PUT",
+        &format!("/navigation/status/{board}/{column}/labels/{key}"),
+        body(edit)?,
+        executor,
+    )
+    .await?;
+    if saved.key != key
+        || edit.label.as_ref().is_some_and(|s| s != &saved.label)
+        || edit.color.as_ref().is_some_and(|s| s != &saved.color)
+    {
+        return Err(EditError::Transport);
+    }
+    Ok(saved)
+}
+
 pub(super) async fn list_views(
     binding: &str,
     board: Uuid,

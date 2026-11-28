@@ -136,6 +136,72 @@ pub(super) async fn read() -> Result<Option<String>, ()> {
     }
 }
 
+/// Label drafts share the existing origin database, scoped to actor/board/column.
+pub(super) async fn read_label_draft(key: &str) -> Result<Option<String>, ()> {
+    let db = open().await?;
+    let tx = db.0.transaction_with_str("session").map_err(|_| ())?;
+    let value = request(
+        &tx.object_store("session")
+            .map_err(|_| ())?
+            .get(&key.into())
+            .map_err(|_| ())?,
+    )
+    .await?;
+    if value.is_undefined() {
+        Ok(None)
+    } else {
+        value.as_string().map(Some).ok_or(())
+    }
+}
+
+/// A late acknowledgement cannot erase a newer label draft from another tab.
+pub(super) async fn update_label_draft(
+    key: &str,
+    expected: Option<String>,
+    replacement: Option<String>,
+) -> Result<bool, ()> {
+    let db = open().await?;
+    let tx =
+        db.0.transaction_with_str_and_mode("session", IdbTransactionMode::Readwrite)
+            .map_err(|_| ())?;
+    let store = tx.object_store("session").map_err(|_| ())?;
+    let get = store.get(&key.into()).map_err(|_| ())?;
+    let read = get.clone();
+    let transaction = tx.clone();
+    let changed = Rc::new(Cell::new(false));
+    let changed_on_read = changed.clone();
+    let key = key.to_owned();
+    let update = Closure::<dyn FnMut()>::new(move || {
+        let current = read.result().ok().and_then(|value| value.as_string());
+        if current == expected {
+            let result = if let Some(value) = &replacement {
+                store.put_with_key(&value.clone().into(), &key.clone().into())
+            } else {
+                store.delete(&key.clone().into())
+            };
+            if result.is_err() {
+                let _ = transaction.abort();
+            } else {
+                changed_on_read.set(true);
+            }
+        }
+    });
+    let (receiver, callback) = completion();
+    tx.set_oncomplete(Some(callback.as_ref().unchecked_ref()));
+    tx.set_onabort(Some(callback.as_ref().unchecked_ref()));
+    get.set_onsuccess(Some(update.as_ref().unchecked_ref()));
+    let _pending = PendingTransaction {
+        transaction: tx,
+        request: get,
+        _completion: callback,
+        _update: update,
+    };
+    if receiver.await != Ok(true) {
+        return Err(());
+    }
+    Ok(changed.get())
+}
+
 pub(super) async fn save(binding: &str) -> Result<(), ()> {
     let db = open().await?;
     let tx =

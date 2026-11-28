@@ -43,18 +43,7 @@ pub fn read_status(tx: &mut Transaction<'_>, board: BoardId) -> Result<Table, Er
         )?
         .ok_or(Error::Missing)?;
     let id: Uuid = column.get(0);
-    let choices = tx
-        .query(
-            "SELECT key,label,color FROM status_choices ORDER BY position",
-            &[],
-        )?
-        .into_iter()
-        .map(|r| Choice {
-            key: r.get(0),
-            label: r.get(1),
-            color: r.get(2),
-        })
-        .collect();
+    let choices = super::labels::choices(tx, id)?;
     let cells = tx
         .query(
             "SELECT i.id,coalesce(c.revision,0),c.value FROM board_items i
@@ -95,9 +84,13 @@ pub fn set_status(
         JOIN status_columns s ON s.board_id=i.board_id WHERE i.board_id=$1 AND s.id=$2 AND i.id=$3 AND g.active AND i.state=0
         FOR UPDATE OF i FOR SHARE OF g,s", &[&board,&column,&item])?.ok_or(Error::Missing)?;
     if let Some(key) = &value
-        && tx
-            .query_opt("SELECT 1 FROM status_choices WHERE key=$1", &[key])?
-            .is_none()
+        && (key == "empty"
+            || tx
+                .query_opt(
+                    "SELECT 1 FROM status_labels WHERE column_id=$1 AND key=$2",
+                    &[&column, key],
+                )?
+                .is_none())
     {
         return Err(Error::Invalid);
     }

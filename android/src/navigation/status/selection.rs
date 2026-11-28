@@ -137,7 +137,10 @@ impl StatusColumn {
                 .track_focus(&focus)
                 .loading(self.selection_pending)
                 .disabled(disabled);
-            controls = if disabled {
+            controls = if disabled
+                && self.label_controls.picker_open.as_deref()
+                    != Some(format!("selection-{board}").as_str())
+            {
                 controls.child(trigger)
             } else {
                 controls.child(
@@ -153,6 +156,9 @@ impl StatusColumn {
                         trigger: trigger.on_mouse_down(MouseButton::Left, move |_, w, cx| {
                             focus.focus(w, cx);
                         }),
+                        open: self.label_controls.picker_open.as_deref()
+                            == Some(format!("selection-{board}").as_str()),
+                        can_manage: self.label_controls.can_manage_labels,
                     }
                     .render(window, cx),
                 )

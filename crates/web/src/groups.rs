@@ -421,6 +421,7 @@ impl Table {
             || self.editor.is_some()
             || self.filter_dialog.is_some()
             || self.views_open
+            || self.status.labels_active()
     }
     fn report(&mut self, error: &EditError, cx: &mut Context<Self>) {
         self.message = match error {

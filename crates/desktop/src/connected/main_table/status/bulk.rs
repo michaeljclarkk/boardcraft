@@ -214,15 +214,21 @@ impl MainTable {
                     .gap_2();
                 let mut row = div().flex().gap_2();
                 let mut handles = Vec::new();
-                for (index, choice) in choices
-                    .iter()
-                    .map(Some)
-                    .chain(std::iter::once(None))
-                    .enumerate()
-                {
+                let mut available: Vec<_> = choices.iter().map(Some).collect();
+                if !choices.iter().any(|c| c.key == "empty") {
+                    available.push(None);
+                }
+                let count = available.len();
+                for (index, choice) in available.into_iter().enumerate() {
                     let id: SharedString = choice.map_or_else(
                         || "selection-status-empty".into(),
-                        |c| format!("selection-status-choice-{}", c.key).into(),
+                        |c| {
+                            if c.key == "empty" {
+                                "selection-status-empty".into()
+                            } else {
+                                format!("selection-status-choice-{}", c.key).into()
+                            }
+                        },
                     );
                     let handle = if index == 0 {
                         initial.clone()
@@ -233,19 +239,29 @@ impl MainTable {
                     };
                     let bg = choice.map_or_else(|| rgb(0xc4c4c4).into(), |c| color(c, cx));
                     row = row.child(
-                        Button::new(id)
-                            .role(Role::ListBoxOption)
-                            .track_focus(&handle)
-                            .flex_1()
-                            .min_w_0()
-                            .h_8()
-                            .rounded_sm()
-                            .custom(tile_style(bg, cx))
-                            .label(choice.map_or("Empty", |c| c.label.as_str()).to_owned())
-                            .on_click(commit(choice.map(|c| c.key.clone()))),
+                        div().flex_1().flex_basis(rems(0.)).min_w_0().child(
+                            Button::new(id)
+                                .role(Role::ListBoxOption)
+                                .track_focus(&handle)
+                                .w_full()
+                                .min_w_0()
+                                .h_8()
+                                .rounded_sm()
+                                .custom(tile_style(bg, cx))
+                                .label(
+                                    choice
+                                        .filter(|c| !c.label.is_empty())
+                                        .map_or("Empty", |c| c.label.as_str())
+                                        .to_owned(),
+                                )
+                                .on_click(commit(choice.and_then(|c| c.value()))),
+                        ),
                     );
                     handles.push(handle);
-                    if index % 2 == 1 || index == choices.len() {
+                    if index % 2 == 1 || index + 1 == count {
+                        if index % 2 == 0 {
+                            row = row.child(div().flex_1().flex_basis(rems(0.)).min_w_0());
+                        }
                         options = options.child(row);
                         row = div().flex().gap_2();
                     }

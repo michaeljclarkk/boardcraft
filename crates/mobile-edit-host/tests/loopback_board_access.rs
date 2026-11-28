@@ -1,5 +1,7 @@
 #[path = "fixture/browser_transport.rs"]
 mod browser_transport;
+#[path = "fixture/status_labels.rs"]
+mod status_labels;
 
 #[test]
 fn item_activity_only_commits_with_a_changed_rename() {

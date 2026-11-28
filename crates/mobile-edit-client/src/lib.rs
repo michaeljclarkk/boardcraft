@@ -34,7 +34,7 @@ pub use notifications::{InboxNotification, NotificationInbox};
 #[cfg(not(target_family = "wasm"))]
 pub use realtime::ChangeFeed;
 pub use realtime::{ChangeEvent, ChangeKind};
-pub use status::{StatusCell, StatusChoice, StatusEdit, StatusTable};
+pub use status::{StatusCell, StatusChoice, StatusEdit, StatusLabelEdit, StatusLabels, StatusTable};
 pub use table_command::{RootAction, SelectionAction, TableCommand};
 pub use table_contract::MainTableGroup;
 pub use views::{SavedView, ViewFilters};
