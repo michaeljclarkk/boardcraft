@@ -1,5 +1,10 @@
 use super::*;
-use boardcraft_mobile_edit_client::{Automation, BoardSummary, SavedView, view_filter_matches};
+use boardcraft_mobile_edit_client::{
+    Automation, BoardSummary, InboxNotification, NotificationInbox, SavedView, view_filter_matches,
+};
+
+/// The host accepts at most this many ids in one seen request.
+const SEEN_BATCH: usize = 100;
 
 pub(super) enum Page {
     List(Vec<BoardSummary>),
@@ -11,8 +16,94 @@ pub(super) enum Page {
         automations: Vec<Automation>,
         filter: String,
     },
+    Inbox(Inbox),
     Denied,
     Fault,
+}
+
+pub(super) struct Inbox {
+    notifications: Vec<InboxNotification>,
+    unread: i64,
+    loading: bool,
+    /// False until one load succeeded; a failed load keeps the empty page
+    /// from claiming the inbox is caught up.
+    loaded: bool,
+    pending: bool,
+}
+
+impl Inbox {
+    fn apply(&mut self, mut loaded: NotificationInbox) {
+        // Newest first. The host already orders by created_at then id; a stable
+        // sort keeps that order for rows created in the same minute.
+        loaded
+            .notifications
+            .sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        self.notifications = loaded.notifications;
+        self.unread = loaded.unread;
+        self.loading = false;
+        self.loaded = true;
+        self.pending = false;
+    }
+}
+
+impl Page {
+    /// A page that owns an in-flight action must settle before logout.
+    pub(super) fn pending(&self) -> bool {
+        match self {
+            Page::Loading => true,
+            Page::Inbox(inbox) => inbox.pending,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum InboxAction {
+    Read(Uuid, bool),
+    Delete(Uuid),
+    ReadAll,
+}
+
+/// The opened inbox records its unread rows as seen once. That receipt does not
+/// change what the inbox shows, so a failure to record it still returns rows.
+fn load_inbox(client: &EditClient) -> Result<NotificationInbox, EditError> {
+    let mut inbox = client.list_notifications(false)?;
+    let ids: Vec<Uuid> = inbox
+        .notifications
+        .iter()
+        .filter(|row| row.read_at.is_none() && row.seen_at.is_none())
+        .map(|row| row.id)
+        .collect();
+    if !ids.is_empty() {
+        let marked = ids
+            .chunks(SEEN_BATCH)
+            .all(|batch| client.mark_notifications_seen(batch).unwrap_or(false));
+        if marked {
+            let seen = seen_marker();
+            for row in &mut inbox.notifications {
+                if ids.contains(&row.id) {
+                    row.seen_at = Some(seen.clone());
+                }
+            }
+        }
+    }
+    Ok(inbox)
+}
+
+/// Local receipt marker; the host returned no timestamp with the seen reply.
+fn seen_marker() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs().to_string())
+        .unwrap_or_default()
+}
+
+fn inbox_message(error: EditError) -> &'static str {
+    match error {
+        EditError::PermissionDenied => "No permission to view notifications.",
+        EditError::AccessUnavailable => "Access check unavailable. Try again.",
+        _ => "Could not load notifications.",
+    }
 }
 
 impl BoardView {
@@ -22,16 +113,22 @@ impl BoardView {
         else {
             return;
         };
-        if self.logging_out
-            || matches!(page, Page::Loading)
-            || board.is_some_and(
-                |id| !matches!(page, Page::List(boards) if boards.iter().any(|b| b.id == id)),
-            )
-        {
+        // A board is reachable only from the screen that named it: a listed
+        // board, or the inbox row that points at it.
+        let reachable = match board {
+            None => true,
+            Some(id) => match page {
+                Page::List(boards) => boards.iter().any(|board| board.id == id),
+                Page::Inbox(inbox) => inbox.notifications.iter().any(|row| row.board_id == id),
+                _ => false,
+            },
+        };
+        if self.logging_out || matches!(page, Page::Loading) || !reachable {
             return;
         }
         // Loading exposes no actions. Only this completion can replace it.
         self.navigation = Some(Page::Loading);
+        self.inbox_unread = None;
         self.message = "";
         window.focus(&self.navigation_focus, cx);
         let identifier = Login::identifier(window, cx);
@@ -64,6 +161,151 @@ impl BoardView {
                         view.navigation = Some(Page::Denied)
                     }
                     Err(_) => view.navigation = Some(Page::Fault),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The board list names the inbox and its count. Loading it is best effort:
+    /// a failed count leaves the button without a number, and the inbox itself
+    /// reports its own result.
+    pub(super) fn ensure_inbox_count(&mut self, cx: &mut Context<Self>) {
+        if self.inbox_count_pending
+            || self.inbox_unread.is_some()
+            || self.logging_out
+            || !matches!(self.navigation, Some(Page::List(_)))
+        {
+            return;
+        }
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        self.inbox_count_pending = true;
+        let work = cx
+            .background_executor()
+            .spawn(async move { client.list_notifications(false).map(|inbox| inbox.unread) });
+        cx.spawn(async move |view, cx| {
+            let result = work.await;
+            _ = view.update(cx, |view, cx| {
+                view.inbox_count_pending = false;
+                if !matches!(view.navigation, Some(Page::List(_))) {
+                    return;
+                }
+                view.inbox_unread = Some(result.unwrap_or(0));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn open_inbox(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(conn), Some(client)) = (self.connection, self.client.clone()) else {
+            return;
+        };
+        if self.logging_out
+            || self.login.is_some()
+            || matches!(self.navigation, Some(Page::Loading | Page::Inbox(_)))
+        {
+            return;
+        }
+        self.navigation = Some(Page::Inbox(Inbox {
+            notifications: Vec::new(),
+            unread: 0,
+            loading: true,
+            loaded: false,
+            pending: true,
+        }));
+        self.message = "";
+        window.focus(&self.navigation_focus, cx);
+        let identifier = Login::identifier(window, cx);
+        let work = cx
+            .background_executor()
+            .spawn(async move { load_inbox(&client) });
+        cx.spawn(async move |view, cx| {
+            let result = work.await;
+            _ = view.update(cx, |view, cx| {
+                if !matches!(view.navigation, Some(Page::Inbox(_))) {
+                    return;
+                }
+                match result {
+                    Ok(loaded) => {
+                        if let Some(Page::Inbox(inbox)) = &mut view.navigation {
+                            inbox.apply(loaded);
+                        }
+                    }
+                    Err(EditError::SessionRejected) => {
+                        view.forget_session(conn, identifier, cx);
+                        return;
+                    }
+                    Err(error) => {
+                        if let Some(Page::Inbox(inbox)) = &mut view.navigation {
+                            inbox.loading = false;
+                            inbox.pending = false;
+                        }
+                        view.message = inbox_message(error);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Each action runs on a worker and then reloads the inbox once. While it is
+    /// in flight every inbox action is disabled, so two rows cannot race.
+    fn inbox_action(&mut self, action: InboxAction, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(conn), Some(client)) = (self.connection, self.client.clone()) else {
+            return;
+        };
+        let pending = matches!(&self.navigation, Some(Page::Inbox(inbox)) if inbox.pending);
+        if self.logging_out || pending {
+            return;
+        }
+        let Some(Page::Inbox(inbox)) = &mut self.navigation else {
+            return;
+        };
+        inbox.pending = true;
+        self.message = "";
+        let identifier = Login::identifier(window, cx);
+        let work = cx.background_executor().spawn(async move {
+            match action {
+                InboxAction::Read(id, read) => client.set_notification_read(id, read).map(drop),
+                InboxAction::Delete(id) => client.delete_notification(id).map(drop),
+                InboxAction::ReadAll => client.mark_all_notifications_read().map(drop),
+            }?;
+            load_inbox(&client)
+        });
+        cx.spawn(async move |view, cx| {
+            let result = work.await;
+            _ = view.update(cx, |view, cx| {
+                if !matches!(view.navigation, Some(Page::Inbox(_))) {
+                    return;
+                }
+                match result {
+                    Ok(loaded) => {
+                        if let Some(Page::Inbox(inbox)) = &mut view.navigation {
+                            inbox.apply(loaded);
+                        }
+                    }
+                    Err(EditError::SessionRejected) => {
+                        view.forget_session(conn, identifier, cx);
+                        return;
+                    }
+                    Err(error) => {
+                        if let Some(Page::Inbox(inbox)) = &mut view.navigation {
+                            inbox.pending = false;
+                        }
+                        view.message = match error {
+                            EditError::PermissionDenied => "No permission to change notifications.",
+                            EditError::Missing => "Notification not found.",
+                            EditError::AccessUnavailable => "Access check unavailable. Try again.",
+                            _ => "Could not update notifications.",
+                        };
+                    }
                 }
                 cx.notify();
             });
@@ -245,7 +487,7 @@ impl BoardView {
                 if event.keystroke.key == "escape"
                     && matches!(
                         view.navigation,
-                        Some(Page::Selected { .. } | Page::Denied | Page::Fault)
+                        Some(Page::Selected { .. } | Page::Inbox(_) | Page::Denied | Page::Fault)
                     )
                 {
                     view.navigate(None, w, cx);
@@ -280,6 +522,19 @@ impl BoardView {
                             ),
                     );
                 }
+                let unread = self.inbox_unread.unwrap_or(0);
+                column = column.child(
+                    Button::new("notifications")
+                        .large()
+                        .flex_shrink_0()
+                        .label(if unread > 0 {
+                            format!("Notifications ({unread})")
+                        } else {
+                            "Notifications".to_owned()
+                        })
+                        .disabled(self.logging_out)
+                        .on_click(cx.listener(|view, _, w, cx| view.open_inbox(w, cx))),
+                );
                 "Refresh"
             }
             Page::Selected {
@@ -332,6 +587,93 @@ impl BoardView {
                     .filter(|row| view_filter_matches(filter, &row.title))
                 {
                     column = column.child(Label::new(row.title.clone()));
+                }
+                "Back to boards"
+            }
+            Page::Inbox(inbox) => {
+                let busy = self.logging_out || inbox.pending;
+                column = column.child(Label::new("Notifications").text_xl());
+                column = column.child(
+                    Button::new("mark-all-read")
+                        .large()
+                        .flex_shrink_0()
+                        .label("Mark all as read")
+                        .disabled(busy || inbox.unread == 0)
+                        .on_click(cx.listener(|view, _, w, cx| {
+                            view.inbox_action(InboxAction::ReadAll, w, cx);
+                        })),
+                );
+                if inbox.loading {
+                    column = column.child(Label::new("Loading…"));
+                } else if inbox.loaded {
+                    column = column.child(Label::new(if inbox.unread == 0 {
+                        "You're all caught up".to_owned()
+                    } else {
+                        format!("{} unread", inbox.unread)
+                    }));
+                }
+                for row in &inbox.notifications {
+                    let id = row.id;
+                    let board = row.board_id;
+                    let unread = row.read_at.is_none();
+                    let mut entry = div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .id(SharedString::from(format!("notification-{id}")));
+                    if unread {
+                        entry = entry.child(
+                            Label::new("● Unread")
+                                .id(SharedString::from(format!("notification-unread-{id}"))),
+                        );
+                    }
+                    entry = entry
+                        .child(
+                            Label::new(row.title.clone())
+                                .text_lg()
+                                .id(SharedString::from(format!("notification-title-{id}"))),
+                        )
+                        .child(Label::new(row.message.clone()))
+                        .child(Label::new(format!(
+                            "{} — {}",
+                            row.board_name, row.item_name
+                        )))
+                        .child(Label::new(row.created_at.clone()));
+                    let actions = div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(
+                            Button::new(SharedString::from(format!("notification-read-{id}")))
+                                .large()
+                                .flex_shrink_0()
+                                .label(if unread { "Mark read" } else { "Mark unread" })
+                                .disabled(busy)
+                                .on_click(cx.listener(move |view, _, w, cx| {
+                                    view.inbox_action(InboxAction::Read(id, unread), w, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("notification-delete-{id}")))
+                                .large()
+                                .flex_shrink_0()
+                                .label("Delete")
+                                .disabled(busy)
+                                .on_click(cx.listener(move |view, _, w, cx| {
+                                    view.inbox_action(InboxAction::Delete(id), w, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("notification-open-{id}")))
+                                .large()
+                                .flex_shrink_0()
+                                .label("Open")
+                                .disabled(busy)
+                                .on_click(cx.listener(move |view, _, w, cx| {
+                                    view.navigate(Some(board), w, cx);
+                                })),
+                        );
+                    column = column.child(entry.child(actions));
                 }
                 "Back to boards"
             }

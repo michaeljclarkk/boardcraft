@@ -1,13 +1,13 @@
 use super::main_table::MainTable;
 use super::*;
 use boardcraft_mobile_edit_client::{
-    Automation, BoardSummary, DirectoryUser, MainTableRead, SavedView,
+    Automation, BoardSummary, DirectoryUser, InboxNotification, MainTableRead, SavedView,
 };
 use gpui_kit::component::input::InputEvent;
 
 enum ReadPage {
-    List(Vec<BoardSummary>),
-    Table(MainTableRead, Vec<SavedView>, Vec<Automation>),
+    List(Vec<BoardSummary>, i64),
+    Table(MainTableRead, Vec<SavedView>, Vec<Automation>, i64),
 }
 
 pub(super) struct PeoplePage {
@@ -17,10 +17,18 @@ pub(super) struct PeoplePage {
     pub(super) message: &'static str,
 }
 
+pub(super) struct InboxPage {
+    unread: i64,
+    notifications: Vec<InboxNotification>,
+    pending: bool,
+    message: &'static str,
+}
+
 pub(super) enum Page {
     List(Vec<BoardSummary>),
     People(PeoplePage),
     Items(Uuid, Box<MainTable>),
+    Inbox(InboxPage),
     Recover(Uuid, FocusHandle),
     Unavailable,
     Fault(Option<Uuid>),
@@ -29,6 +37,7 @@ pub(super) enum Page {
 pub(super) struct Navigation {
     pub(super) client: EditClient,
     pub(super) page: Page,
+    pub(super) unread: i64,
     pub(super) share: Option<Entity<InputState>>,
     pub(super) _people_events: Vec<Subscription>,
 }
@@ -38,6 +47,7 @@ impl Connected {
         &mut self,
         client: EditClient,
         board: Option<Uuid>,
+        item: Option<Uuid>,
         w: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -50,12 +60,14 @@ impl Connected {
                 Some(id) => client.read_main_table(id).and_then(|read| {
                     let views = client.list_views(id)?;
                     let automations = client.list_automations(id)?;
-                    Ok(ReadPage::Table(read, views, automations))
+                    let unread = client.list_notifications(false)?.unread;
+                    Ok(ReadPage::Table(read, views, automations, unread))
                 }),
-                None => client
-                    .resolve()
-                    .and_then(|()| client.list_boards())
-                    .map(ReadPage::List),
+                None => client.resolve().and_then(|()| {
+                    let list = client.list_boards()?;
+                    let unread = client.list_notifications(false)?.unread;
+                    Ok(ReadPage::List(list, unread))
+                }),
             };
             (client, result)
         });
@@ -70,22 +82,25 @@ impl Connected {
                     view.message = "Session expired. Sign in again.";
                     view.screen = Self::identifier(w, cx);
                 } else {
-                    let page = match result {
-                        Ok(ReadPage::List(list)) => Page::List(list),
-                        Ok(ReadPage::Table(read, saved, rules)) => {
-                            let mut table =
-                                MainTable::new(read, board.expect("selected board"), None, w, cx);
+                    let (page, unread) = match result {
+                        Ok(ReadPage::List(list, unread)) => (Page::List(list), unread),
+                        Ok(ReadPage::Table(read, saved, rules, unread)) => {
+                            let board = board.expect("selected board");
+                            let mut table = MainTable::new(read, board, None, w, cx);
                             table.views = saved;
                             table.automations = rules;
                             table.focus_first(w, cx);
-                            Page::Items(board.expect("selected board"), Box::new(table))
+                            if let Some(item) = item {
+                                table.focus_item(item, w, cx);
+                            }
+                            (Page::Items(board, Box::new(table)), unread)
                         }
                         Err(EditError::PermissionDenied | EditError::Missing)
                             if board.is_some() =>
                         {
-                            Page::Unavailable
+                            (Page::Unavailable, 0)
                         }
-                        Err(_) => Page::Fault(board),
+                        Err(_) => (Page::Fault(board), 0),
                     };
                     view.link_input.get_or_insert_with(|| {
                         cx.new(|cx| InputState::new(w, cx).placeholder("Paste board address"))
@@ -93,6 +108,7 @@ impl Connected {
                     view.screen = Screen::Navigation(Navigation {
                         client,
                         page,
+                        unread,
                         share: None,
                         _people_events: Vec::new(),
                     });
@@ -113,7 +129,7 @@ impl Connected {
         {
             return;
         }
-        self.navigate(nav.client.clone(), board, w, cx);
+        self.navigate(nav.client.clone(), board, None, w, cx);
     }
 
     fn open_people(&mut self, w: &mut Window, cx: &mut Context<Self>) {
@@ -212,6 +228,286 @@ impl Connected {
         cx.notify();
     }
 
+    fn open_inbox(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        let Screen::Navigation(nav) = &mut self.screen else {
+            return;
+        };
+        let client = nav.client.clone();
+        let unread = nav.unread;
+        nav.page = Page::Inbox(InboxPage {
+            unread,
+            notifications: Vec::new(),
+            pending: true,
+            message: "",
+        });
+        self.navigation_request += 1;
+        self.load_inbox(client, w, cx);
+    }
+
+    fn load_inbox(&mut self, client: EditClient, w: &mut Window, cx: &mut Context<Self>) {
+        let request = self.navigation_request;
+        self.message = "";
+        let work = cx.background_executor().spawn(async move {
+            let inbox = client.list_notifications(false)?;
+            let unseen: Vec<Uuid> = inbox
+                .notifications
+                .iter()
+                .filter(|notification| {
+                    notification.read_at.is_none() && notification.seen_at.is_none()
+                })
+                .map(|notification| notification.id)
+                .collect();
+            if unseen.is_empty() {
+                return Ok(inbox);
+            }
+            for ids in unseen.chunks(boardcraft_board::notifications::SEEN_LIMIT) {
+                client.mark_notifications_seen(ids)?;
+            }
+            client.list_notifications(false)
+        });
+        cx.spawn_in(w, async move |view, cx| {
+            let result = work.await;
+            _ = view.update_in(cx, |view, w, cx| {
+                if request != view.navigation_request {
+                    return;
+                }
+                let Screen::Navigation(nav) = &mut view.screen else {
+                    return;
+                };
+                let Page::Inbox(page) = &mut nav.page else {
+                    return;
+                };
+                match result {
+                    Ok(inbox) => {
+                        nav.unread = inbox.unread;
+                        page.unread = inbox.unread;
+                        page.notifications = inbox.notifications;
+                        page.pending = false;
+                        page.message = "";
+                    }
+                    Err(EditError::SessionRejected) => {
+                        view.link_input = None;
+                        view.message = "Session expired. Sign in again.";
+                        view.screen = Self::identifier(w, cx);
+                        return;
+                    }
+                    Err(_) => {
+                        page.pending = false;
+                        page.message = "Could not load notifications.";
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn mark_notification(&mut self, id: Uuid, read: bool, w: &mut Window, cx: &mut Context<Self>) {
+        let Screen::Navigation(nav) = &mut self.screen else {
+            return;
+        };
+        let Page::Inbox(page) = &mut nav.page else {
+            return;
+        };
+        if page.pending {
+            return;
+        }
+        page.pending = true;
+        page.message = "";
+        let client = nav.client.clone();
+        let request = self.navigation_request;
+        let work = cx
+            .background_executor()
+            .spawn(async move { client.set_notification_read(id, read).map(|_| ()) });
+        cx.spawn_in(w, async move |view, cx| {
+            let result = work.await;
+            _ = view.update_in(cx, |view, w, cx| {
+                if request != view.navigation_request {
+                    return;
+                }
+                if matches!(result, Err(EditError::SessionRejected)) {
+                    view.link_input = None;
+                    view.message = "Session expired. Sign in again.";
+                    view.screen = Self::identifier(w, cx);
+                    cx.notify();
+                    return;
+                }
+                if result.is_ok() {
+                    let Screen::Navigation(nav) = &view.screen else {
+                        return;
+                    };
+                    let client = nav.client.clone();
+                    view.load_inbox(client, w, cx);
+                    return;
+                }
+                let Screen::Navigation(nav) = &mut view.screen else {
+                    return;
+                };
+                let Page::Inbox(page) = &mut nav.page else {
+                    return;
+                };
+                page.pending = false;
+                page.message = "Could not update notification.";
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn delete_notification(&mut self, id: Uuid, w: &mut Window, cx: &mut Context<Self>) {
+        let Screen::Navigation(nav) = &mut self.screen else {
+            return;
+        };
+        let Page::Inbox(page) = &mut nav.page else {
+            return;
+        };
+        if page.pending {
+            return;
+        }
+        page.pending = true;
+        page.message = "";
+        let client = nav.client.clone();
+        let request = self.navigation_request;
+        let work = cx
+            .background_executor()
+            .spawn(async move { client.delete_notification(id).map(|_| ()) });
+        cx.spawn_in(w, async move |view, cx| {
+            let result = work.await;
+            _ = view.update_in(cx, |view, w, cx| {
+                if request != view.navigation_request {
+                    return;
+                }
+                if matches!(result, Err(EditError::SessionRejected)) {
+                    view.link_input = None;
+                    view.message = "Session expired. Sign in again.";
+                    view.screen = Self::identifier(w, cx);
+                    cx.notify();
+                    return;
+                }
+                if result.is_ok() {
+                    let Screen::Navigation(nav) = &view.screen else {
+                        return;
+                    };
+                    let client = nav.client.clone();
+                    view.load_inbox(client, w, cx);
+                    return;
+                }
+                let Screen::Navigation(nav) = &mut view.screen else {
+                    return;
+                };
+                let Page::Inbox(page) = &mut nav.page else {
+                    return;
+                };
+                page.pending = false;
+                page.message = "Could not delete notification.";
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn mark_all_notifications_read(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        let Screen::Navigation(nav) = &mut self.screen else {
+            return;
+        };
+        let Page::Inbox(page) = &mut nav.page else {
+            return;
+        };
+        if page.pending {
+            return;
+        }
+        page.pending = true;
+        page.message = "";
+        let client = nav.client.clone();
+        let request = self.navigation_request;
+        let work = cx
+            .background_executor()
+            .spawn(async move { client.mark_all_notifications_read().map(|_| ()) });
+        cx.spawn_in(w, async move |view, cx| {
+            let result = work.await;
+            _ = view.update_in(cx, |view, w, cx| {
+                if request != view.navigation_request {
+                    return;
+                }
+                if matches!(result, Err(EditError::SessionRejected)) {
+                    view.link_input = None;
+                    view.message = "Session expired. Sign in again.";
+                    view.screen = Self::identifier(w, cx);
+                    cx.notify();
+                    return;
+                }
+                if result.is_ok() {
+                    let Screen::Navigation(nav) = &view.screen else {
+                        return;
+                    };
+                    let client = nav.client.clone();
+                    view.load_inbox(client, w, cx);
+                    return;
+                }
+                let Screen::Navigation(nav) = &mut view.screen else {
+                    return;
+                };
+                let Page::Inbox(page) = &mut nav.page else {
+                    return;
+                };
+                page.pending = false;
+                page.message = "Could not mark all as read.";
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn open_notification(
+        &mut self,
+        id: Uuid,
+        board: Uuid,
+        item: Uuid,
+        w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Screen::Navigation(nav) = &mut self.screen else {
+            return;
+        };
+        let client = nav.client.clone();
+        let Page::Inbox(page) = &mut nav.page else {
+            return;
+        };
+        if page.pending {
+            return;
+        }
+        page.pending = true;
+        page.message = "";
+        self.navigation_request += 1;
+        let request = self.navigation_request;
+        let read = client.clone();
+        let work = cx
+            .background_executor()
+            .spawn(async move { read.set_notification_read(id, true).map(|_| ()) });
+        cx.spawn_in(w, async move |view, cx| {
+            let result = work.await;
+            _ = view.update_in(cx, |view, w, cx| {
+                if request != view.navigation_request {
+                    return;
+                }
+                if matches!(result, Err(EditError::SessionRejected)) {
+                    view.link_input = None;
+                    view.message = "Session expired. Sign in again.";
+                    view.screen = Self::identifier(w, cx);
+                    cx.notify();
+                    return;
+                }
+                view.navigate(client, Some(board), Some(item), w, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn reload_main_table(&mut self, board: Uuid, w: &mut Window, cx: &mut Context<Self>) {
         if self.refresh_item_entry(board, true, w, cx) {
             return;
@@ -219,7 +515,7 @@ impl Connected {
         let Screen::Navigation(nav) = &self.screen else {
             return;
         };
-        self.navigate(nav.client.clone(), Some(board), w, cx);
+        self.navigate(nav.client.clone(), Some(board), None, w, cx);
     }
 
     fn share(&mut self, w: &mut Window, cx: &mut Context<Self>) {
@@ -285,7 +581,7 @@ impl Connected {
             let opened = open_window(WindowOptions::default(), cx, move |w, cx| {
                 cx.new(|cx| {
                     let mut view = Self::new(port, None);
-                    view.navigate(client, Some(id), w, cx);
+                    view.navigate(client, Some(id), None, w, cx);
                     view
                 })
             });
@@ -294,7 +590,7 @@ impl Connected {
                 cx.notify();
             }
         } else {
-            self.navigate(client, Some(id), w, cx);
+            self.navigate(client, Some(id), None, w, cx);
         }
     }
 }
@@ -304,6 +600,14 @@ fn role_label(role: &str) -> String {
     match chars.next() {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
+    }
+}
+
+fn notifications_label(unread: i64) -> String {
+    if unread > 0 {
+        format!("Notifications ({unread})")
+    } else {
+        "Notifications".to_owned()
     }
 }
 
@@ -327,6 +631,11 @@ impl Navigation {
                             ),
                     );
                 }
+                column = column.child(
+                    Button::new("notifications")
+                        .label(notifications_label(self.unread))
+                        .on_click(cx.listener(|view, _, w, cx| view.open_inbox(w, cx))),
+                );
                 column = column.child(
                     Button::new("people")
                         .label("People")
@@ -385,6 +694,11 @@ impl Navigation {
                         ),
                 );
                 column = column.child(
+                    Button::new("notifications")
+                        .label(notifications_label(self.unread))
+                        .on_click(cx.listener(|view, _, w, cx| view.open_inbox(w, cx))),
+                );
+                column = column.child(
                     Button::new("share")
                         .label("Share")
                         .on_click(cx.listener(|view, _, w, cx| view.share(w, cx))),
@@ -404,6 +718,117 @@ impl Navigation {
                                 .label("Open in new window")
                                 .on_click(
                                     cx.listener(|view, _, w, cx| view.open_link(true, w, cx)),
+                                ),
+                        );
+                }
+                "Back to boards"
+            }
+            Page::Inbox(page) => {
+                column = column
+                    .child(Label::new("Notifications"))
+                    .child(Label::new(if page.unread == 0 {
+                        "You're all caught up".to_owned()
+                    } else {
+                        format!("{} unread", page.unread)
+                    }))
+                    .child(
+                        Button::new("notifications-read-all")
+                            .label("Mark all as read")
+                            .disabled(page.pending || page.unread == 0)
+                            .on_click(cx.listener(|view, _, w, cx| {
+                                view.mark_all_notifications_read(w, cx)
+                            })),
+                    );
+                if page.pending {
+                    column = column.child(Label::new("Loading notifications…"));
+                }
+                if !page.message.is_empty() {
+                    column = column.child(Label::new(page.message));
+                }
+                for notification in &page.notifications {
+                    let id = notification.id;
+                    let board = notification.board_id;
+                    let item = notification.item_id;
+                    let mark_read = notification.read_at.is_none();
+                    let mut heading = div()
+                        .id(SharedString::from(format!("notification-heading-{id}")))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Label::new(notification.title.clone())
+                                .id(SharedString::from(format!("notification-title-{id}"))),
+                        );
+                    if notification.read_at.is_none() {
+                        heading = heading.child(
+                            Label::new("Unread")
+                                .id(SharedString::from(format!("notification-unread-{id}"))),
+                        );
+                    }
+                    column =
+                        column.child(
+                            div()
+                                .id(SharedString::from(format!("notification-{id}")))
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(heading)
+                                .child(
+                                    Label::new(notification.message.clone()).id(
+                                        SharedString::from(format!("notification-message-{id}")),
+                                    ),
+                                )
+                                .child(
+                                    Label::new(format!(
+                                        "{} — {}",
+                                        notification.board_name, notification.item_name
+                                    ))
+                                    .id(SharedString::from(format!("notification-context-{id}"))),
+                                )
+                                .child(
+                                    Label::new(notification.created_at.clone()).id(
+                                        SharedString::from(format!("notification-created-{id}")),
+                                    ),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            Button::new(SharedString::from(format!(
+                                                "notification-read-{id}"
+                                            )))
+                                            .label(if mark_read {
+                                                "Mark read"
+                                            } else {
+                                                "Mark unread"
+                                            })
+                                            .disabled(page.pending)
+                                            .on_click(cx.listener(move |view, _, w, cx| {
+                                                view.mark_notification(id, mark_read, w, cx)
+                                            })),
+                                        )
+                                        .child(
+                                            Button::new(SharedString::from(format!(
+                                                "notification-delete-{id}"
+                                            )))
+                                            .label("Delete")
+                                            .disabled(page.pending)
+                                            .on_click(cx.listener(move |view, _, w, cx| {
+                                                view.delete_notification(id, w, cx)
+                                            })),
+                                        )
+                                        .child(
+                                            Button::new(SharedString::from(format!(
+                                                "notification-open-{id}"
+                                            )))
+                                            .label("Open")
+                                            .disabled(page.pending)
+                                            .on_click(cx.listener(move |view, _, w, cx| {
+                                                view.open_notification(id, board, item, w, cx)
+                                            })),
+                                        ),
                                 ),
                         );
                 }

@@ -91,6 +91,18 @@ impl MainTable {
             h.focus.focus(w, cx);
         }
     }
+    pub(super) fn focus_item(&self, id: Uuid, w: &mut Window, cx: &mut App) {
+        for row in self.headings.iter().flat_map(|h| &h.rows) {
+            let (row_item, focus) = {
+                let row = row.read(cx);
+                (row.edit.identity().1.as_uuid(), row.display_focus.clone())
+            };
+            if row_item == id {
+                focus.focus(w, cx);
+                return;
+            }
+        }
+    }
     pub(super) fn new(
         read: MainTableRead,
         board: Uuid,

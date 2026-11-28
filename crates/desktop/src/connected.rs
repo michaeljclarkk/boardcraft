@@ -202,7 +202,7 @@ impl Connected {
         cx: &mut Context<Self>,
     ) {
         let Some(board) = self.direct_board else {
-            self.navigate(client, None, w, cx);
+            self.navigate(client, None, None, w, cx);
             return;
         };
         self.screen = Screen::Loading;

@@ -52,6 +52,9 @@ struct BoardView {
     login: Option<Login>,
     navigation: Option<navigation::Page>,
     navigation_focus: FocusHandle,
+    /// Unread inbox rows for the board list; None until the count is read.
+    inbox_unread: Option<i64>,
+    inbox_count_pending: bool,
     logging_out: bool,
     message: &'static str,
     editor: Option<Editor>,
@@ -82,6 +85,8 @@ impl BoardView {
             login: None,
             navigation: None,
             navigation_focus: cx.focus_handle(),
+            inbox_unread: None,
+            inbox_count_pending: false,
             logging_out: false,
             message: "",
             editor: None,
@@ -209,7 +214,7 @@ impl BoardView {
         // no new edit or save can start while the logout request is in flight.
         if (self.login.is_some() && !matches!(self.login, Some(Login::Denied)))
             || self.logging_out
-            || matches!(self.navigation, Some(navigation::Page::Loading))
+            || self.navigation.as_ref().is_some_and(|page| page.pending())
             || self.editor.as_ref().is_some_and(|e| e.pending)
             || self.automation_pending
         {
@@ -246,6 +251,7 @@ impl BoardView {
             .label("Log out")
             .disabled(
                 self.logging_out
+                    || self.navigation.as_ref().is_some_and(|page| page.pending())
                     || self.editor.as_ref().is_some_and(|e| e.pending)
                     || self.automation_pending,
             )
@@ -258,6 +264,13 @@ impl Render for BoardView {
         let mut column = div().flex().flex_col().size_full().p_8().gap_6();
         if let Some(login) = &self.login {
             return login.form(column, self.message, cx);
+        }
+        if matches!(self.navigation, Some(navigation::Page::List(_))) {
+            self.ensure_inbox_count(cx);
+        } else if self.navigation.is_none() {
+            // Signing out or opening a board single view drops the badge; the
+            // next board list reads it again for the current session.
+            self.inbox_unread = None;
         }
         if let Some(page) = &self.navigation {
             return self.navigation_page(page, column, cx);

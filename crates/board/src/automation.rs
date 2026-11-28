@@ -104,12 +104,13 @@ pub fn run_renamed(
     item: ItemId,
     title: &str,
 ) -> Result<usize, postgres::Error> {
-    tx.query(
+    let rows = tx.query(
         "INSERT INTO automation_runs(id, automation_id, board_id, item_id, item_title)
          SELECT gen_random_uuid(), a.id, a.board_id, $2, $3
          FROM automations a WHERE a.board_id = $1 AND a.enabled
          RETURNING id",
         &[&board.as_uuid(), &item.as_uuid(), &title],
-    )
-    .map(|rows| rows.len())
+    )?;
+    crate::notifications::record_automation_runs(tx, board, item, title)?;
+    Ok(rows.len())
 }
