@@ -205,7 +205,6 @@ impl BoardView {
         } = target;
         if self.navigation_visit != visit
             || self.logging_out
-            || self.automation_pending
             || self.editor.is_some()
             || self.filters_open
             || self.selected.is_empty()

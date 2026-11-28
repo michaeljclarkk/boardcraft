@@ -1,5 +1,6 @@
 #![cfg(target_os = "android")]
 
+mod automation;
 mod connection;
 mod login;
 mod navigation;
@@ -69,8 +70,6 @@ struct BoardView {
     logging_out: bool,
     message: &'static str,
     editor: Option<Editor>,
-    automation_name: Entity<InputState>,
-    automation_pending: bool,
     board_search: Entity<InputState>,
     _board_search_events: Subscription,
     search_task: Option<Task<()>>,
@@ -87,7 +86,6 @@ struct BoardView {
     views_open: bool,
     view_name: Entity<InputState>,
     view_draft: Option<navigation::ViewDraft>,
-    automations_open: bool,
     filters_open: bool,
     filter_focus: FocusHandle,
     filter_groups: HashSet<String>,
@@ -108,8 +106,6 @@ struct Editor {
 
 impl BoardView {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let automation_name =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Automation name"));
         let board_search = cx.new(|cx| InputState::new(window, cx).placeholder("Quick find"));
         let view_name = cx.new(|cx| InputState::new(window, cx).placeholder("View name"));
         let board_search_events = cx.subscribe_in(
@@ -155,8 +151,6 @@ impl BoardView {
             logging_out: false,
             message: "",
             editor: None,
-            automation_name,
-            automation_pending: false,
             board_search,
             _board_search_events: board_search_events,
             search_task: None,
@@ -173,7 +167,6 @@ impl BoardView {
             views_open: false,
             view_name,
             view_draft: None,
-            automations_open: false,
             filters_open: false,
             filter_focus: cx.focus_handle().tab_stop(true),
             filter_groups: HashSet::new(),
@@ -284,11 +277,7 @@ impl BoardView {
     }
 
     fn open_editor(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        if self.logging_out
-            || self.login.is_some()
-            || self.editor.is_some()
-            || self.automation_pending
-        {
+        if self.logging_out || self.login.is_some() || self.editor.is_some() {
             return;
         }
         let item = match &self.navigation {
@@ -502,12 +491,7 @@ impl BoardView {
                             .child(row.title.clone()),
                     )
                     .accessibility_label(format!("Rename {}", row.title))
-                    .disabled(
-                        !editable
-                            || self.logging_out
-                            || self.editor.is_some()
-                            || self.automation_pending,
-                    )
+                    .disabled(!editable || self.logging_out || self.editor.is_some())
                     .on_click(cx.listener(move |view, _, w, cx| view.open_editor(id, w, cx))),
             )
             .into_any_element()
@@ -555,7 +539,6 @@ impl BoardView {
             || self.logging_out
             || self.navigation.as_ref().is_some_and(|page| page.pending())
             || self.editor.is_some()
-            || self.automation_pending
         {
             return;
         }
@@ -591,8 +574,7 @@ impl BoardView {
             .disabled(
                 self.logging_out
                     || self.navigation.as_ref().is_some_and(|page| page.pending())
-                    || self.editor.is_some()
-                    || self.automation_pending,
+                    || self.editor.is_some(),
             )
             .on_click(cx.listener(|view, _, w, cx| view.logout(w, cx)))
     }

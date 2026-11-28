@@ -24,14 +24,14 @@ pub fn rename_item(
     draft: &str,
     actor: Uuid,
     actor_name: &str,
-) -> Result<(StoredItem, bool), SaveError> {
+) -> Result<(StoredItem, bool, String), SaveError> {
     let (before, saved) = store::rename_with_previous(tx, board, item, revision, draft)?;
     let changed = before != saved.title;
     if changed {
         tx.execute("INSERT INTO item_activity(board_id,item_id,revision,actor_id,actor_name,field,before_value,after_value)
             VALUES ($1,$2,$3,$4,$5,'name',$6,$7)", &[&board.as_uuid(),&item.as_uuid(),&saved.revision,&actor,&actor_name,&before,&saved.title]).map_err(SaveError::Database)?;
     }
-    Ok((saved, changed))
+    Ok((saved, changed, before))
 }
 
 pub fn entries(

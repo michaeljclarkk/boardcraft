@@ -78,6 +78,19 @@ pub fn set_status(
     expected: i64,
     value: Option<String>,
 ) -> Result<Cell, Error> {
+    set_status_with_previous(tx, board, column, item, expected, value).map(|(cell, _)| cell)
+}
+
+/// The accepted revision and the value it replaced, for an observer that must
+/// evaluate the same transition the caller committed.
+pub fn set_status_with_previous(
+    tx: &mut Transaction<'_>,
+    board: BoardId,
+    column: Uuid,
+    item: ItemId,
+    expected: i64,
+    value: Option<String>,
+) -> Result<(Cell, Option<String>), Error> {
     let board = board.as_uuid();
     let item = item.as_uuid();
     tx.query_opt("SELECT 1 FROM board_items i JOIN board_groups g ON (g.board_id,g.id)=(i.board_id,i.group_id)
@@ -104,17 +117,23 @@ pub fn set_status(
         return Err(Error::Conflict);
     }
     if previous == value {
-        return Ok(Cell {
-            item,
-            revision,
-            value,
-        });
+        return Ok((
+            Cell {
+                item,
+                revision,
+                value,
+            },
+            previous,
+        ));
     }
     let revision = tx.query_one("INSERT INTO status_cells(board_id,column_id,item_id,value,revision) VALUES ($1,$2,$3,$4,1)
         ON CONFLICT(column_id,item_id) DO UPDATE SET value=excluded.value,revision=status_cells.revision+1 RETURNING revision", &[&board,&column,&item,&value])?.get(0);
-    Ok(Cell {
-        item,
-        revision,
-        value,
-    })
+    Ok((
+        Cell {
+            item,
+            revision,
+            value,
+        },
+        previous,
+    ))
 }

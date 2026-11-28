@@ -25,7 +25,13 @@ mod table_contract;
 mod views;
 pub use activity::ActivityEntry;
 pub use archive::{ArchiveRead, ArchivedGroup, ArchivedItem};
-pub use automation::Automation;
+pub use automation::{
+    AutomationAction, AutomationActionGroup, AutomationActionKind, AutomationCatalog,
+    AutomationChoice, AutomationColumn, AutomationCondition, AutomationConditionMode,
+    AutomationConditionOperator, AutomationDateBasis, AutomationDefinition, AutomationHistory,
+    AutomationItem, AutomationOutcome, AutomationPerson, AutomationRecipient, AutomationRule,
+    AutomationRun, AutomationTrigger, AutomationTriggerKind, RuleDisposition, SaveAutomationRule,
+};
 pub use directory::DirectoryUser;
 pub use group_fields::GroupFields;
 pub use item_placement::ItemReorder;

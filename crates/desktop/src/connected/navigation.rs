@@ -1,8 +1,6 @@
 use super::main_table::MainTable;
 use super::*;
-use boardcraft_mobile_edit_client::{
-    Automation, BoardSummary, DirectoryUser, InboxNotification, MainTableRead, SavedView,
-};
+use boardcraft_mobile_edit_client::{BoardSummary, DirectoryUser, InboxNotification, MainTableRead, SavedView};
 use gpui_kit::{
     assets::IconName,
     base::Selectable,
@@ -12,13 +10,7 @@ use gpui_kit::{
 
 enum ReadPage {
     List(Vec<BoardSummary>, i64),
-    Table(
-        MainTableRead,
-        Vec<SavedView>,
-        Vec<Automation>,
-        i64,
-        Vec<BoardSummary>,
-    ),
+    Table(MainTableRead, Vec<SavedView>, i64, Vec<BoardSummary>),
 }
 
 #[cfg(all(test, feature = "native-smoke"))]
@@ -445,12 +437,10 @@ impl Connected {
             let result = match board {
                 Some(id) => client.read_main_table(id).and_then(|read| {
                     let views = client.list_views(id)?;
-                    let automations = client.list_automations(id)?;
                     let unread = client.list_notifications(false)?.unread;
                     Ok(ReadPage::Table(
                         read,
                         views,
-                        automations,
                         unread,
                         client.list_boards()?,
                     ))
@@ -480,12 +470,17 @@ impl Connected {
                             controls.accept(list.clone(), None, w, cx);
                             (Page::List(list), unread)
                         }
-                        Ok(ReadPage::Table(read, saved, rules, unread, boards)) => {
+                        Ok(ReadPage::Table(read, saved, unread, boards)) => {
+                            let board_name = boards
+                                .iter()
+                                .find(|summary| Some(summary.id) == board)
+                                .map(|summary| summary.name.clone())
+                                .unwrap_or_default();
                             controls.accept(boards, board, w, cx);
                             let board = board.expect("selected board");
                             let mut table = MainTable::new(read, board, None, w, cx);
+                            table.board_name = board_name;
                             table.views = saved;
-                            table.automations = rules;
                             table.focus_first(w, cx);
                             if let Some(item) = item {
                                 table.focus_item(item, w, cx);

@@ -41,8 +41,39 @@ pub(super) fn route(
     };
     access::authorize(&mut tx, &account, board, op)?;
     let body = if let Some((col, item, draft)) = write {
-        let row = columns::set_status(&mut tx, board, col, item, draft.revision, draft.value)
-            .map_err(status)?;
+        let (row, previous) = columns::set_status_with_previous(
+            &mut tx,
+            board,
+            col,
+            item,
+            draft.revision,
+            draft.value,
+        )
+        .map_err(status)?;
+        if previous != row.value {
+            boardcraft_board::automation::apply(
+                &mut tx,
+                board,
+                item,
+                boardcraft_board::automation::Event::column_changed(
+                    account.id,
+                    &col.to_string(),
+                    previous,
+                    row.value.clone(),
+                    Some(format!("status:{}", row.revision)),
+                ),
+            )
+            .map_err(|error| match error {
+                boardcraft_board::automation::EngineError::Rejected(message) => {
+                    log::warn!("automation rejected: {message}");
+                    422u16
+                }
+                boardcraft_board::automation::EngineError::Database(error) => {
+                    log::error!("automation execution sqlstate={:?}", error.code());
+                    500u16
+                }
+            })?;
+        }
         serde_json::to_vec(&cell(row))
     } else {
         let t = columns::read_status(&mut tx, board).map_err(status)?;

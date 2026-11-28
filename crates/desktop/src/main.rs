@@ -13,6 +13,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use postgres::{Config, NoTls};
 use uuid::Uuid;
+mod automation;
 mod connected;
 mod recovery;
 use recovery::{Draft, Record, Recovery};

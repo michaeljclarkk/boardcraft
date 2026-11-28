@@ -1054,3 +1054,176 @@ fn member_edits_within_scope() {
         .unwrap();
     denied(&client, &f, EditError::PermissionDenied, &committed);
 }
+
+#[test]
+fn automation_routes_save_list_toggle_archive_and_record_runs() {
+    use boardcraft_account::Role;
+    use boardcraft_board::BoardId;
+    use boardcraft_mobile_edit_client::{
+        AutomationAction, AutomationActionKind, AutomationDefinition, AutomationRecipient,
+        AutomationTrigger, AutomationTriggerKind, EditClient, NameEdit, SaveAutomationRule,
+    };
+    let f = fixture::Fixture::start();
+    let owner = f.seed_account("automation-owner", "automation-password", Role::Owner);
+    let workspace = uuid::Uuid::new_v4();
+    {
+        let mut db = f.connect();
+        db.execute(
+            "INSERT INTO workspaces(id,creator_id,name,position,active,is_open) VALUES($1,$2,'Automation',0,true,false)",
+            &[&workspace, &owner],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO board_policies(board_id,workspace_id,name,position,kind,creator_id,active) VALUES($1,$2,'Review',0,'private',$3,true)",
+            &[&f.board, &workspace, &owner],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO workspace_members VALUES($1,$2)",
+            &[&workspace, &owner],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO board_subscribers VALUES($1,$2)",
+            &[&f.board, &owner],
+        )
+        .unwrap();
+    }
+    let host = boardcraft_mobile_edit_host::Host::start_with_navigation(
+        &f.schema.config,
+        BoardId::new(f.board).unwrap(),
+    )
+    .unwrap();
+    let token =
+        boardcraft_account::sign_in(&f.schema.config, "automation-owner", "automation-password")
+            .unwrap();
+    let c = EditClient::with_bearer(host.port, token.encoded()).unwrap();
+    let catalog = c.automation_catalog(f.board).unwrap();
+    assert!(
+        catalog
+            .columns
+            .iter()
+            .any(|column| column.id == "Name" && column.kind == "text")
+    );
+    assert_eq!(catalog.maximum_rules, 250);
+    let input = SaveAutomationRule {
+        id: format!("custom-{}", uuid::Uuid::new_v4().simple()),
+        expected_revision: 0,
+        name: "Renamed items".into(),
+        enabled: true,
+        definition: AutomationDefinition {
+            trigger: AutomationTrigger {
+                kind: AutomationTriggerKind::ColumnChanged,
+                column_id: Some("Name".into()),
+                value: None,
+                previous_value: None,
+            },
+            conditions: Vec::new(),
+            actions: vec![AutomationAction {
+                kind: AutomationActionKind::Notify,
+                column_id: None,
+                value: None,
+                person_ids: Vec::new(),
+                days: 0,
+                recipient: Some(AutomationRecipient::Creator),
+                title: Some("Renamed".into()),
+                message: Some("{item.name} was renamed".into()),
+                date_basis: None,
+            }],
+            conditions_mode: Default::default(),
+            action_groups: Vec::new(),
+        },
+    };
+    let saved = c.save_automation_rule(f.board, &input).unwrap();
+    assert_eq!(saved.revision, 1);
+    assert_eq!(saved.trigger, "When Name changes");
+    assert_eq!(c.list_automation_rules(f.board, false, 0).unwrap().len(), 1);
+    assert_eq!(c.list_automation_rules(f.board, true, 0).unwrap().len(), 0);
+
+    let renamed = c
+        .rename_main_table_item(
+            f.board,
+            fixture::FIRST,
+            &NameEdit {
+                title: "Review renamed".into(),
+                revision: 1,
+            },
+        )
+        .unwrap();
+    assert_eq!(renamed.title, "Review renamed");
+    let history = c.automation_history(f.board, None, 0).unwrap();
+    assert_eq!(history.runs.len(), 1);
+    assert_eq!(
+        history.runs[0].outcome,
+        boardcraft_mobile_edit_client::AutomationOutcome::Succeeded
+    );
+    let inbox = c.list_notifications(false).unwrap();
+    assert_eq!(inbox.unread, 1);
+    assert!(inbox.notifications[0].message.contains("Review renamed"));
+
+    let disabled = c
+        .set_automation_rule_enabled(f.board, &saved.id, saved.revision, false)
+        .unwrap();
+    assert!(!disabled.enabled);
+    assert_eq!(disabled.revision, 2);
+    assert_eq!(
+        c.set_automation_rule_enabled(f.board, &saved.id, saved.revision, false),
+        Err(boardcraft_mobile_edit_client::EditError::Conflict)
+    );
+    let archived = c
+        .set_automation_rule_archived(f.board, &saved.id, disabled.revision, true)
+        .unwrap();
+    assert!(archived.archived && !archived.enabled);
+    assert_eq!(
+        c.list_automation_rules(f.board, true, 0).unwrap()[0].id,
+        saved.id
+    );
+    s_member_cannot_manage(&f, &saved.id);
+}
+
+fn s_member_cannot_manage(f: &fixture::Fixture, id: &str) {
+    use boardcraft_account::Role;
+    use boardcraft_mobile_edit_client::EditClient;
+    let member = f.seed_account(
+        "automation-reader",
+        "automation-reader-password",
+        Role::Member,
+    );
+    {
+        let mut db = f.connect();
+        let workspace: uuid::Uuid = db
+            .query_one(
+                "SELECT workspace_id FROM board_policies WHERE board_id=$1",
+                &[&f.board],
+            )
+            .unwrap()
+            .get(0);
+        db.execute(
+            "INSERT INTO workspace_members VALUES($1,$2)",
+            &[&workspace, &member],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO board_subscribers VALUES($1,$2)",
+            &[&f.board, &member],
+        )
+        .unwrap();
+    }
+    let host = boardcraft_mobile_edit_host::Host::start_with_navigation(
+        &f.schema.config,
+        boardcraft_board::BoardId::new(f.board).unwrap(),
+    )
+    .unwrap();
+    let token = boardcraft_account::sign_in(
+        &f.schema.config,
+        "automation-reader",
+        "automation-reader-password",
+    )
+    .unwrap();
+    let c = EditClient::with_bearer(host.port, token.encoded()).unwrap();
+    assert!(c.list_automation_rules(f.board, true, 0).is_ok());
+    assert_eq!(
+        c.set_automation_rule_enabled(f.board, id, 1, true),
+        Err(boardcraft_mobile_edit_client::EditError::PermissionDenied)
+    );
+}

@@ -150,7 +150,6 @@ impl BoardView {
         if self.filters_open
             || self.editor.is_some()
             || self.logging_out
-            || self.automation_pending
             || status.is_pending()
         {
             return;
@@ -278,7 +277,6 @@ impl FilterDialog {
             if view.navigation_visit != self.visit
                 || view.editor.is_some()
                 || view.logging_out
-                || view.automation_pending
                 || !matches!(&view.navigation, Some(Page::Selected { board, status, .. })
                     if *board == self.board && (checking || status.editable) && !status.is_pending())
             {

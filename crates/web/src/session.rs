@@ -1,7 +1,8 @@
 //! Same-origin transport; the host alone holds the account bearer.
 use boardcraft_mobile_edit_client::{
-    ArchiveRead, BOARD_ACCESS_HEADER, EditError, MainTableGroup, MainTableRead, NameEdit,
-    SavedItem, SavedView, StatusCell, StatusEdit, StatusTable, TableCommand, ViewFilters,
+    ArchiveRead, AutomationCatalog, AutomationHistory, AutomationRule, BOARD_ACCESS_HEADER,
+    EditError, MainTableGroup, MainTableRead, NameEdit, SaveAutomationRule, SavedItem, SavedView,
+    StatusCell, StatusEdit, StatusTable, TableCommand, ViewFilters,
 };
 use futures::{FutureExt, future::Either};
 use serde::{Serialize, de::DeserializeOwned};
@@ -397,4 +398,132 @@ pub(super) async fn rename(
     )
     .await
     .map(|(row, _)| row)
+}
+
+pub(super) async fn automation_catalog(
+    binding: &str,
+    board: Uuid,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<AutomationCatalog, EditError> {
+    request(
+        binding,
+        "GET",
+        &format!("/navigation/boards/{board}/automation/catalog"),
+        None,
+        executor,
+    )
+    .await
+    .map(|(catalog, _)| catalog)
+}
+
+pub(super) async fn automation_rules(
+    binding: &str,
+    board: Uuid,
+    archived: bool,
+    offset: i64,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<Vec<AutomationRule>, EditError> {
+    request(
+        binding,
+        "GET",
+        &format!("/navigation/boards/{board}/automation/rules?archived={archived}&offset={offset}"),
+        None,
+        executor,
+    )
+    .await
+    .map(|(rules, _)| rules)
+}
+
+pub(super) async fn save_automation_rule(
+    binding: &str,
+    board: Uuid,
+    input: &SaveAutomationRule,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<AutomationRule, EditError> {
+    request(
+        binding,
+        "POST",
+        &format!("/navigation/boards/{board}/automation/rules"),
+        body(input)?,
+        executor,
+    )
+    .await
+    .map(|(rule, _)| rule)
+}
+
+pub(super) async fn set_automation_enabled(
+    binding: &str,
+    board: Uuid,
+    id: &str,
+    expected_revision: i64,
+    enabled: bool,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<AutomationRule, EditError> {
+    #[derive(Serialize)]
+    struct Edit {
+        expected_revision: i64,
+        enabled: bool,
+    }
+    request(
+        binding,
+        "POST",
+        &format!("/navigation/boards/{board}/automation/rules/{id}/enabled"),
+        body(&Edit {
+            expected_revision,
+            enabled,
+        })?,
+        executor,
+    )
+    .await
+    .map(|(rule, _)| rule)
+}
+
+pub(super) async fn set_automation_archived(
+    binding: &str,
+    board: Uuid,
+    id: &str,
+    expected_revision: i64,
+    archived: bool,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<AutomationRule, EditError> {
+    #[derive(Serialize)]
+    struct Edit {
+        expected_revision: i64,
+        archived: bool,
+    }
+    request(
+        binding,
+        "POST",
+        &format!("/navigation/boards/{board}/automation/rules/{id}/archived"),
+        body(&Edit {
+            expected_revision,
+            archived,
+        })?,
+        executor,
+    )
+    .await
+    .map(|(rule, _)| rule)
+}
+
+pub(super) async fn automation_history(
+    binding: &str,
+    board: Uuid,
+    rule_id: Option<&str>,
+    offset: i64,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<AutomationHistory, EditError> {
+    #[derive(Serialize)]
+    struct Query<'a> {
+        rule_id: Option<&'a str>,
+        offset: i64,
+    }
+    request(
+        binding,
+        "POST",
+        &format!("/navigation/boards/{board}/automation/history"),
+        body(&Query { rule_id, offset })?,
+        executor,
+    )
+    .await
+    .map(|(history, _)| history)
 }

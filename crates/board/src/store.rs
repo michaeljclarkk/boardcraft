@@ -210,6 +210,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
     }
     if tx
         .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version=19",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0019_automation_engine.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (19)", &[])?;
+    }
+    if tx
+        .query_opt(
             "SELECT version FROM rustday_migrations WHERE version=20",
             &[],
         )?
@@ -350,6 +360,18 @@ pub fn move_group_item(
     destination: &str,
     expected: i64,
 ) -> Result<GroupItem, MoveError> {
+    move_group_item_with_previous(tx, board, item, destination, expected).map(|(saved, _)| saved)
+}
+
+/// The accepted move also names the group the item left, so an automation
+/// watching `Group` sees the same before/after pair as the editor.
+pub fn move_group_item_with_previous(
+    tx: &mut postgres::Transaction<'_>,
+    board: BoardId,
+    item: ItemId,
+    destination: &str,
+    expected: i64,
+) -> Result<(GroupItem, String), MoveError> {
     use MoveError::*;
     lock_structure_writer(tx, board).map_err(Database)?;
     let mut row = tx.query_opt("SELECT i.group_id,i.title,i.revision,i.group_revision FROM board_items i JOIN board_groups g ON (g.board_id,g.id)=(i.board_id,i.group_id) WHERE i.board_id=$1 AND i.id=$2 AND g.active AND i.state=0 FOR UPDATE OF i FOR SHARE OF g", &[&board.0,&item.0]).map_err(Database)?.ok_or(MissingItem)?;
@@ -362,10 +384,11 @@ pub fn move_group_item(
     if !(row.get::<_, i64>("group_revision")..=row.get::<_, i64>("revision")).contains(&expected) {
         return Err(Conflict);
     }
-    if row.get::<_, &str>("group_id") != destination {
+    let previous: String = row.get("group_id");
+    if previous != destination {
         row = tx.query_one("UPDATE board_items SET group_id=$3,revision=revision+1,group_revision=revision+1 WHERE board_id=$1 AND id=$2 RETURNING group_id,title,revision", &[&board.0,&item.0,&destination]).map_err(Database)?;
     }
-    Ok(group_item(row, item))
+    Ok((group_item(row, item), previous))
 }
 
 pub fn load_items(

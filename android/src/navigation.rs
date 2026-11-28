@@ -10,7 +10,7 @@ pub(super) use filters::ViewDraft;
 mod status;
 use activity::ItemActivity;
 use boardcraft_mobile_edit_client::{
-    Automation, BoardSummary, InboxNotification, MainTableGroup, NotificationInbox, SavedView,
+    BoardSummary, InboxNotification, MainTableGroup, NotificationInbox, SavedView,
     view_filter_matches,
 };
 use status::StatusColumn;
@@ -27,7 +27,6 @@ pub(super) enum Page {
         groups: Vec<MainTableGroup>,
         status: StatusColumn,
         views: Vec<SavedView>,
-        automations: Vec<Automation>,
         filter: String,
     },
     Inbox(Inbox),
@@ -199,7 +198,6 @@ impl BoardView {
             self.view_draft = None;
             self.view_name
                 .update(cx, |input, cx| input.set_value("", window, cx));
-            self.automations_open = false;
             self.filters_open = false;
             self.filter_groups.clear();
             self.filter_status.clear();
@@ -217,14 +215,12 @@ impl BoardView {
             match board {
                 Some(id) => StatusColumn::load(&client, id).and_then(|(rows, groups, status)| {
                     let views = client.list_views(id)?;
-                    let automations = client.list_automations(id)?;
                     Ok(Page::Selected {
                         board: id,
                         rows,
                         groups,
                         status,
                         views,
-                        automations,
                         filter: retained_filter.unwrap_or_default(),
                     })
                 }),
@@ -422,7 +418,6 @@ impl BoardView {
     fn apply_saved_view(&mut self, id: Uuid, w: &mut Window, cx: &mut Context<Self>) {
         if self.editor.is_some()
             || self.logging_out
-            || self.automation_pending
             || self.filters_open
             || self.navigation.as_ref().is_some_and(Page::pending)
         {
@@ -445,151 +440,6 @@ impl BoardView {
         self.filter_blank_status = view.filters.include_empty_status;
         self.board_search
             .update(cx, |input, cx| input.set_value(value, w, cx));
-        cx.notify();
-    }
-
-    /// Rules are listed as read-only rows; only the name input and create
-    /// action mutate, matching the connected desktop table.
-    fn render_automations(
-        &self,
-        automations: &[Automation],
-        editable: bool,
-        board: Uuid,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let mut panel = div()
-            .id("automations")
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(Label::new("Automations"));
-        if editable {
-            panel = panel.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        Input::new(&self.automation_name)
-                            .id("automation-name")
-                            .large()
-                            .disabled(self.automation_pending || self.logging_out),
-                    )
-                    .child(
-                        Button::new("create-automation")
-                            .large()
-                            .flex_shrink_0()
-                            .label(if self.automation_pending {
-                                "Creating…"
-                            } else {
-                                "Create automation"
-                            })
-                            .disabled(self.automation_pending || self.logging_out)
-                            .on_click(cx.listener(move |view, _, w, cx| {
-                                view.create_automation(board, w, cx);
-                            })),
-                    ),
-            );
-        }
-        if automations.is_empty() {
-            panel = panel.child(Label::new("No automations"));
-        }
-        for rule in automations {
-            let id = rule.id;
-            let last = rule
-                .last_item_title
-                .as_ref()
-                .map(|title| format!("Last run: {title}"))
-                .unwrap_or_else(|| "Never run".to_owned());
-            panel = panel.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        Label::new(rule.name.clone())
-                            .id(SharedString::from(format!("automation-{id}"))),
-                    )
-                    .child(
-                        Label::new("When item renamed → Record a run")
-                            .id(SharedString::from(format!("automation-rule-{id}"))),
-                    )
-                    .child(
-                        Label::new(last).id(SharedString::from(format!("automation-last-{id}"))),
-                    ),
-            );
-        }
-        panel
-    }
-
-    fn create_automation(&mut self, board: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(conn), Some(client)) = (self.connection, self.client.clone()) else {
-            return;
-        };
-        if self.logging_out
-            || self.automation_pending
-            || !matches!(
-                &self.navigation,
-                Some(Page::Selected { board: current, .. }) if *current == board
-            )
-        {
-            return;
-        }
-        let name = self.automation_name.read(cx).value().trim().to_owned();
-        if name.is_empty() {
-            self.message = "Enter an automation name.";
-            cx.notify();
-            return;
-        }
-        self.message = "";
-        self.automation_pending = true;
-        let identifier = Login::identifier(window, cx);
-        let work = cx
-            .background_executor()
-            .spawn(async move { client.create_automation(board, Uuid::new_v4(), &name) });
-        cx.spawn_in(window, async move |view, cx| {
-            let result = work.await;
-            _ = view.update_in(cx, |view, window, cx| {
-                view.automation_pending = false;
-                if matches!(&result, Err(EditError::SessionRejected)) {
-                    view.forget_session(conn, identifier, cx);
-                    cx.notify();
-                    return;
-                }
-                let message = match result {
-                    Ok(saved) => {
-                        let Some(Page::Selected {
-                            board: current,
-                            automations,
-                            ..
-                        }) = &mut view.navigation
-                        else {
-                            return;
-                        };
-                        if *current != board {
-                            return;
-                        }
-                        automations.retain(|rule| rule.id != saved.id);
-                        automations.push(saved);
-                        automations.sort_by_key(|rule| rule.name.to_lowercase());
-                        view.automation_name
-                            .update(cx, |input, cx| input.set_value("", window, cx));
-                        "Automation created"
-                    }
-                    Err(EditError::Conflict) => "An automation with that name already exists.",
-                    Err(EditError::InvalidDraft) => "Enter an automation name.",
-                    Err(EditError::PermissionDenied) => {
-                        "No permission to create automations on this board."
-                    }
-                    Err(EditError::Missing) => "Board not found. Back to boards.",
-                    Err(EditError::AccessUnavailable) => "Access check unavailable. Try again.",
-                    Err(_) => "Could not create the automation.",
-                };
-                view.message = message;
-                cx.notify();
-            });
-        })
-        .detach();
         cx.notify();
     }
 
@@ -682,13 +532,9 @@ impl BoardView {
                 groups,
                 status,
                 views,
-                automations,
                 filter,
             } => {
-                let busy = self.logging_out
-                    || self.automation_pending
-                    || status.is_pending()
-                    || self.editor.is_some();
+                let busy = self.logging_out || status.is_pending() || self.editor.is_some();
                 let owner = cx.weak_entity();
                 let board_id = *board;
                 column = column
@@ -709,11 +555,9 @@ impl BoardView {
                             .action(
                                 Button::new("automations-toggle")
                                     .label("Automate")
-                                    .selected(self.automations_open)
                                     .disabled(busy)
-                                    .on_click(cx.listener(|view, _, _, cx| {
-                                        view.automations_open = !view.automations_open;
-                                        cx.notify();
+                                    .on_click(cx.listener(|view, _, w, cx| {
+                                        view.open_automations(w, cx);
                                     })),
                             )
                             .tools(
@@ -774,14 +618,6 @@ impl BoardView {
                             .disabled(busy || !status.editable)
                             .on_click(cx.listener(|view, _, w, cx| view.open_filters(w, cx))),
                     );
-                }
-                if self.automations_open {
-                    column = column.child(self.render_automations(
-                        automations,
-                        status.editable && !status.is_pending(),
-                        *board,
-                        cx,
-                    ));
                 }
                 let filtered = !filter.is_empty()
                     || !self.filter_groups.is_empty()
@@ -1208,10 +1044,7 @@ impl BoardView {
         );
         if matches!(page, Page::Selected { .. }) {
             page_view = page_view.child(self.search_dock(
-                self.logging_out
-                    || self.automation_pending
-                    || page.pending()
-                    || self.editor.is_some(),
+                self.logging_out || page.pending() || self.editor.is_some(),
                 cx,
             ));
         }

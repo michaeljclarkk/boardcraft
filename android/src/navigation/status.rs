@@ -359,7 +359,6 @@ impl BoardView {
             || status.id != target.column
             || !status.editable
             || self.logging_out
-            || self.automation_pending
             || self.editor.is_some()
             || status.is_pending()
             || status.needs_reload

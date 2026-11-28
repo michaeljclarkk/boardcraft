@@ -157,7 +157,7 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.editor.is_some() || self.logging_out || self.automation_pending {
+        if self.editor.is_some() || self.logging_out {
             return;
         }
         let Some(connection) = self.connection else {
