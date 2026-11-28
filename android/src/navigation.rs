@@ -1,12 +1,14 @@
 use super::*;
-use boardcraft_mobile_edit_client::{BoardSummary, SavedView, view_filter_matches};
+use boardcraft_mobile_edit_client::{Automation, BoardSummary, SavedView, view_filter_matches};
 
 pub(super) enum Page {
     List(Vec<BoardSummary>),
     Loading,
     Selected {
+        board: Uuid,
         rows: Vec<SavedItem>,
         views: Vec<SavedView>,
+        automations: Vec<Automation>,
         filter: String,
     },
     Denied,
@@ -36,9 +38,13 @@ impl BoardView {
         let work = cx.background_executor().spawn(async move {
             match board {
                 Some(id) => client.read_selected_board(id).and_then(|rows| {
-                    client.list_views(id).map(|views| Page::Selected {
+                    let views = client.list_views(id)?;
+                    let automations = client.list_automations(id)?;
+                    Ok(Page::Selected {
+                        board: id,
                         rows,
                         views,
+                        automations,
                         filter: String::new(),
                     })
                 }),
@@ -76,6 +82,151 @@ impl BoardView {
             return;
         };
         *filter = view.filter.clone();
+        cx.notify();
+    }
+
+    /// Rules are listed as read-only rows; only the name input and create
+    /// action mutate, matching the connected desktop table.
+    fn render_automations(
+        &self,
+        automations: &[Automation],
+        editable: bool,
+        board: Uuid,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut panel = div()
+            .id("automations")
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(Label::new("Automations"));
+        if editable {
+            panel = panel.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Input::new(&self.automation_name)
+                            .id("automation-name")
+                            .large()
+                            .disabled(self.automation_pending || self.logging_out),
+                    )
+                    .child(
+                        Button::new("create-automation")
+                            .large()
+                            .flex_shrink_0()
+                            .label(if self.automation_pending {
+                                "Creating…"
+                            } else {
+                                "Create automation"
+                            })
+                            .disabled(self.automation_pending || self.logging_out)
+                            .on_click(cx.listener(move |view, _, w, cx| {
+                                view.create_automation(board, w, cx);
+                            })),
+                    ),
+            );
+        }
+        if automations.is_empty() {
+            panel = panel.child(Label::new("No automations"));
+        }
+        for rule in automations {
+            let id = rule.id;
+            let last = rule
+                .last_item_title
+                .as_ref()
+                .map(|title| format!("Last run: {title}"))
+                .unwrap_or_else(|| "Never run".to_owned());
+            panel = panel.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        Label::new(rule.name.clone())
+                            .id(SharedString::from(format!("automation-{id}"))),
+                    )
+                    .child(
+                        Label::new("When item renamed → Record a run")
+                            .id(SharedString::from(format!("automation-rule-{id}"))),
+                    )
+                    .child(
+                        Label::new(last).id(SharedString::from(format!("automation-last-{id}"))),
+                    ),
+            );
+        }
+        panel
+    }
+
+    fn create_automation(&mut self, board: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(conn), Some(client)) = (self.connection, self.client.clone()) else {
+            return;
+        };
+        if self.logging_out
+            || self.automation_pending
+            || !matches!(
+                &self.navigation,
+                Some(Page::Selected { board: current, .. }) if *current == board
+            )
+        {
+            return;
+        }
+        let name = self.automation_name.read(cx).value().trim().to_owned();
+        if name.is_empty() {
+            self.message = "Enter an automation name.";
+            cx.notify();
+            return;
+        }
+        self.message = "";
+        self.automation_pending = true;
+        let identifier = Login::identifier(window, cx);
+        let work = cx
+            .background_executor()
+            .spawn(async move { client.create_automation(board, Uuid::new_v4(), &name) });
+        cx.spawn_in(window, async move |view, cx| {
+            let result = work.await;
+            _ = view.update_in(cx, |view, window, cx| {
+                view.automation_pending = false;
+                if matches!(&result, Err(EditError::SessionRejected)) {
+                    view.forget_session(conn, identifier, cx);
+                    cx.notify();
+                    return;
+                }
+                let message = match result {
+                    Ok(saved) => {
+                        let Some(Page::Selected {
+                            board: current,
+                            automations,
+                            ..
+                        }) = &mut view.navigation
+                        else {
+                            return;
+                        };
+                        if *current != board {
+                            return;
+                        }
+                        automations.retain(|rule| rule.id != saved.id);
+                        automations.push(saved);
+                        automations.sort_by_key(|rule| rule.name.to_lowercase());
+                        view.automation_name
+                            .update(cx, |input, cx| input.set_value("", window, cx));
+                        "Automation created"
+                    }
+                    Err(EditError::Conflict) => "An automation with that name already exists.",
+                    Err(EditError::InvalidDraft) => "Enter an automation name.",
+                    Err(EditError::PermissionDenied) => {
+                        "No permission to create automations on this board."
+                    }
+                    Err(EditError::Missing) => "Board not found. Back to boards.",
+                    Err(EditError::AccessUnavailable) => "Access check unavailable. Try again.",
+                    Err(_) => "Could not create the automation.",
+                };
+                view.message = message;
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 
@@ -132,8 +283,10 @@ impl BoardView {
                 "Refresh"
             }
             Page::Selected {
+                board,
                 rows,
                 views,
+                automations,
                 filter,
             } => {
                 column = column.child(Label::new("Board items").text_xl());
@@ -157,6 +310,12 @@ impl BoardView {
                 if !filter.is_empty() {
                     column = column.child(Label::new(format!("Filter: {filter}")));
                 }
+                column = column.child(self.render_automations(
+                    automations,
+                    self.connection.is_some(),
+                    *board,
+                    cx,
+                ));
                 let visible = rows
                     .iter()
                     .filter(|row| view_filter_matches(filter, &row.title))
@@ -168,7 +327,10 @@ impl BoardView {
                         "No items"
                     }));
                 }
-                for row in rows.iter().filter(|row| view_filter_matches(filter, &row.title)) {
+                for row in rows
+                    .iter()
+                    .filter(|row| view_filter_matches(filter, &row.title))
+                {
                     column = column.child(Label::new(row.title.clone()));
                 }
                 "Back to boards"

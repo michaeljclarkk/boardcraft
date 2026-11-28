@@ -55,6 +55,8 @@ struct BoardView {
     logging_out: bool,
     message: &'static str,
     editor: Option<Editor>,
+    automation_name: Entity<InputState>,
+    automation_pending: bool,
 }
 
 struct Editor {
@@ -68,6 +70,8 @@ struct Editor {
 
 impl BoardView {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let automation_name =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Automation name"));
         let mut view = Self {
             board: Board {
                 title: "Sample board".into(),
@@ -81,6 +85,8 @@ impl BoardView {
             logging_out: false,
             message: "",
             editor: None,
+            automation_name,
+            automation_pending: false,
         };
         match launch_connection() {
             Ok(None) => {
@@ -205,6 +211,7 @@ impl BoardView {
             || self.logging_out
             || matches!(self.navigation, Some(navigation::Page::Loading))
             || self.editor.as_ref().is_some_and(|e| e.pending)
+            || self.automation_pending
         {
             return;
         }
@@ -237,7 +244,11 @@ impl BoardView {
         Button::new("logout")
             .large()
             .label("Log out")
-            .disabled(self.logging_out || self.editor.as_ref().is_some_and(|e| e.pending))
+            .disabled(
+                self.logging_out
+                    || self.editor.as_ref().is_some_and(|e| e.pending)
+                    || self.automation_pending,
+            )
             .on_click(cx.listener(|view, _, w, cx| view.logout(w, cx)))
     }
 }
