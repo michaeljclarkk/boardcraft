@@ -11,7 +11,7 @@ Everything here is our own work: our schema, our rules, our controls, our names 
 <!-- PORT-STATUS:START -->
 ## Port map
 
-**Overall: 14%** — mean across 16 areas. A handoff names one area; it includes its Rust rules, UI and desktop/browser/Android behaviour. Once the contract is stable, UI and cross-platform work run as two concurrent subagents.
+**Overall: 15%** — mean across 16 areas. A handoff names one area; it includes its Rust rules, UI and desktop/browser/Android behaviour. Once the contract is stable, UI and cross-platform work run as two concurrent subagents.
 
 | Area | What it covers | Code home | Ported |
 |---|---|---|---|
@@ -24,7 +24,7 @@ Everything here is our own work: our schema, our rules, our controls, our names 
 | [Automation engine](areas/automation.md) | Triggers, conditions, actions, scheduling and retries. Port the rule engine, its editor UI and its desktop/browser/Android behaviour together. | `crates/board/src/automation`, `crates/desktop/src/automation`, `crates/web/src/automation` | 10% |
 | [Notifications](areas/notifications.md) | Inbox, preferences, seen state and email/push delivery. A notification points at the record and action that produced it. | `crates/board/src/notifications.rs`, `crates/mobile-edit-host/src/notifications.rs`, `crates/mobile-edit-client/src/notifications.rs`, `crates/desktop/src/connected/navigation.rs`, `android/src/navigation.rs` | 10% |
 | [History and activity](areas/history.md) | Activity log, updates, revisions and undo. History is append-only and survives restart. | `crates/board/src/history` | 5% |
-| [Realtime](areas/realtime.md) | Live board refresh and presence: the SignalR equivalent. A second client sees an accepted change without a manual reload. | `crates/mobile-edit-host/src/realtime`, `crates/mobile-edit-client/src/realtime` | 0% |
+| [Realtime](areas/realtime.md) | Live board refresh and presence: the SignalR equivalent. A second client sees an accepted change without a manual reload. | `crates/mobile-edit-host/src/realtime.rs`, `crates/mobile-edit-client/src/realtime.rs`, `crates/desktop/src/connected/navigation.rs`, `android/src/lib.rs`, `android/src/realtime.rs` | 10% |
 | [Durable jobs](areas/jobs.md) | Background scheduling that survives restart: the Hangfire equivalent. Enqueue only after the owning transaction commits, and make retries safe. | `crates/jobs` | 0% |
 | [UI components](areas/ui.md) | GPUI Kit controls, layout, theme, dialogs, keyboard and focus. Shared controls live in `boardcraft-ui`; screens own their composition and drafts. | `crates/boardcraft-ui`, `crates/desktop/src`, `crates/web/src` | 30% |
 | [Files and conversations](areas/files.md) | Attachments, previews, comments and chat. Files are stored once, previewed safely and reachable from the record they belong to. | `crates/files`, `crates/boardcraft-ui/src/files` | 0% |
