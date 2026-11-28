@@ -386,8 +386,10 @@ fn board_tools_open_group_and_automation_controls_and_leave_reload_reachable(
     cx.run_until_parked();
     cx.update_window(window, |_, w, cx| {
         w.render_frame(cx);
-        assert!(table(view.read(cx)).automations_open);
-        assert!(w.find("automation-name").visible());
+        assert!(table(view.read(cx)).automation_panel.is_some());
+        assert!(w.try_find("automation-tab-manage").is_some());
+        w.click("close-automation-panel", cx);
+        w.render_frame(cx);
         view.update(cx, |v, cx| {
             let Screen::Navigation(nav) = &mut v.screen else {
                 unreachable!()
@@ -420,6 +422,25 @@ fn board_tools_open_group_and_automation_controls_and_leave_reload_reachable(
             "Could not reload board. Retry loading before editing again."
         );
         assert!(!table(view.read(cx)).pending);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn automate_opens_the_management_panel_and_history_tab(cx: &mut TestAppContext) {
+    let (window, _view) = visit(cx);
+    cx.update_window(window, |_, w, cx| {
+        w.render_frame(cx);
+        w.click("automations-toggle", cx);
+        w.render_frame(cx);
+        assert!(w.try_find("automation-tab-history").is_some());
+        assert!(w.try_find("automation-tab-manage").is_some());
+        w.click("automation-tab-history", cx);
+        w.render_frame(cx);
+        assert!(w.try_find("history-rule-filter").is_some());
+        w.click("automation-tab-manage", cx);
+        w.render_frame(cx);
+        assert!(w.try_find("reload-automation-rules").is_some());
     })
     .unwrap();
 }

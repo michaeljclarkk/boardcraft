@@ -26,7 +26,6 @@ use uuid::Uuid;
 
 const MAX_GROUPS: usize = 8;
 const RULE_PAGE: i64 = 250;
-const HISTORY_PAGE: i64 = 50;
 
 /// Selected view inside the automation panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -507,13 +506,6 @@ impl Editor {
         }
     }
 
-    fn condition(&self, group: Option<usize>, index: usize) -> Option<&ConditionDraft> {
-        match group {
-            Some(group) => self.groups.get(group)?.conditions.get(index),
-            None => self.conditions.get(index),
-        }
-    }
-
     fn action(&self, group: Option<usize>, index: usize) -> Option<&ActionDraft> {
         match group {
             Some(group) => self.groups.get(group)?.actions.get(index),
@@ -791,14 +783,6 @@ impl AutomationPanel {
     /// Focus the panel's close control so Escape and Tab behave like Tuesday.
     pub fn focus_first(&self, window: &mut Window, cx: &mut App) {
         self.close_focus.focus(window, cx);
-    }
-
-    pub fn tab(&self) -> AutomationTab {
-        self.tab
-    }
-
-    fn owner_can_edit_rule(&self, rule: &AutomationRule) -> bool {
-        self.owner && rule.definition.is_some() && !rule.archived
     }
 
     // -- loading ----------------------------------------------------------
@@ -2077,11 +2061,10 @@ impl AutomationPanel {
                         .items_center()
                         .justify_between()
                         .child(Label::new(run.rule_name.clone()))
-                        .child(Label::new(match run.outcome {
-                            boardcraft_mobile_edit_client::AutomationOutcome::Succeeded => "Succeeded",
-                            boardcraft_mobile_edit_client::AutomationOutcome::SkippedDisabled => "Skipped disabled",
-                            boardcraft_mobile_edit_client::AutomationOutcome::ConditionNotMet => "Condition not met",
-                        }).text_xs()),
+                        .child(
+                            Label::new(outcome_label(run.outcome))
+                                .text_xs(),
+                        ),
                 )
                 .child(Label::new(format!(
                     "{} � {} � rule revision {}",
@@ -2507,11 +2490,23 @@ impl AutomationPanel {
             ));
         }
         conditions = conditions.child(
-            Button::new("add-automation-condition")
-                .small()
-                .label("Add condition")
-                .disabled(total_conditions >= maximum_conditions)
-                .on_click(cx.listener(|panel, _, w, cx| panel.add_condition(None, w, cx))),
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    Button::new("add-automation-condition")
+                        .small()
+                        .label("Add condition")
+                        .disabled(total_conditions >= maximum_conditions)
+                        .on_click(cx.listener(|panel, _, w, cx| panel.add_condition(None, w, cx))),
+                )
+                .child(
+                    Button::new("clear-automation-trigger")
+                        .small()
+                        .label("Clear trigger")
+                        .on_click(cx.listener(|panel, _, _, cx| panel.clear_trigger(cx))),
+                ),
         );
         body = body.child(conditions);
         for (index, action) in editor.actions.iter().enumerate() {
@@ -2652,7 +2647,7 @@ impl AutomationPanel {
             Button::new("add-automation-group")
                 .small()
                 .label("Add conditional actions")
-                .disabled(editor.groups.len() >= 8 || total_actions >= maximum_actions)
+                .disabled(editor.groups.len() >= MAX_GROUPS || total_actions >= maximum_actions)
                 .on_click(cx.listener(|panel, _, w, cx| panel.add_group(w, cx))),
         );
         let mut footer = div()
@@ -3122,7 +3117,7 @@ impl AutomationPanel {
         trigger: AutomationTriggerKind,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut overlay = div()
+        let overlay = div()
             .id("automation-composer-overlay")
             .absolute()
             .inset_0()
@@ -3243,4 +3238,5 @@ fn notification_tokens(trigger: AutomationTriggerKind) -> Vec<(&'static str, &'s
     }
     tokens
 }
+
 
