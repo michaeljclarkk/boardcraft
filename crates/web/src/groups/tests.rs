@@ -61,15 +61,23 @@ fn advance_search(cx: &mut TestAppContext, millis: u64) {
 }
 
 #[gpui_kit::test]
-fn selection_bar_stays_below_scroll_and_returns_dialog_focus(cx: &mut TestAppContext) {
+fn selection_bar_overlays_scroll_without_reflow_and_returns_dialog_focus(cx: &mut TestAppContext) {
     let (handle, table) = visit_titles(cx, true, ["Ink", "Sketch"]);
     cx.simulate_window_resize(handle, size(px(681.), px(450.)));
     cx.update_window(handle, |_, w, cx| {
         w.render_frame(cx);
+        let original_scroll = w.find("content-scroll").bounds();
+        let original_item = w.find(format!("item-{}", Uuid::from_u128(59))).bounds();
         w.click(format!("check-{}", Uuid::from_u128(59)), cx);
         let bar = w.find("board-selection-bar").bounds();
         let scroll = w.find("content-scroll").bounds();
-        assert!(bar.top() >= scroll.bottom());
+        assert_eq!(scroll, original_scroll);
+        assert_eq!(
+            w.find(format!("item-{}", Uuid::from_u128(59))).bounds(),
+            original_item
+        );
+        assert!(bar.top() < scroll.bottom());
+        assert!(bar.bottom() < scroll.bottom());
         assert!(bar.bottom() <= px(450.));
         assert_eq!(w.find("board-selection-count").label(), Some("1 selected"));
         assert!(
@@ -86,6 +94,7 @@ fn selection_bar_stays_below_scroll_and_returns_dialog_focus(cx: &mut TestAppCon
         );
         assert!(table.read(cx).scroll.offset().y < px(0.));
         assert_eq!(w.find("board-selection-bar").bounds(), bar);
+        assert!(w.find("add-input-g-b").bounds().bottom() < bar.top());
         w.click("archive-selected", cx);
     })
     .unwrap();

@@ -1028,6 +1028,7 @@ impl Render for Table {
         }));
         div()
             .id("main-table-viewport")
+            .relative()
             .flex()
             .flex_col()
             .size_full()
@@ -1040,13 +1041,28 @@ impl Render for Table {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
-                    .child(div().px_6().pb_6().child(body)),
+                    .child(
+                        div()
+                            .px_6()
+                            // Leave the final row reachable above the floating actions
+                            // without shrinking the table's scrolling viewport.
+                            .pb(if self.inventory.is_none() && !self.selection.is_empty() {
+                                gpui_kit::rems(7.)
+                            } else {
+                                gpui_kit::rems(1.5)
+                            })
+                            .child(body),
+                    ),
             )
             .children(
                 (self.inventory.is_none() && !self.selection.is_empty()).then(|| {
                     let footer = div()
+                        .id("selection-overlay")
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
                         .flex()
-                        .flex_shrink_0()
                         .px_3()
                         .py_3()
                         .child(self.selection_bar(cx));

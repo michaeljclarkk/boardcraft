@@ -706,6 +706,7 @@ fn main() {
     };
     application().with_assets(DesktopAssets).run(move |cx| {
         init(cx);
+        boardcraft_ui::apply_board_theme(cx);
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();

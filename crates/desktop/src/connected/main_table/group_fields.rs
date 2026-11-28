@@ -190,6 +190,23 @@ impl MainTable {
     }
     pub(super) fn group_name(&self, h: &Heading, cx: &mut Context<Connected>) -> AnyElement {
         let id = h.id.clone();
+        // The group's saved colour is data. It remains fully legible for a
+        // Member or Viewer, who can read the name but cannot rename the group.
+        let colour = rgb(u32::from_str_radix(&h.colour[1..], 16).expect("validated colour"));
+        if !self.manageable {
+            return div()
+                .h_6()
+                .px_2()
+                .flex()
+                .items_center()
+                .child(
+                    Label::new(h.name.clone())
+                        .id(SharedString::from(format!("group-name-{id}")))
+                        .text_lg()
+                        .text_color(colour),
+                )
+                .into_any_element();
+        }
         let geometry = self.drag.clone();
         let geometry_id = id.clone();
         div()
@@ -202,7 +219,8 @@ impl MainTable {
                 Button::new(SharedString::from(format!("group-name-{id}")))
                     .small()
                     .ghost()
-                    .label(h.name.clone())
+                    .accessibility_label(h.name.clone())
+                    .child(div().text_lg().text_color(colour).child(h.name.clone()))
                     .track_focus(&h.name_focus)
                     .disabled(self.pending || self.reconcile || !self.manageable)
                     .on_click(cx.listener(move |v, event: &ClickEvent, w, cx| {

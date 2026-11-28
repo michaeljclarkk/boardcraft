@@ -738,10 +738,6 @@ impl MainTable {
                 ),
         );
         header = header.child(self.group_name(h, cx));
-        // This colour is saved user data, not application chrome.
-        header = header.child(div().size_3().bg(rgb(
-            u32::from_str_radix(&h.colour[1..], 16).expect("validated colour"),
-        )));
         let visible = self.matching_count(h, cx);
         let count: SharedString = if self.filter.trim().is_empty() {
             h.count.clone()

@@ -81,6 +81,7 @@ struct BoardView {
     _search_focus_events: Subscription,
     folded: HashMap<String, bool>,
     selected: HashSet<Uuid>,
+    table_scroll: ScrollHandle,
     navigation_title: String,
     views_open: bool,
     automations_open: bool,
@@ -162,6 +163,7 @@ impl BoardView {
             _search_focus_events: search_focus_events,
             folded: HashMap::new(),
             selected: HashSet::new(),
+            table_scroll: ScrollHandle::new(),
             navigation_title: "Board".into(),
             views_open: false,
             automations_open: false,
@@ -590,7 +592,7 @@ impl BoardView {
 }
 
 impl Render for BoardView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut column = div().flex().flex_col().size_full().p_4().gap_3();
         // The feed carries one session's token; a sign-out drops it so the next
         // sign-in opens a feed for the new token.
@@ -609,7 +611,7 @@ impl Render for BoardView {
         }
         self.ensure_changes(cx);
         if let Some(page) = &self.navigation {
-            return self.navigation_page(page, column, cx);
+            return self.navigation_page(page, column, window, cx);
         }
         column = column
             .track_focus(&self.navigation_focus)

@@ -51,7 +51,7 @@ impl StatusColumn {
         let Some(cell) = self.cells.get(&item) else {
             // Separate authorized snapshots may straddle an archive. Never invent a baseline.
             return div()
-                .w_24()
+                .w(rems(8.75))
                 .child(Label::new("Unavailable"))
                 .into_any_element();
         };
@@ -66,7 +66,7 @@ impl StatusColumn {
         let disabled = busy || self.pending.is_some() || !self.editable;
         let trigger = Button::new(SharedString::from(format!("status-{item}")))
             .large()
-            .w_24()
+            .w(rems(8.75))
             .flex_shrink_0()
             .bg(color)
             .text_color(if color.l < 0.45 {

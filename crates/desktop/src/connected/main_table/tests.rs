@@ -62,6 +62,40 @@ fn selected(view: &Entity<Connected>, cx: &App) -> Vec<Uuid> {
 }
 
 #[gpui_kit::test]
+fn compact_header_and_link_footer_keep_actions_reachable(cx: &mut TestAppContext) {
+    let (window, view) = visit(cx);
+    cx.simulate_window_resize(window, size(px(681.), px(1025.)));
+    cx.update_window(window, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(w.find("share").bounds().bottom() < w.find("new-item").bounds().top());
+        let back = w.find("board-list").bounds();
+        let reload = w.find("reload-table").bounds();
+        let inbox = w.find("notifications").bounds();
+        assert_eq!(back.center().y, reload.center().y);
+        assert_eq!(reload.center().y, inbox.center().y);
+        let address = w.find("board-link").bounds();
+        let open = w.find("open-link").bounds();
+        assert_eq!(address.center().y, open.center().y);
+        assert!(address.right() < open.left());
+        w.click("share", cx);
+        assert_eq!(
+            w.find("share-address").value(),
+            Some("http://127.0.0.1:0/boards/00000000-0000-0000-0000-000000000008")
+        );
+        w.click("board-link", cx);
+        w.input("invalid address", cx);
+        w.click("open-link", cx);
+        assert_eq!(
+            view.read(cx).message,
+            "Enter a board link from this connection."
+        );
+        assert_eq!(w.find("board-link").focused(), Some(true));
+        assert_eq!(w.find("board-link").value(), Some("invalid address"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn search_waits_for_idle_and_restores_hidden_selection_and_entry_draft(cx: &mut TestAppContext) {
     let (window, view) = visit(cx);
     let sketch = Uuid::from_u128(42);

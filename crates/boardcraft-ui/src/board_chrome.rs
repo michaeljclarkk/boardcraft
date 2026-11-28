@@ -547,6 +547,7 @@ impl RenderOnce for BoardRow {
             .min_w(width)
             .items_stretch()
             .min_h(if self.touch { rems(2.75) } else { rems(2.25) })
+            .bg(cx.theme().group_box)
             .border_b_1()
             .border_color(cx.theme().border)
             .child(

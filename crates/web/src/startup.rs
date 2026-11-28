@@ -42,6 +42,7 @@ pub fn start() -> Result<(), JsValue> {
     let app = Application::with_platform(platform).with_assets(ShellAssets);
     let launch = |cx: &mut App| {
         gpui_kit::init(cx);
+        boardcraft_ui::apply_board_theme(cx);
         // The web backend's initial .SystemUIFont alias must resolve before Root
         // applies the theme. This font is embedded, never requested from a CDN.
         if cx

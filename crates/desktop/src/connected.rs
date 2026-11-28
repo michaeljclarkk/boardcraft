@@ -5,6 +5,7 @@ use boardcraft_desktop::Save;
 use boardcraft_mobile_edit_client::{Credentials, EditClient, EditError};
 use gpui_kit::base::Disableable;
 use gpui_kit::component::{
+    Sizable,
     button::Button,
     input::{Input, InputState},
     label::Label,
@@ -420,18 +421,37 @@ impl Render for Connected {
             Screen::Navigation(nav) => {
                 return column
                     .p_0()
+                    .gap_0()
                     .overflow_hidden()
                     .child(div().flex_1().min_h_0().min_w_0().child(nav.render(w, cx)))
                     .child(
-                        Input::new(self.link_input.as_ref().expect("browse input"))
-                            .id("board-link"),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py_2()
+                            .flex_shrink_0()
+                            .child(
+                                Input::new(self.link_input.as_ref().expect("browse input"))
+                                    .id("board-link")
+                                    .small()
+                                    .flex_1()
+                                    .min_w_0(),
+                            )
+                            .child(
+                                Button::new("open-link")
+                                    .small()
+                                    .label("Open board link")
+                                    .on_click(
+                                        cx.listener(|view, _, w, cx| view.open_link(false, w, cx)),
+                                    ),
+                            ),
                     )
-                    .child(
-                        Button::new("open-link")
-                            .label("Open board link")
-                            .on_click(cx.listener(|view, _, w, cx| view.open_link(false, w, cx))),
-                    )
-                    .child(Label::new(self.message));
+                    .children(
+                        (!self.message.is_empty())
+                            .then(|| div().px_3().pb_2().child(Label::new(self.message))),
+                    );
             }
             Screen::Retry(_) => "Retry loading",
             Screen::Board {

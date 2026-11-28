@@ -2,7 +2,7 @@
 id: ui
 name: UI components
 order: 12
-percent: 42
+percent: 43
 code: crates/boardcraft-ui, crates/desktop/src, crates/web/src, android/src
 ---
 # UI components
@@ -19,6 +19,8 @@ GPUI Kit controls, layout, theme, dialogs, keyboard and focus. Shared controls l
 - [ ] Empty, loading and error states everywhere
 
 ## Notes
+
+2026-11-28 continuation: Windows and browser now initialize the reference Night palette with blue commands and charcoal table surfaces. Browser selection overlays the table without resizing it. Windows Share is in the title row, board utilities/link entry are compact, and group names retain their colour for Members. Computer Use observed these surfaces on matched visible board content; Windows and browser shared the same disposable board identity. Windows automatic <=700px drawer and same-board draft retention passed GPUI interaction tests, but an exact-size Windows live comparison could not be completed. Android horizontal/frozen-name geometry is implemented and built; its updated connected table remains unverified after the prior host expired. Estimate 43% credits observed desktop/browser work only; native Main table Windows 45%, Android remains 38%. Earlier estimates below describe the prior slice.
 
 Windows, WASM and Android use shared Rust board chrome. Windows/WASM now compose `BoardSelectionBar` below the scrolling table, with a count tile, Archive, Delete, Move to and Clear, restored dialog focus and embedded action icons. Android uses `BoardFindDock` and a Rust native filter dialog with status/group choices, delayed preview, Apply/Close retention and Discard restoration. Its grouped touch rows expose name editing, Status and activity within the phone width. Android uses visible text indicators where its host has no SVG assets. No second view layer was added.
 

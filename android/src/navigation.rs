@@ -191,6 +191,7 @@ impl BoardView {
             self.search_invalid = false;
             self.folded.clear();
             self.selected.clear();
+            self.table_scroll.set_offset(Point::default());
             self.board_search
                 .update(cx, |input, cx| input.set_value("", window, cx));
             self.views_open = false;
@@ -584,9 +585,10 @@ impl BoardView {
         &self,
         page: &Page,
         mut column: Div,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let scroller = div()
+        let mut scroller = div()
             .id(if matches!(page, Page::Activity(_)) {
                 "activity-scroll"
             } else {
@@ -618,6 +620,7 @@ impl BoardView {
                     cx.stop_propagation();
                 }
             }));
+        scroller.style().restrict_scroll_to_axis = Some(true);
         let action = match page {
             Page::Loading => {
                 return div()
@@ -772,6 +775,30 @@ impl BoardView {
                             "Try another search or review this view’s filters.",
                         ));
                 }
+                // The native shell hosts BoardTable's mobile.css geometry: keep
+                // the name track stable, but release space for data while its
+                // frozen surface narrows to ten rem. One scroll owner keeps
+                // every group, heading and Status column on the same grid.
+                let viewport = (window.viewport_size().width / window.rem_size() - 1.5).max(0.);
+                let name_track = (viewport - 4.).clamp(10., 38.75);
+                let rail = 2.375;
+                let status_width = 8.75;
+                let table_width = rail + name_track + status_width;
+                let scroll_left = (-self.table_scroll.offset().x / window.rem_size())
+                    .clamp(0., (table_width - viewport).max(0.));
+                let frozen_name = (name_track - scroll_left).clamp(10., name_track);
+                let mut grid = div()
+                    .id("mobile-table-horizontal-scroll")
+                    .w_full()
+                    .min_w_0()
+                    .overflow_x_scroll()
+                    .track_scroll(&self.table_scroll)
+                    // Frozen geometry is composed by BoardView, outside the
+                    // scroll element's own retained render state.
+                    .on_scroll(cx.listener(|_, _, _, cx| cx.notify()));
+                grid.style().restrict_scroll_to_axis = Some(true);
+                let mut group_tables = div().flex().flex_col().w(rems(table_width));
+                column = column.p_3();
                 for group in groups {
                     if !self.filter_groups.is_empty()
                         && !self.filter_groups.contains(group.id())
@@ -827,7 +854,7 @@ impl BoardView {
                         Button::new(SharedString::from(format!("mobile-group-{group_id}")))
                             .ghost()
                             .large()
-                            .w_full()
+                            .w(rems(viewport))
                             .text_color(
                                 Hsla::parse_hex(group.colour()).unwrap_or(cx.theme().foreground),
                             )
@@ -842,7 +869,13 @@ impl BoardView {
                                 view.folded.insert(toggle_id.clone(), !folded);
                                 cx.notify();
                             }));
-                    column = column.child(heading);
+                    group_tables = group_tables.child(
+                        div()
+                            .relative()
+                            .left(rems(scroll_left))
+                            .w(rems(viewport))
+                            .child(heading),
+                    );
                     if folded {
                         continue;
                     }
@@ -868,24 +901,39 @@ impl BoardView {
                         .id(SharedString::from(format!("mobile-table-{group_id}")))
                         .flex()
                         .flex_col()
-                        .w_full()
-                        .min_w_0()
+                        .w(rems(table_width))
                         .child(
                             div()
+                                .relative()
                                 .flex()
                                 .items_center()
                                 .min_h_11()
                                 .border_b_1()
                                 .border_color(cx.theme().border)
-                                .child(div().w_8().flex_shrink_0().child(checkbox))
-                                .child(div().flex_1().min_w_0().child(Label::new("Item")))
                                 .child(
                                     div()
-                                        .w_24()
-                                        .flex_shrink_0()
+                                        .absolute()
+                                        .left(rems(rail + name_track))
+                                        .w(rems(status_width))
+                                        .text_center()
                                         .child(Label::new(status.title.clone())),
                                 )
-                                .child(div().w_8().flex_shrink_0()),
+                                .child(
+                                    div()
+                                        .relative()
+                                        .left(rems(scroll_left))
+                                        .flex()
+                                        .items_center()
+                                        .min_h_11()
+                                        .w(rems(rail + frozen_name))
+                                        .bg(cx.theme().background)
+                                        .border_r_1()
+                                        .border_color(cx.theme().border)
+                                        .child(div().w(rems(rail)).flex_shrink_0().child(checkbox))
+                                        .child(
+                                            div().flex_1().text_center().child(Label::new("Item")),
+                                        ),
+                                ),
                         );
                     for row in matching {
                         let (board_id, item) = (*board, row.id);
@@ -918,6 +966,7 @@ impl BoardView {
                         ));
                         table = table.child(
                             div()
+                                .relative()
                                 .flex()
                                 .items_center()
                                 .w_full()
@@ -925,19 +974,49 @@ impl BoardView {
                                 .min_h_11()
                                 .border_b_1()
                                 .border_color(cx.theme().border)
-                                .child(div().w_8().flex_shrink_0().child(check))
-                                .child(self.render_name(row, status.editable, cx))
-                                .child(status.cell(*board, row, busy, cx))
-                                .child(history),
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .left(rems(rail + name_track))
+                                        .w(rems(status_width))
+                                        .child(status.cell(*board, row, busy, cx)),
+                                )
+                                .child(
+                                    div()
+                                        .relative()
+                                        .left(rems(scroll_left))
+                                        .flex()
+                                        .items_center()
+                                        .min_h_11()
+                                        .w(rems(rail + frozen_name))
+                                        .bg(if self.selected.contains(&item) {
+                                            cx.theme().accent
+                                        } else {
+                                            cx.theme().background
+                                        })
+                                        .border_r_1()
+                                        .border_color(cx.theme().border)
+                                        .child(div().w(rems(rail)).flex_shrink_0().child(check))
+                                        .child(self.render_name(row, status.editable, cx))
+                                        .child(history),
+                                ),
                         );
                         if let Some(editor) =
                             self.editor.as_ref().filter(|editor| editor.id == item)
                         {
-                            table = table.child(self.editor_actions(editor, cx));
+                            table = table.child(
+                                div()
+                                    .relative()
+                                    .left(rems(scroll_left))
+                                    .w(rems(viewport))
+                                    .child(self.editor_actions(editor, cx)),
+                            );
                         }
                     }
-                    column = column.child(table);
+                    group_tables = group_tables.child(table);
                 }
+                grid = grid.child(group_tables);
+                column = column.child(grid);
                 if !self.selected.is_empty() {
                     column = column.child(
                         div()
