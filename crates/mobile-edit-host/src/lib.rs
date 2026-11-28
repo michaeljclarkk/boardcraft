@@ -9,6 +9,7 @@ use boardcraft_account::Token;
 use boardcraft_board::{
     BoardId, ItemId, RenameError,
     store::{self, SaveError, StoredItem},
+    views,
 };
 use boardcraft_mobile_edit_client::{BOARD_ACCESS_HEADER, Credentials, NameEdit, SavedItem};
 use postgres::{Client, Config, NoTls};
@@ -471,6 +472,16 @@ fn handle(
         {
             (board, SelectedWrite, None)
         }
+        (Method::Get, ["", "navigation", "boards", board, "views"])
+            if mode != Mode::Scoped =>
+        {
+            (board, SelectedRead, None)
+        }
+        (Method::Post, ["", "navigation", "boards", board, "views"])
+            if mode != Mode::Scoped =>
+        {
+            (board, SelectedRead, None)
+        }
         (Method::Post, ["", "navigation", "boards", board, "main-table", "items"])
             if mode != Mode::Scoped =>
         {
@@ -589,6 +600,8 @@ fn handle(
     // validation or board data before the caller has been authorized.
     enum Action {
         Read,
+        Views,
+        CreateView(Result<ViewDraft, u16>),
         CreateGroup(Result<CreateGroupDraft, u16>),
         GroupOrder(Result<GroupOrderDraft, u16>),
         Fold(Result<FoldDraft, u16>),
@@ -614,6 +627,8 @@ fn handle(
         Some(item) if path.last() == Some(&"restore-deleted") => {
             Action::Lifecycle(item, store::Lifecycle::RestoreDeleted, read_json(req))
         }
+        None if path.get(4) == Some(&"views") && req.method() == &Method::Get => Action::Views,
+        None if path.get(4) == Some(&"views") => Action::CreateView(read_json(req)),
         None if path.get(4) == Some(&"groups") && path.len() == 5 => {
             Action::CreateGroup(read_json(req))
         }
@@ -688,6 +703,35 @@ fn handle(
     let mut revision = None;
     let fold = matches!(action, Action::Fold(_));
     let body = match action {
+        Action::Views => {
+            let rows = views::list(&mut tx, board, account.id).map_err(view_error)?;
+            let rows: Vec<_> = rows
+                .into_iter()
+                .map(|view| {
+                    serde_json::json!({
+                        "id": view.id,
+                        "name": view.name,
+                        "filter": view.filter,
+                        "shared": view.shared,
+                        "owner": view.owner,
+                    })
+                })
+                .collect();
+            serde_json::to_vec(&rows).expect("serializable views")
+        }
+        Action::CreateView(draft) => {
+            let d = draft?;
+            let saved = views::create(&mut tx, board, d.id, &d.name, &d.filter, account.id)
+                .map_err(view_error)?;
+            serde_json::to_vec(&serde_json::json!({
+                "id": saved.id,
+                "name": saved.name,
+                "filter": saved.filter,
+                "shared": saved.shared,
+                "owner": saved.owner,
+            }))
+            .expect("serializable view")
+        }
         Action::Fold(draft) => {
             let d = draft?;
             let saved = store::set_main_table_fold(
@@ -954,6 +998,25 @@ fn handle(
 enum Side {
     Before,
     After,
+}
+
+fn view_error(error: views::ViewError) -> u16 {
+    match error {
+        views::ViewError::Invalid => 422,
+        views::ViewError::Conflict => 409,
+        views::ViewError::Database(error) => {
+            log::error!("saved view sqlstate={:?}", error.code());
+            500
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ViewDraft {
+    id: Uuid,
+    name: String,
+    filter: String,
 }
 
 fn order_error(err: store::ReorderError, board: Uuid, op: &str) -> u16 {

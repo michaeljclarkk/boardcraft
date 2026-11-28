@@ -1,12 +1,13 @@
 //! The visit owns local folds and focus. Only a confirmed authorized read replaces saved state.
 use super::navigation::Page;
 use super::*;
-use boardcraft_mobile_edit_client::MainTableRead;
+use boardcraft_mobile_edit_client::{MainTableRead, SavedView};
 use gpui_kit::base::ElementExt;
 use gpui_kit::component::{
     ActiveTheme, IconName, Sizable,
     button::ButtonVariants,
     checkbox::Checkbox,
+    input::InputEvent,
     menu::{DropdownMenu, PopupMenuItem},
 };
 mod archive;
@@ -41,6 +42,10 @@ pub(super) struct MainTable {
     headings: Vec<Heading>,
     revision: i64,
     board_revision: i64,
+    pub(super) views: Vec<SavedView>,
+    pub(super) filter: String,
+    view_filter: Entity<InputState>,
+    view_name: Entity<InputState>,
     editable: bool,
     manageable: bool,
     pending: bool,
@@ -202,6 +207,26 @@ impl MainTable {
             .flat_map(|g| g.items().iter().map(|r| r.id))
             .collect();
         selection.retain(&available);
+        let view_filter = previous
+            .map(|t| t.view_filter.clone())
+            .unwrap_or_else(|| cx.new(|cx| InputState::new(w, cx).placeholder("Filter items")));
+        subscriptions.push(
+            cx.subscribe_in(&view_filter, w, |v, _, event: &InputEvent, w, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    v.apply_view_filter(w, cx);
+                }
+            }),
+        );
+        let view_name = previous
+            .map(|t| t.view_name.clone())
+            .unwrap_or_else(|| cx.new(|cx| InputState::new(w, cx).placeholder("View name")));
+        subscriptions.push(
+            cx.subscribe_in(&view_name, w, |v, _, event: &InputEvent, w, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    v.save_view(w, cx);
+                }
+            }),
+        );
         let archive_triggers = available
             .iter()
             .map(|id| {
@@ -220,6 +245,10 @@ impl MainTable {
             ))),
             revision: read.view_revision(),
             board_revision: read.revision(),
+            views: previous.map(|t| t.views.clone()).unwrap_or_default(),
+            filter: previous.map(|t| t.filter.clone()).unwrap_or_default(),
+            view_filter,
+            view_name,
             editable,
             manageable: read.is_manageable(),
             pending: false,
@@ -279,10 +308,11 @@ impl MainTable {
             .child(Label::new(if self.editable && !self.reconcile {
                 "Board items"
             } else {
-                "Board items · Read only"
+                "Board items Â· Read only"
             }));
         column = column.child(self.new_group_options(cx));
         column = column.child(self.failed_item_moves(cx));
+        column = column.child(self.render_views(cx));
         column = column.child(
             div()
                 .flex()
@@ -417,6 +447,64 @@ impl MainTable {
         column
     }
 
+    fn render_views(&self, cx: &mut Context<Connected>) -> impl IntoElement {
+        let mut panel = div()
+            .id("views")
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(Label::new("Views"))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(Input::new(&self.view_filter).id("view-filter"))
+                    .child(
+                        Button::new("apply-filter")
+                            .small()
+                            .label("Apply filter")
+                            .on_click(cx.listener(|view, _, w, cx| view.apply_view_filter(w, cx))),
+                    )
+                    .child(
+                        Button::new("clear-filter")
+                            .small()
+                            .label("Clear filter")
+                            .on_click(cx.listener(|view, _, w, cx| view.clear_view_filter(w, cx))),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(Input::new(&self.view_name).id("view-name"))
+                    .child(
+                        Button::new("save-view")
+                            .small()
+                            .label("Save view")
+                            .on_click(cx.listener(|view, _, w, cx| view.save_view(w, cx))),
+                    ),
+            );
+        if !self.views.is_empty() {
+            panel = panel.child(Label::new("Saved views"));
+            for view in &self.views {
+                let id = view.id;
+                let mut row = div().flex().items_center().gap_2().child(
+                    Button::new(SharedString::from(format!("view-{id}")))
+                        .small()
+                        .label(view.name.clone())
+                        .on_click(cx.listener(move |v, _, w, cx| v.apply_saved_view(id, w, cx))),
+                );
+                if view.shared {
+                    row = row.child(Label::new("Shared"));
+                }
+                panel = panel.child(row);
+            }
+        }
+        panel
+    }
+
     fn render_heading_header(&self, h: &Heading, cx: &mut Context<Connected>) -> impl IntoElement {
         let id = h.id.clone();
         let menu_id = id.clone();
@@ -460,7 +548,22 @@ impl MainTable {
         header = header.child(div().size_3().bg(rgb(
             u32::from_str_radix(&h.colour[1..], 16).expect("validated colour"),
         )));
-        header = header.child(Label::new(h.count.clone()));
+        let visible = h
+            .rows
+            .iter()
+            .filter(|r| {
+                boardcraft_mobile_edit_client::view_filter_matches(
+                    &self.filter,
+                    r.read(cx).edit.accepted(),
+                )
+            })
+            .count();
+        let count: SharedString = if self.filter.trim().is_empty() {
+            h.count.clone()
+        } else {
+            format!("{visible} of {}", h.rows.len()).into()
+        };
+        header = header.child(Label::new(count));
         header.child(
             Button::new(SharedString::from(format!("group-menu-{menu_id}")))
                 .small()
@@ -587,13 +690,26 @@ impl MainTable {
                     v.select_main_table_group(&group, *checked, w, cx)
                 })),
         );
-        if h.rows.is_empty() {
+        let visible = h
+            .rows
+            .iter()
+            .filter(|r| {
+                boardcraft_mobile_edit_client::view_filter_matches(
+                    &self.filter,
+                    r.read(cx).edit.accepted(),
+                )
+            })
+            .count();
+        if h.rows.is_empty() || visible == 0 {
             body = body.child(Label::new("No items"));
         }
         for r in &h.rows {
+            let name = r.read(cx).edit.accepted().to_owned();
+            if !boardcraft_mobile_edit_client::view_filter_matches(&self.filter, &name) {
+                continue;
+            }
             let id = r.read(cx).edit.identity().1.as_uuid();
             let checked = self.selection.ids.contains(&id);
-            let name = r.read(cx).edit.accepted().to_owned();
             let geometry = h.row_drag.clone();
             let key = id.to_string();
             body = body.child(
@@ -665,6 +781,121 @@ impl MainTable {
             body = body.child(h.entry.clone());
         }
         body
+    }
+}
+
+impl Connected {
+    fn apply_view_filter(&mut self, _w: &mut Window, cx: &mut Context<Self>) {
+        let Screen::Navigation(nav) = &mut self.screen else {
+            return;
+        };
+        let Page::Items(_, table) = &mut nav.page else {
+            return;
+        };
+        let input = table.view_filter.clone();
+        table.filter = input.read(cx).value().trim().to_owned();
+        cx.notify();
+    }
+
+    fn clear_view_filter(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        let input = {
+            let Screen::Navigation(nav) = &mut self.screen else {
+                return;
+            };
+            let Page::Items(_, table) = &mut nav.page else {
+                return;
+            };
+            table.filter.clear();
+            table.view_filter.clone()
+        };
+        input.update(cx, |input, cx| input.set_value("", w, cx));
+        cx.notify();
+    }
+
+    fn apply_saved_view(&mut self, id: Uuid, w: &mut Window, cx: &mut Context<Self>) {
+        let (input, filter) = {
+            let Screen::Navigation(nav) = &mut self.screen else {
+                return;
+            };
+            let Page::Items(_, table) = &mut nav.page else {
+                return;
+            };
+            let Some(view) = table.views.iter().find(|view| view.id == id) else {
+                return;
+            };
+            let filter = view.filter.clone();
+            table.filter = filter.clone();
+            (table.view_filter.clone(), filter)
+        };
+        input.update(cx, |input, cx| input.set_value(filter, w, cx));
+        cx.notify();
+    }
+
+    fn save_view(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        let (client, board, name, filter, name_input) = {
+            let Screen::Navigation(nav) = &self.screen else {
+                return;
+            };
+            let Page::Items(board, table) = &nav.page else {
+                return;
+            };
+            (
+                nav.client.clone(),
+                *board,
+                table.view_name.read(cx).value().trim().to_owned(),
+                table.filter.clone(),
+                table.view_name.clone(),
+            )
+        };
+        if name.is_empty() {
+            self.message = "Enter a view name.";
+            cx.notify();
+            return;
+        }
+        self.message = "";
+        let work = cx
+            .background_executor()
+            .spawn(async move { client.create_view(board, Uuid::new_v4(), &name, &filter) });
+        cx.spawn_in(w, async move |view, cx| {
+            let result = work.await;
+            _ = view.update_in(cx, |view, w, cx| {
+                if matches!(&result, Err(EditError::SessionRejected)) {
+                    view.link_input = None;
+                    view.message = "Session expired. Sign in again.";
+                    view.screen = Self::identifier(w, cx);
+                    return;
+                }
+                let message;
+                {
+                    let Screen::Navigation(nav) = &mut view.screen else {
+                        return;
+                    };
+                    let Page::Items(current, table) = &mut nav.page else {
+                        return;
+                    };
+                    if *current != board {
+                        return;
+                    }
+                    match result {
+                        Ok(saved) => {
+                            table.views.push(saved);
+                            table.views.sort_by_key(|a| a.name.to_lowercase());
+                            name_input.update(cx, |input, cx| input.set_value("", w, cx));
+                            message = "View saved";
+                        }
+                        Err(EditError::Conflict) => {
+                            message = "A view with that name already exists.";
+                        }
+                        Err(EditError::InvalidDraft) => message = "Enter a view name.",
+                        Err(_) => message = "Could not save the view.",
+                    }
+                }
+                view.message = message;
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 }
 

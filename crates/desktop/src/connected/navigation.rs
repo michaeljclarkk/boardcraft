@@ -1,11 +1,11 @@
 use super::main_table::MainTable;
 use super::*;
-use boardcraft_mobile_edit_client::{BoardSummary, DirectoryUser, MainTableRead};
+use boardcraft_mobile_edit_client::{BoardSummary, DirectoryUser, MainTableRead, SavedView};
 use gpui_kit::component::input::InputEvent;
 
 enum ReadPage {
     List(Vec<BoardSummary>),
-    Table(MainTableRead),
+    Table(MainTableRead, Vec<SavedView>),
 }
 
 pub(super) struct PeoplePage {
@@ -45,7 +45,11 @@ impl Connected {
         let request = self.navigation_request;
         let work = cx.background_executor().spawn(async move {
             let result = match board {
-                Some(id) => client.read_main_table(id).map(ReadPage::Table),
+                Some(id) => client.read_main_table(id).and_then(|read| {
+                    client
+                        .list_views(id)
+                        .map(|views| ReadPage::Table(read, views))
+                }),
                 None => client
                     .resolve()
                     .and_then(|()| client.list_boards())
@@ -66,9 +70,10 @@ impl Connected {
                 } else {
                     let page = match result {
                         Ok(ReadPage::List(list)) => Page::List(list),
-                        Ok(ReadPage::Table(read)) => {
-                            let table =
+                        Ok(ReadPage::Table(read, saved)) => {
+                            let mut table =
                                 MainTable::new(read, board.expect("selected board"), None, w, cx);
+                            table.views = saved;
                             table.focus_first(w, cx);
                             Page::Items(board.expect("selected board"), Box::new(table))
                         }

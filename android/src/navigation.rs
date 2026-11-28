@@ -1,10 +1,14 @@
 use super::*;
-use boardcraft_mobile_edit_client::BoardSummary;
+use boardcraft_mobile_edit_client::{BoardSummary, SavedView, view_filter_matches};
 
 pub(super) enum Page {
     List(Vec<BoardSummary>),
     Loading,
-    Selected(Vec<SavedItem>),
+    Selected {
+        rows: Vec<SavedItem>,
+        views: Vec<SavedView>,
+        filter: String,
+    },
     Denied,
     Fault,
 }
@@ -31,7 +35,13 @@ impl BoardView {
         let identifier = Login::identifier(window, cx);
         let work = cx.background_executor().spawn(async move {
             match board {
-                Some(id) => client.read_selected_board(id).map(Page::Selected),
+                Some(id) => client.read_selected_board(id).and_then(|rows| {
+                    client.list_views(id).map(|views| Page::Selected {
+                        rows,
+                        views,
+                        filter: String::new(),
+                    })
+                }),
                 None => client.list_boards().map(Page::List),
             }
         });
@@ -56,6 +66,19 @@ impl BoardView {
         cx.notify();
     }
 
+    /// Applying a saved view only replaces the board's active filter; the rows
+    /// stay loaded, so switching between views needs no further board read.
+    fn apply_saved_view(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let Some(Page::Selected { views, filter, .. }) = &mut self.navigation else {
+            return;
+        };
+        let Some(view) = views.iter().find(|view| view.id == id) else {
+            return;
+        };
+        *filter = view.filter.clone();
+        cx.notify();
+    }
+
     pub(super) fn navigation_page(
         &self,
         page: &Page,
@@ -71,7 +94,7 @@ impl BoardView {
                 if event.keystroke.key == "escape"
                     && matches!(
                         view.navigation,
-                        Some(Page::Selected(_) | Page::Denied | Page::Fault)
+                        Some(Page::Selected { .. } | Page::Denied | Page::Fault)
                     )
                 {
                     view.navigate(None, w, cx);
@@ -108,12 +131,44 @@ impl BoardView {
                 }
                 "Refresh"
             }
-            Page::Selected(rows) => {
+            Page::Selected {
+                rows,
+                views,
+                filter,
+            } => {
                 column = column.child(Label::new("Board items").text_xl());
-                if rows.is_empty() {
-                    column = column.child(Label::new("Empty board"));
+                if !views.is_empty() {
+                    let mut saved = div().flex().flex_wrap().gap_2();
+                    for view in views {
+                        let id = view.id;
+                        saved = saved.child(
+                            Button::new(SharedString::from(format!("view-{id}")))
+                                .large()
+                                .flex_shrink_0()
+                                .label(view.name.clone())
+                                .disabled(self.logging_out)
+                                .on_click(cx.listener(move |view, _, _, cx| {
+                                    view.apply_saved_view(id, cx);
+                                })),
+                        );
+                    }
+                    column = column.child(Label::new("Views")).child(saved);
                 }
-                for row in rows {
+                if !filter.is_empty() {
+                    column = column.child(Label::new(format!("Filter: {filter}")));
+                }
+                let visible = rows
+                    .iter()
+                    .filter(|row| view_filter_matches(filter, &row.title))
+                    .count();
+                if visible == 0 {
+                    column = column.child(Label::new(if rows.is_empty() {
+                        "Empty board"
+                    } else {
+                        "No items"
+                    }));
+                }
+                for row in rows.iter().filter(|row| view_filter_matches(filter, &row.title)) {
                     column = column.child(Label::new(row.title.clone()));
                 }
                 "Back to boards"

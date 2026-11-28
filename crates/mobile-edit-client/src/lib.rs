@@ -17,6 +17,7 @@ mod item_placement;
 mod main_table;
 mod table_command;
 mod table_contract;
+mod views;
 pub use archive::{ArchiveRead, ArchivedGroup, ArchivedItem};
 pub use directory::DirectoryUser;
 pub use group_fields::GroupFields;
@@ -24,6 +25,7 @@ pub use item_placement::ItemReorder;
 pub use main_table::MainTableRead;
 pub use table_command::{RootAction, SelectionAction, TableCommand};
 pub use table_contract::MainTableGroup;
+pub use views::SavedView;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedItem {
@@ -33,6 +35,13 @@ pub struct SavedItem {
 }
 
 pub const BOARD_ACCESS_HEADER: &str = "boardcraft-board-access";
+
+/// One case-insensitive item-title filter rule shared by desktop, browser and
+/// Android. The stored filter is data, never a pattern.
+pub fn view_filter_matches(filter: &str, title: &str) -> bool {
+    let filter = filter.trim();
+    filter.is_empty() || title.to_lowercase().contains(&filter.to_lowercase())
+}
 
 /// Public request label, not a credential. Only the disposable loopback host accepts it.
 pub const DISPOSABLE_VIEWER: &str = "disposable-viewer";

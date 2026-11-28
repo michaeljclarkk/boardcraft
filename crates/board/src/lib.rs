@@ -1,6 +1,7 @@
 use uuid::Uuid;
 
 pub mod store;
+pub mod views;
 
 macro_rules! record_id {
     ($name:ident) => {

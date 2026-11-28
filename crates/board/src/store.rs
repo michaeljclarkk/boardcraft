@@ -158,6 +158,16 @@ pub fn migrate(client: &mut Client) -> Result<(), Error> {
         tx.batch_execute(include_str!("../migrations/0013_root_trash.sql"))?;
         tx.execute("INSERT INTO rustday_migrations VALUES (13)", &[])?;
     }
+    if tx
+        .query_opt(
+            "SELECT version FROM rustday_migrations WHERE version=14",
+            &[],
+        )?
+        .is_none()
+    {
+        tx.batch_execute(include_str!("../migrations/0014_saved_views.sql"))?;
+        tx.execute("INSERT INTO rustday_migrations VALUES (14)", &[])?;
+    }
     tx.commit()
 }
 
