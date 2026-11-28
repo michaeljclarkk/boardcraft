@@ -182,7 +182,7 @@ impl MainTable {
                     PopupMenuItem::new("New group of items…")
                         .disabled(!manageable)
                         .on_click(move |_, w, cx| {
-                            _ = view.update(cx, |v, cx| v.open_group_fields(None, w, cx));
+                            _ = view.update(cx, |v, cx| v.open_group_fields(None, None, w, cx));
                         }),
                 )
             })
@@ -207,7 +207,7 @@ impl MainTable {
                     .disabled(self.pending || self.reconcile || !self.manageable)
                     .on_click(cx.listener(move |v, event: &ClickEvent, w, cx| {
                         if event.click_count() == 2 {
-                            v.open_group_fields(Some(&id), w, cx);
+                            v.open_group_fields(Some(&id), None, w, cx);
                         }
                     })),
             )
@@ -218,6 +218,7 @@ impl Connected {
     pub(super) fn open_group_fields(
         &mut self,
         id: Option<&str>,
+        trigger: Option<FocusHandle>,
         w: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -244,7 +245,9 @@ impl Connected {
         }
         let ix = colours.iter().position(|c| c.as_ref() == accepted).unwrap();
         let colour = cx.new(|cx| SelectState::new(colours, Some(IndexPath::new(ix)), w, cx));
-        let trigger = heading.map_or_else(|| table.group_focus.clone(), |h| h.name_focus.clone());
+        let trigger = trigger.unwrap_or_else(|| {
+            heading.map_or_else(|| table.group_focus.clone(), |h| h.name_focus.clone())
+        });
         let dialog = cx.new(|cx| {
             let input = cx.subscribe(&name, |_, _, _: &InputEvent, cx| cx.notify());
             GroupDialog {

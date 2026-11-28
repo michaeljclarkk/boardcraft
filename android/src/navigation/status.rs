@@ -6,10 +6,10 @@ use std::{collections::HashMap, sync::Arc};
 pub(crate) struct StatusColumn {
     id: Uuid,
     pub(super) title: String,
-    choices: Arc<[StatusChoice]>,
-    cells: HashMap<Uuid, StatusCell>,
-    pub(super) editable: bool,
-    pub(super) pending: Option<Uuid>,
+    pub(super) choices: Arc<[StatusChoice]>,
+    pub(super) cells: HashMap<Uuid, StatusCell>,
+    pub(crate) editable: bool,
+    pub(crate) pending: Option<Uuid>,
 }
 
 impl StatusColumn {
@@ -51,7 +51,7 @@ impl StatusColumn {
         let Some(cell) = self.cells.get(&item) else {
             // Separate authorized snapshots may straddle an archive. Never invent a baseline.
             return div()
-                .w_32()
+                .w_24()
                 .child(Label::new("Unavailable"))
                 .into_any_element();
         };
@@ -66,7 +66,7 @@ impl StatusColumn {
         let disabled = busy || self.pending.is_some() || !self.editable;
         let trigger = Button::new(SharedString::from(format!("status-{item}")))
             .large()
-            .w_32()
+            .w_24()
             .flex_shrink_0()
             .bg(color)
             .text_color(if color.l < 0.45 {
@@ -184,6 +184,7 @@ impl BoardView {
             || !status.editable
             || self.logging_out
             || self.automation_pending
+            || self.editor.is_some()
             || status.pending.is_some()
             || !status
                 .cells

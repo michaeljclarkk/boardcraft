@@ -22,7 +22,10 @@ gpui_kit::assets::icon_assets!(
         Ellipsis,
         GripVertical,
         Search,
-        PanelsTopLeft
+        PanelsTopLeft,
+        Archive,
+        Trash,
+        ArrowRight
     ]
 );
 

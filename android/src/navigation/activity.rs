@@ -36,7 +36,11 @@ impl BoardView {
         let (Some(client), Some(conn)) = (self.client.clone(), self.connection) else {
             return;
         };
-        if self.logging_out || self.login.is_some() || self.automation_pending {
+        if self.logging_out
+            || self.login.is_some()
+            || self.automation_pending
+            || self.editor.is_some()
+        {
             return;
         }
         let (title, search) = match &self.navigation {

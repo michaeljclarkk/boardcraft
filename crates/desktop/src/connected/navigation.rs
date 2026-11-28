@@ -7,6 +7,7 @@ use gpui_kit::{
     assets::IconName,
     base::Selectable,
     component::{ActiveTheme, Sizable, button::ButtonVariants, input::InputEvent},
+    prelude::FluentBuilder,
 };
 
 enum ReadPage {
@@ -877,7 +878,12 @@ impl Connected {
         cx.notify();
     }
 
-    fn reload_main_table(&mut self, board: Uuid, w: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn reload_main_table(
+        &mut self,
+        board: Uuid,
+        w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.refresh_item_entry(board, true, w, cx) {
             return;
         }
@@ -1123,7 +1129,7 @@ impl Navigation {
         navigation
     }
 
-    pub(super) fn render(&self, cx: &mut Context<Connected>) -> impl IntoElement {
+    pub(super) fn render(&self, w: &Window, cx: &mut Context<Connected>) -> impl IntoElement {
         let mut column = div().flex().flex_col().gap_3();
         let action = match &self.page {
             Page::List(list) => {
@@ -1396,16 +1402,52 @@ impl Navigation {
         if let Some(workspace) = &self.workspace {
             row = row.child(self.workspace_navigation(workspace, cx));
         }
-        row.child(
-            div()
-                .id("navigation-content")
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .h_full()
-                .overflow_y_scroll()
-                .p_4()
-                .child(column),
-        )
+        let selection = match &self.page {
+            Page::Items(_, table) if table.has_selection_toolbar() => {
+                Some(table.selection_toolbar(cx))
+            }
+            _ => None,
+        };
+        // Keep selected-item commands fixed to the board viewport while its rows scroll.
+        // The inset at the end of the scroll content keeps its final controls reachable.
+        let mut content = div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .h_full()
+            .child(
+                div()
+                    .id("navigation-content")
+                    .test_support()
+                    .size_full()
+                    .min_w_0()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(
+                        div()
+                            .p_4()
+                            .when(selection.is_some(), |v| v.pb_24())
+                            .child(column),
+                    ),
+            );
+        if let Some(selection) = selection {
+            content = content.child(
+                div()
+                    .absolute()
+                    .bottom_3()
+                    .left_4()
+                    .right_4()
+                    .flex()
+                    // Match Tuesday's <=700px compact footer beside the workspace rail.
+                    .when_else(
+                        w.viewport_size().width <= px(700.),
+                        |footer| footer.justify_start(),
+                        |footer| footer.justify_center(),
+                    )
+                    .child(selection),
+            );
+        }
+        row.child(content)
     }
 }

@@ -4,6 +4,8 @@ boardcraft is the native Rust port of the internal tool: its entire C# and React
 
 **The only job is to get boardcraft running 1:1 with the internal tool, in Rust only. Write Rust code, run it, and test the UI with Computer Use and GPUI Kit tests. No extra harnesses or infrastructure.**
 
+**Parity includes workflow, UI and UX.** Match the result and the experience of reaching it: layout and density, controls and labels, defaults, feedback, keyboard/touch, focus and dismissal, navigation, failure/retry, and preserved selection and drafts. A screen is complete only after comparison in the running apps; tests or screenshots alone do not close it. Remaining differences are recorded in [the workflow register](docs/workflows.md).
+
 Delivery shape: two containers — `boardcraft` on **5078** for every client, and the database private behind it. Documented in [docs/deployment.md](docs/deployment.md); not built yet.
 
 Everything here is our own work: our schema, our rules, our controls, our names and our fixtures. This repository contains no other product's code, assets or wording. See [AGENTS.md](AGENTS.md) for the rule that applies to every change.
@@ -26,7 +28,7 @@ Everything here is our own work: our schema, our rules, our controls, our names 
 | [History and activity](areas/history.md) | Activity log, updates, revisions and undo. History is append-only and survives restart. | `crates/board/src/history`, `crates/mobile-edit-host/src/activity.rs`, `crates/mobile-edit-client/src/activity.rs`, `crates/desktop/src/connected/main_table/activity.rs`, `android/src/navigation/activity.rs` | 10% |
 | [Realtime](areas/realtime.md) | Live board refresh and presence: the SignalR equivalent. A second client sees an accepted change without a manual reload. | `crates/mobile-edit-host/src/realtime.rs`, `crates/mobile-edit-client/src/realtime.rs`, `crates/desktop/src/connected/navigation.rs`, `android/src/lib.rs`, `android/src/realtime.rs` | 10% |
 | [Durable jobs](areas/jobs.md) | Background scheduling that survives restart: the Hangfire equivalent. Enqueue only after the owning transaction commits, and make retries safe. | `crates/jobs` | 0% |
-| [UI components](areas/ui.md) | GPUI Kit controls, layout, theme, dialogs, keyboard and focus. Shared controls live in `boardcraft-ui`; screens own their composition and drafts. | `crates/boardcraft-ui`, `crates/desktop/src`, `crates/web/src`, `android/src` | 38% |
+| [UI components](areas/ui.md) | GPUI Kit controls, layout, theme, dialogs, keyboard and focus. Shared controls live in `boardcraft-ui`; screens own their composition and drafts. | `crates/boardcraft-ui`, `crates/desktop/src`, `crates/web/src`, `android/src` | 42% |
 | [Files and conversations](areas/files.md) | Attachments, previews, comments and chat. Files are stored once, previewed safely and reachable from the record they belong to. | `crates/files`, `crates/boardcraft-ui/src/files` | 0% |
 | [Import and export](areas/import.md) | Spreadsheet and archive import, mapping, progress, cancellation, retry and publication. Reject bad input without exposing partial results. | `crates/board/src/import`, `crates/desktop/src/import` | 0% |
 | [Search](areas/search.md) | Board, workspace and global search. Results respect access and return the record, not just a label. | `crates/board/src/search`, `crates/web/src/board_search.rs` | 10% |

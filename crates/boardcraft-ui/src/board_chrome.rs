@@ -2,7 +2,8 @@
 //! Callers retain data and commands; these components own the visible structure.
 use gpui_kit::{
     AnyElement, App, ElementId, Entity, FocusHandle, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, RenderOnce, Role, SharedString, StatefulInteractiveElement, Styled, Window,
+    ParentElement, RenderOnce, Role, SharedString, StatefulInteractiveElement, Styled,
+    TestSupportExt, Window,
     component::{
         ActiveTheme, IconName, Sizable,
         button::{Button, ButtonVariants},
@@ -161,9 +162,15 @@ impl RenderOnce for BoardFindDock {
         } else {
             dock = dock
                 .children(self.filters.map(|button| {
+                    let button = if cfg!(target_os = "android") {
+                        button.label("Filter")
+                    } else {
+                        button.icon(IconName::Settings2)
+                    };
                     button
-                        .icon(IconName::Settings2)
                         .accessibility_label("Board filters")
+                        .small()
+                        .px_0()
                         .size(rems(3.25))
                         .rounded_full()
                 }))
@@ -171,11 +178,133 @@ impl RenderOnce for BoardFindDock {
                     button
                         .label("Home")
                         .accessibility_label("Home")
+                        .small()
+                        .px_0()
                         .size(rems(3.25))
                         .rounded_full()
                 }));
         }
         dock
+    }
+}
+
+/// The Main table's selected-item actions. Clients retain the selection and commands,
+/// and place this bar outside their table's scrolling region.
+#[derive(IntoElement)]
+pub struct BoardSelectionBar {
+    count: usize,
+    archive: Option<Button>,
+    delete: Option<Button>,
+    move_to: Option<Button>,
+    clear: Option<Button>,
+}
+
+impl BoardSelectionBar {
+    pub fn new(count: usize) -> Self {
+        Self {
+            count,
+            archive: None,
+            delete: None,
+            move_to: None,
+            clear: None,
+        }
+    }
+    pub fn archive(mut self, button: Button) -> Self {
+        self.archive = Some(button);
+        self
+    }
+    pub fn delete(mut self, button: Button) -> Self {
+        self.delete = Some(button);
+        self
+    }
+    pub fn move_to(mut self, button: Button) -> Self {
+        self.move_to = Some(button);
+        self
+    }
+    pub fn clear(mut self, button: Button) -> Self {
+        self.clear = Some(button);
+        self
+    }
+}
+
+impl RenderOnce for BoardSelectionBar {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        use gpui_kit::component::Icon;
+        let mut actions = div()
+            .id("board-selection-actions")
+            .flex()
+            .min_w_0()
+            .overflow_x_scroll();
+        for (button, caption, icon) in [
+            (self.archive, "Archive", "icons/archive.svg"),
+            (self.delete, "Delete", "icons/trash.svg"),
+            (self.move_to, "Move to", "icons/arrow-right.svg"),
+        ] {
+            if let Some(button) = button {
+                let mut content = div().flex().flex_col().items_center().gap_1();
+                if !cfg!(target_os = "android") {
+                    content = content.child(Icon::default().path(icon).small());
+                }
+                actions = actions.child(
+                    button
+                        .ghost()
+                        .accessibility_label(caption)
+                        .h_full()
+                        .min_w_16()
+                        .flex_shrink_0()
+                        .px_3()
+                        .rounded_none()
+                        .child(content.child(div().text_xs().child(caption))),
+                );
+            }
+        }
+        div()
+            .id("board-selection-bar")
+            .role(Role::Toolbar)
+            .aria_label("Selected item actions")
+            .test_support()
+            .occlude()
+            .flex()
+            .items_stretch()
+            .h(rems(4.375))
+            .max_w_full()
+            .rounded_lg()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().background)
+            .shadow_lg()
+            .child(
+                div()
+                    .id("board-selection-count")
+                    .role(Role::Status)
+                    .aria_label(format!("{} selected", self.count))
+                    .test_support()
+                    .flex()
+                    .flex_col()
+                    .justify_center()
+                    .items_center()
+                    .flex_shrink_0()
+                    .min_w_16()
+                    .px_3()
+                    .rounded_l_lg()
+                    .bg(cx.theme().primary)
+                    .text_color(cx.theme().primary_foreground)
+                    .child(div().text_2xl().child(self.count.to_string()))
+                    .child(div().text_xs().child("selected")),
+            )
+            .child(actions)
+            .children(self.clear.map(|button| {
+                button
+                    .ghost()
+                    .label("×")
+                    .accessibility_label("Clear item selection")
+                    .h_full()
+                    .w_10()
+                    .flex_shrink_0()
+                    .rounded_none()
+                    .border_l_1()
+                    .border_color(cx.theme().border)
+            }))
     }
 }
 
@@ -311,11 +440,13 @@ impl BoardToolbar {
             .accessibility_label("New item options")
     }
     pub fn tools_trigger(id: impl Into<ElementId>) -> Button {
-        Button::new(id)
-            .ghost()
-            .small()
-            .icon(IconName::Ellipsis)
-            .accessibility_label("Board tools")
+        let button = Button::new(id).ghost().accessibility_label("Board tools");
+        if cfg!(target_os = "android") {
+            // The mobile host has no SVG assets. Keep reload and recovery discoverable.
+            button.large().label("…")
+        } else {
+            button.small().icon(IconName::Ellipsis)
+        }
     }
 }
 

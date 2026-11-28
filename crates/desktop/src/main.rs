@@ -20,6 +20,26 @@ use recovery::{Draft, Record, Recovery};
 #[cfg(all(windows, feature = "native-smoke"))]
 mod native_smoke;
 
+assets::icon_assets!(MainTableIcons, [Archive, Trash]);
+
+struct DesktopAssets;
+impl AssetSource for DesktopAssets {
+    fn load(&self, path: &str) -> Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        if let Some(bytes) = MainTableIcons.load(path)? {
+            return Ok(Some(bytes));
+        }
+        assets::Assets.load(path)
+    }
+
+    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
+        let mut paths = assets::Assets.list(path)?;
+        paths.extend(MainTableIcons.list(path)?);
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+}
+
 struct Row {
     editable: bool,
     edit: InlineEdit,
@@ -684,7 +704,7 @@ fn main() {
     } else {
         Launch::Local(parse_board(first))
     };
-    application().with_assets(assets::Assets).run(move |cx| {
+    application().with_assets(DesktopAssets).run(move |cx| {
         init(cx);
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {

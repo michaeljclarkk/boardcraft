@@ -6,11 +6,11 @@ use crate::{
 use boardcraft_mobile_edit_client::{
     ArchiveRead, EditError, ItemReorder, MainTableRead, RootAction, SelectionAction, TableCommand,
 };
-use boardcraft_ui::{BoardToolbar, HeadingDrag};
+use boardcraft_ui::{BoardSelectionBar, BoardToolbar, HeadingDrag};
 use gpui_kit::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
     ParentElement, Render, Role, SharedString, StatefulInteractiveElement, Styled, Subscription,
-    Task, WeakEntity, Window,
+    Task, TestSupportExt, WeakEntity, Window,
     assets::IconName,
     base::Disableable,
     component::{
@@ -60,6 +60,9 @@ pub(super) struct Table {
     drag: Rc<RefCell<HeadingDrag>>,
     row_drags: HashMap<String, Rc<RefCell<HeadingDrag>>>,
     focus: FocusHandle,
+    archive_focus: FocusHandle,
+    delete_focus: FocusHandle,
+    move_focus: FocusHandle,
     scroll: gpui_kit::ScrollHandle,
     request: Option<Task<()>>,
     saves: Vec<Task<()>>,
@@ -105,6 +108,9 @@ impl Table {
             drag: Rc::new(RefCell::new(HeadingDrag::default())),
             row_drags: HashMap::new(),
             focus: cx.focus_handle(),
+            archive_focus: cx.focus_handle().tab_stop(true),
+            delete_focus: cx.focus_handle().tab_stop(true),
+            move_focus: cx.focus_handle().tab_stop(true),
             scroll,
             request: None,
             saves: Vec::new(),
@@ -241,6 +247,46 @@ impl Table {
                                 }),
                         )
                     }),
+            )
+    }
+
+    fn selection_bar(&self, cx: &mut Context<Self>) -> BoardSelectionBar {
+        BoardSelectionBar::new(self.selection.len())
+            .archive(
+                Button::new("archive-selected")
+                    .track_focus(&self.archive_focus)
+                    .disabled(self.busy() || !self.read.is_manageable())
+                    .on_click(cx.listener(|t, _, w, cx| {
+                        t.archive_focus.focus(w, cx);
+                        t.open_editor(Kind::ArchiveSelection, w, cx)
+                    })),
+            )
+            .delete(
+                Button::new("delete-selected")
+                    .track_focus(&self.delete_focus)
+                    .disabled(self.busy() || !self.read.is_manageable())
+                    .on_click(cx.listener(|t, _, w, cx| {
+                        t.delete_focus.focus(w, cx);
+                        t.open_editor(Kind::DeleteSelection, w, cx)
+                    })),
+            )
+            .move_to(
+                Button::new("move-selected")
+                    .track_focus(&self.move_focus)
+                    .disabled(self.busy() || !self.read.is_editable())
+                    .on_click(cx.listener(|t, _, w, cx| {
+                        t.move_focus.focus(w, cx);
+                        t.open_editor(Kind::MoveSelection, w, cx)
+                    })),
+            )
+            .clear(
+                Button::new("clear-selected")
+                    .disabled(self.pending)
+                    .on_click(cx.listener(|t, _, w, cx| {
+                        t.selection.clear();
+                        t.search.update(cx, |input, cx| input.focus(w, cx));
+                        cx.notify();
+                    })),
             )
     }
 
@@ -736,7 +782,7 @@ fn status(text: impl Into<SharedString>) -> impl IntoElement {
 }
 
 impl Render for Table {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut body = div()
             .id("main-table")
             .track_focus(&self.focus)
@@ -942,50 +988,6 @@ impl Render for Table {
                             )),
                     );
             }
-            if !self.selection.is_empty() {
-                body = body.child(
-                    div()
-                        .id("selected-actions")
-                        .role(Role::Toolbar)
-                        .aria_label("Selected item actions")
-                        .flex()
-                        .gap_2()
-                        .child(status(format!("{} selected", self.selection.len())))
-                        .child(
-                            Button::new("move-selected")
-                                .label("Move selected…")
-                                .disabled(self.busy() || !self.read.is_editable())
-                                .on_click(cx.listener(|t, _, w, cx| {
-                                    t.open_editor(Kind::MoveSelection, w, cx)
-                                })),
-                        )
-                        .child(
-                            Button::new("archive-selected")
-                                .label("Archive selected…")
-                                .disabled(self.busy() || !self.read.is_manageable())
-                                .on_click(cx.listener(|t, _, w, cx| {
-                                    t.open_editor(Kind::ArchiveSelection, w, cx)
-                                })),
-                        )
-                        .child(
-                            Button::new("delete-selected")
-                                .label("Delete selected…")
-                                .disabled(self.busy() || !self.read.is_manageable())
-                                .on_click(cx.listener(|t, _, w, cx| {
-                                    t.open_editor(Kind::DeleteSelection, w, cx)
-                                })),
-                        )
-                        .child(
-                            Button::new("clear-selected")
-                                .label("Clear item selection")
-                                .disabled(self.pending)
-                                .on_click(cx.listener(|t, _, _, cx| {
-                                    t.selection.clear();
-                                    cx.notify();
-                                })),
-                        ),
-                );
-            }
             for failure in &self.failed_renames {
                 body = body.child(self.rename_notice(failure, cx));
             }
@@ -1019,10 +1021,42 @@ impl Render for Table {
                 body = body.child(self.render_groups(cx));
             }
         }
-        body.child(status(if self.pending {
+        body = body.child(status(if self.pending {
             "Working…"
         } else {
             self.message
-        }))
+        }));
+        div()
+            .id("main-table-viewport")
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_h_0()
+            .child(
+                div()
+                    .id("content-scroll")
+                    .test_support()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .child(div().px_6().pb_6().child(body)),
+            )
+            .children(
+                (self.inventory.is_none() && !self.selection.is_empty()).then(|| {
+                    let footer = div()
+                        .flex()
+                        .flex_shrink_0()
+                        .px_3()
+                        .py_3()
+                        .child(self.selection_bar(cx));
+                    // Tuesday's compact bar starts beside the collapsed workspace rail.
+                    if w.viewport_size().width <= gpui_kit::px(700.) {
+                        footer.justify_start()
+                    } else {
+                        footer.justify_center().pb_6()
+                    }
+                }),
+            )
     }
 }

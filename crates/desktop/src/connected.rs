@@ -397,7 +397,7 @@ impl Connected {
 }
 
 impl Render for Connected {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut column = div()
             .id("connected")
             .size_full()
@@ -421,7 +421,7 @@ impl Render for Connected {
                 return column
                     .p_0()
                     .overflow_hidden()
-                    .child(div().flex_1().min_h_0().min_w_0().child(nav.render(cx)))
+                    .child(div().flex_1().min_h_0().min_w_0().child(nav.render(w, cx)))
                     .child(
                         Input::new(self.link_input.as_ref().expect("browse input"))
                             .id("board-link"),

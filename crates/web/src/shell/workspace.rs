@@ -25,7 +25,11 @@ impl Shell {
         };
         let mut content = div().flex().flex_col().items_start().gap_3();
         content = match &self.page {
-            Page::Board(table) => content.items_stretch().child(table.clone()),
+            Page::Board(table) => content
+                .size_full()
+                .min_h_0()
+                .items_stretch()
+                .child(table.clone()),
             Page::List => {
                 if let Some(boards) = &self.boards {
                     content = content
@@ -98,15 +102,18 @@ impl Shell {
                         matches!(self.page, Page::Board(_))
                             .then(|| div().px_6().pb_3().child(BoardTabs::new())),
                     )
-                    .child(
+                    .child(if matches!(self.page, Page::Board(_)) {
+                        div().flex_1().min_h_0().child(content).into_any_element()
+                    } else {
                         div()
                             .id("content-scroll")
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
                             .track_scroll(&self.scroll)
-                            .child(div().px_6().pb_6().child(content)),
-                    )
+                            .child(div().px_6().pb_6().child(content))
+                            .into_any_element()
+                    })
                     .children((!self.message.is_empty()).then(|| status("notice", self.message))),
             )
     }

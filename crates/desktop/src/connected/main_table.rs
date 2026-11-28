@@ -398,9 +398,6 @@ impl MainTable {
         if self.pending && self.folding {
             column = column.child(Label::new("Saving group presentation…"));
         }
-        if !self.selection.ids.is_empty() {
-            column = column.child(self.selection_toolbar(cx));
-        }
         if self.headings.is_empty() {
             column = column.child(Label::new("Empty board"));
         }
@@ -499,6 +496,7 @@ impl MainTable {
         let owner = cx.weak_entity();
         let archive = cx.weak_entity();
         let trash = cx.weak_entity();
+        let manageable = self.manageable && !self.reconcile;
         BoardToolbar::new()
             .new_item(
                 Button::new("new-item")
@@ -551,9 +549,50 @@ impl MainTable {
                     .disabled(self.pending || self.root_command.is_some())
                     .dropdown_menu(move |menu, _, _| {
                         let clear = owner.clone();
+                        let add_group = owner.clone();
+                        let automations = owner.clone();
+                        let reload = owner.clone();
                         let archive = archive.clone();
                         let trash = trash.clone();
                         menu.item(
+                            PopupMenuItem::new("Add group")
+                                .disabled(!manageable)
+                                .on_click(move |_, w, cx| {
+                                    let _ = add_group.update(cx, |view, cx| {
+                                        let trigger = if let Screen::Navigation(nav) = &view.screen
+                                            && let Page::Items(_, table) = &nav.page
+                                        {
+                                            Some(table.archive_focus.clone())
+                                        } else {
+                                            None
+                                        };
+                                        view.open_group_fields(None, trigger, w, cx);
+                                    });
+                                }),
+                        )
+                        .item(PopupMenuItem::new("Automations").on_click(move |_, _, cx| {
+                            let _ = automations.update(cx, |view, cx| {
+                                if let Screen::Navigation(nav) = &mut view.screen
+                                    && let Page::Items(_, table) = &mut nav.page
+                                {
+                                    table.automations_open = true;
+                                    cx.notify();
+                                }
+                            });
+                        }))
+                        .item(
+                            PopupMenuItem::new("Reload board").on_click(move |_, w, cx| {
+                                let _ = reload.update(cx, |view, cx| {
+                                    if let Screen::Navigation(nav) = &view.screen
+                                        && let Page::Items(board, _) = &nav.page
+                                    {
+                                        view.reload_main_table(*board, w, cx);
+                                    }
+                                });
+                            }),
+                        )
+                        .separator()
+                        .item(
                             PopupMenuItem::new("Clear filter").on_click(move |_, w, cx| {
                                 let _ = clear.update(cx, |view, cx| view.clear_view_filter(w, cx));
                             }),
@@ -738,7 +777,9 @@ impl MainTable {
                         let id = menu_id.clone();
                         menu = menu.item(PopupMenuItem::new(label).disabled(!manageable).on_click(
                             move |_, w, cx| {
-                                _ = view.update(cx, |v, cx| v.open_group_fields(Some(&id), w, cx));
+                                _ = view.update(cx, |v, cx| {
+                                    v.open_group_fields(Some(&id), None, w, cx)
+                                });
                             },
                         ));
                     }

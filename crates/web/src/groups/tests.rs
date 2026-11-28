@@ -61,6 +61,81 @@ fn advance_search(cx: &mut TestAppContext, millis: u64) {
 }
 
 #[gpui_kit::test]
+fn selection_bar_stays_below_scroll_and_returns_dialog_focus(cx: &mut TestAppContext) {
+    let (handle, table) = visit_titles(cx, true, ["Ink", "Sketch"]);
+    cx.simulate_window_resize(handle, size(px(681.), px(450.)));
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.click(format!("check-{}", Uuid::from_u128(59)), cx);
+        let bar = w.find("board-selection-bar").bounds();
+        let scroll = w.find("content-scroll").bounds();
+        assert!(bar.top() >= scroll.bottom());
+        assert!(bar.bottom() <= px(450.));
+        assert_eq!(w.find("board-selection-count").label(), Some("1 selected"));
+        assert!(
+            w.find("archive-selected").bounds().right()
+                <= w.find("delete-selected").bounds().left()
+        );
+        assert!(
+            w.find("delete-selected").bounds().right() <= w.find("move-selected").bounds().left()
+        );
+        w.scroll(
+            "content-scroll",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-320.))),
+            cx,
+        );
+        assert!(table.read(cx).scroll.offset().y < px(0.));
+        assert_eq!(w.find("board-selection-bar").bounds(), bar);
+        w.click("archive-selected", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(table.read(cx).editor.is_some());
+        assert_eq!(w.find("confirm").label(), Some("Archive"));
+        w.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(table.read(cx).editor.is_none());
+        assert_eq!(w.find("archive-selected").focused(), Some(true));
+        w.press("tab", cx);
+        assert_eq!(w.find("delete-selected").focused(), Some(true));
+        w.press("tab", cx);
+        assert_eq!(w.find("move-selected").focused(), Some(true));
+        w.press("tab", cx);
+        assert_eq!(w.find("clear-selected").focused(), Some(true));
+        w.press("enter", cx);
+        assert!(table.read(cx).selection.is_empty());
+        assert!(w.try_find("board-selection-bar").is_none());
+        assert_eq!(w.find("board-search-input").focused(), Some(true));
+        assert!(table.read(cx).saves.is_empty());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn selection_bar_keeps_readonly_commands_disabled_and_clear_available(cx: &mut TestAppContext) {
+    let (handle, table) = visit(cx, false);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.click(format!("check-{}", Uuid::from_u128(59)), cx);
+        for action in ["archive-selected", "delete-selected", "move-selected"] {
+            assert_eq!(w.find(action).disabled(), Some(true));
+            w.click(action, cx);
+            assert!(table.read(cx).editor.is_none());
+        }
+        w.click("clear-selected", cx);
+        assert!(table.read(cx).selection.is_empty());
+        assert_eq!(w.find("board-search-input").focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn item_search_debounces_and_clear_restores_hidden_selection_and_entry_draft(
     cx: &mut TestAppContext,
 ) {

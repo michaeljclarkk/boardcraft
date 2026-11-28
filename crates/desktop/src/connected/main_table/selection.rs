@@ -86,55 +86,59 @@ impl MainTable {
             Gesture::Range(id, checked) => self.selection.row(*id, *checked, true, &self.order(cx)),
         }
     }
-    pub(super) fn selection_toolbar(&self, cx: &mut Context<Connected>) -> impl IntoElement {
-        div()
-            .id("selection-toolbar")
-            .role(Role::Toolbar)
-            .aria_label("Selected item actions")
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(Label::new(format!("{} selected", self.selection.ids.len())))
-            .child(
+    pub(in crate::connected) fn selection_toolbar(
+        &self,
+        cx: &mut Context<Connected>,
+    ) -> impl IntoElement {
+        boardcraft_ui::BoardSelectionBar::new(self.selection.ids.len())
+            .move_to(
                 Button::new("selection-move")
                     .track_focus(&self.move_focus)
-                    .small()
-                    .label("Move to…")
                     .disabled(!self.editable || self.pending || self.reconcile)
                     .on_click(cx.listener(|v, _, w, cx| v.open_selection_move(w, cx))),
             )
-            .child(
+            .archive(
                 Button::new("selection-archive")
                     .track_focus(&self.selection_archive_focus)
-                    .small()
-                    .label("Archive…")
                     .disabled(!self.manageable || self.pending || self.reconcile)
                     .on_click(cx.listener(|v, _, w, cx| v.open_selection_archive(w, cx))),
             )
-            .child(
+            .delete(
                 Button::new("selection-delete")
                     .track_focus(&self.selection_delete_focus)
-                    .small()
-                    .label("Delete…")
                     .disabled(!self.manageable || self.pending || self.reconcile)
                     .on_click(cx.listener(|v, _, w, cx| v.open_selection_delete(w, cx))),
             )
-            .child(
+            .clear(
                 Button::new("selection-clear")
-                    .small()
-                    .ghost()
-                    .label("Clear item selection")
                     .disabled(self.pending)
-                    .on_click(cx.listener(|v, _, _, cx| {
+                    .on_click(cx.listener(|v, _, w, cx| {
                         if let Screen::Navigation(nav) = &mut v.screen
                             && let Page::Items(_, t) = &mut nav.page
                             && !t.pending
                         {
                             t.selection.ids.clear(); // The ordinary-row anchor deliberately survives Clear.
+                            // Clear unmounts its own button; return to a visible table control.
+                            let focus = t
+                                .headings
+                                .iter()
+                                .filter(|heading| !heading.collapsed)
+                                .flat_map(|heading| &heading.rows)
+                                .find(|row| t.matches_filter(row, cx))
+                                .map(|row| row.read(cx).display_focus.clone());
+                            if let Some(focus) = focus {
+                                focus.focus(w, cx);
+                            } else {
+                                t.view_filter.update(cx, |input, cx| input.focus(w, cx));
+                            }
                             cx.notify();
                         }
                     })),
             )
+    }
+
+    pub(in crate::connected) fn has_selection_toolbar(&self) -> bool {
+        self.archive.is_none() && !self.selection.ids.is_empty()
     }
 }
 

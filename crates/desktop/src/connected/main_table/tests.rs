@@ -4,7 +4,8 @@ use super::{
 };
 use gpui_kit::{
     AnyWindowHandle, App, AppContext, Bounds, Entity, TestAppContext, WindowBounds, WindowOptions,
-    px, size, test::TestWindowExt,
+    px, size,
+    test::{TestQueryExt, TestWindowExt},
 };
 use uuid::Uuid;
 
@@ -208,6 +209,183 @@ fn filtered_group_selection_never_changes_hidden_members(cx: &mut TestAppContext
         assert_eq!(selected(&view, cx), [ink]);
         w.click("select-group-one", cx);
         assert!(selected(&view, cx).is_empty());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn selection_bar_stays_at_bottom_and_clear_returns_focus_after_resize(cx: &mut TestAppContext) {
+    let (window, view) = visit(cx);
+    let sketch = Uuid::from_u128(42);
+    cx.update_window(window, |_, w, cx| {
+        w.render_frame(cx);
+        w.click(format!("select-{sketch}"), cx);
+        let bar = w.find("board-selection-bar").bounds();
+        let viewport = w.find("navigation-content").bounds();
+        assert!(bar.top() > w.find("add-empty").bounds().bottom());
+        assert!(bar.bottom() < viewport.bottom());
+        assert!(bar.bottom() > viewport.bottom() - px(24.));
+        assert!((bar.center().x - viewport.center().x).abs() <= px(1.));
+        assert!(
+            w.find("selection-archive").bounds().left()
+                < w.find("selection-delete").bounds().left()
+        );
+        assert!(
+            w.find("selection-delete").bounds().left() < w.find("selection-move").bounds().left()
+        );
+        assert_eq!(w.find("selection-archive").label(), Some("Archive"));
+        assert_eq!(w.find("selection-delete").label(), Some("Delete"));
+        assert_eq!(w.find("selection-move").label(), Some("Move to"));
+    })
+    .unwrap();
+    cx.simulate_window_resize(window, size(px(681.), px(500.)));
+    cx.update_window(window, |_, w, cx| {
+        w.render_frame(cx);
+        let before = w.find("board-selection-bar").bounds();
+        assert_eq!(
+            before.left(),
+            w.find("navigation-content").bounds().left() + w.rem_size()
+        );
+        w.scroll(
+            "navigation-content",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-600.))),
+            cx,
+        );
+        assert_eq!(w.find("board-selection-bar").bounds(), before);
+        for action in [
+            "selection-archive",
+            "selection-delete",
+            "selection-move",
+            "selection-clear",
+        ] {
+            assert!(w.find(action).visible());
+        }
+        w.click("selection-clear", cx);
+        assert!(selected(&view, cx).is_empty());
+        assert!(w.try_find("board-selection-bar").is_none());
+        // The focused row may be above the scroll viewport, but its retained focus
+        // remains an actionable keyboard destination after Clear removes itself.
+        assert_eq!(w.find(format!("title-{sketch}")).focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn selection_bar_preserves_commands_and_permission_guards(cx: &mut TestAppContext) {
+    let (window, view) = visit(cx);
+    let sketch = Uuid::from_u128(42);
+    cx.update_window(window, |_, w, cx| {
+        w.render_frame(cx);
+        w.click(format!("select-{sketch}"), cx);
+        w.click("selection-archive", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(table(view.read(cx)).move_dialog.is_some());
+        assert_eq!(w.find("move-confirm").label(), Some("Archive"));
+        w.click("move-cancel", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(table(view.read(cx)).move_dialog.is_none());
+        assert_eq!(w.find("selection-archive").focused(), Some(true));
+        assert_eq!(selected(&view, cx), [sketch]);
+        view.update(cx, |v, cx| {
+            let Screen::Navigation(nav) = &mut v.screen else {
+                unreachable!()
+            };
+            let Page::Items(_, table) = &mut nav.page else {
+                unreachable!()
+            };
+            table.manageable = false;
+            table.editable = false;
+            cx.notify();
+        });
+        w.render_frame(cx);
+        for action in ["selection-archive", "selection-delete", "selection-move"] {
+            assert_eq!(w.find(action).disabled(), Some(true));
+            w.click(action, cx);
+            assert!(table(view.read(cx)).move_dialog.is_none());
+        }
+        w.click("selection-clear", cx);
+        assert!(selected(&view, cx).is_empty());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn board_tools_open_group_and_automation_controls_and_leave_reload_reachable(
+    cx: &mut TestAppContext,
+) {
+    let (window, view) = visit(cx);
+    cx.update_window(window, |_, w, cx| {
+        w.render_frame(cx);
+        w.click("board-tools-menu", cx);
+        let add = w.find_by_label("Add group");
+        w.within("popup-menu")
+            .click(add.path().last().unwrap().clone(), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(table(view.read(cx)).group_dialog.is_some());
+        assert_eq!(w.find("group-field-name").focused(), Some(true));
+        w.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(table(view.read(cx)).group_dialog.is_none());
+        assert_eq!(w.find("board-tools-menu").focused(), Some(true));
+        w.click("board-tools-menu", cx);
+        let automate = w.find_by_label("Automations");
+        w.within("popup-menu")
+            .click(automate.path().last().unwrap().clone(), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(table(view.read(cx)).automations_open);
+        assert!(w.find("automation-name").visible());
+        view.update(cx, |v, cx| {
+            let Screen::Navigation(nav) = &mut v.screen else {
+                unreachable!()
+            };
+            let Page::Items(_, table) = &mut nav.page else {
+                unreachable!()
+            };
+            table.reconcile = true;
+            cx.notify();
+        });
+        w.render_frame(cx);
+        w.click("board-tools-menu", cx);
+        // This Kit menu does not expose disabled through its accessibility properties;
+        // dispatch its actual pointer path and verify that the guard refuses the editor.
+        let add = w.within("popup-menu").find_by_label("Add group");
+        w.within("popup-menu")
+            .click(add.path().last().unwrap().clone(), cx);
+        assert!(table(view.read(cx)).group_dialog.is_none());
+        let reload = w.within("popup-menu").find_by_label("Reload board");
+        w.within("popup-menu")
+            .click(reload.path().last().unwrap().clone(), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(table(view.read(cx)).reconcile);
+        assert_eq!(
+            view.read(cx).message,
+            "Could not reload board. Retry loading before editing again."
+        );
+        assert!(!table(view.read(cx)).pending);
     })
     .unwrap();
 }

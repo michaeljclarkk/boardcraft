@@ -11,6 +11,7 @@ mod session_store;
 use boardcraft_mobile_edit_client::{EditClient, EditError, NameEdit, SavedItem};
 use boardcraft_ui::{BoardFindDock, BoardHeader, BoardRow, BoardTabs, BoardToolbar};
 use connection::{Connection, launch_connection};
+use gpui_kit::base::Selectable;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::{
     Disableable, Root, Sizable, Theme, ThemeMode,
@@ -83,14 +84,21 @@ struct BoardView {
     navigation_title: String,
     views_open: bool,
     automations_open: bool,
+    filters_open: bool,
+    filter_focus: FocusHandle,
+    filter_groups: HashSet<String>,
+    filter_status: HashSet<String>,
+    filter_blank_status: bool,
 }
 
 struct Editor {
     id: Uuid,
+    original: String,
     revision: Option<i64>,
     input: Entity<InputState>,
     pending: bool,
     error: Option<&'static str>,
+    retry: bool,
     _changes: Subscription,
 }
 
@@ -157,6 +165,11 @@ impl BoardView {
             navigation_title: "Board".into(),
             views_open: false,
             automations_open: false,
+            filters_open: false,
+            filter_focus: cx.focus_handle().tab_stop(true),
+            filter_groups: HashSet::new(),
+            filter_status: HashSet::new(),
+            filter_blank_status: false,
         };
         match launch_connection() {
             Ok(None) => {
@@ -228,6 +241,22 @@ impl BoardView {
                     .on_click(cx.listener(|view, _, w, cx| view.clear_search(true, w, cx))),
             );
         if self.navigation.is_some() {
+            if matches!(self.navigation, Some(navigation::Page::Selected { .. })) {
+                dock = dock.filters(
+                    Button::new("mobile-board-filters")
+                        .track_focus(&self.filter_focus)
+                        .selected(
+                            self.filters_open
+                                || !self.filter_groups.is_empty()
+                                || !self.filter_status.is_empty()
+                                || self.filter_blank_status,
+                        )
+                        .disabled(busy)
+                        .on_click(cx.listener(|view, _, w, cx| {
+                            view.open_filters(w, cx);
+                        })),
+                );
+            }
             dock = dock.home(
                 Button::new("mobile-find-home")
                     .disabled(busy)
@@ -246,29 +275,50 @@ impl BoardView {
     }
 
     fn open_editor(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        if self.navigation.is_some()
-            || self.logging_out
+        if self.logging_out
             || self.login.is_some()
-            || (self.connection.is_some() && self.editor.is_some())
+            || self.editor.is_some()
+            || self.automation_pending
         {
             return;
         }
-        if let Some(item) = self.board.items.iter().find(|item| item.id == id) {
-            let input = cx.new(|cx| InputState::new(window, cx).default_value(item.title.clone()));
-            let changes = cx.subscribe(&input, |view, _, event, cx| {
-                if matches!(event, InputEvent::Change)
-                    && let Some(e) = &mut view.editor
-                    && e.error.take().is_some()
-                {
-                    cx.notify();
+        let item = match &self.navigation {
+            Some(navigation::Page::Selected { rows, status, .. })
+                if status.editable && status.pending.is_none() =>
+            {
+                rows.iter()
+                    .find(|row| row.id == id)
+                    .map(|row| (row.title.clone(), Some(row.revision)))
+            }
+            None => self
+                .board
+                .items
+                .iter()
+                .find(|item| item.id == id)
+                .map(|item| (item.title.clone(), item.revision)),
+            _ => None,
+        };
+        if let Some((title, revision)) = item {
+            let input = cx.new(|cx| InputState::new(window, cx).default_value(title.clone()));
+            let changes = cx.subscribe_in(&input, window, |view, _, event, w, cx| match event {
+                InputEvent::Change => {
+                    if let Some(e) = &mut view.editor {
+                        e.error = None;
+                        cx.notify();
+                    }
                 }
+                InputEvent::PressEnter { .. } => view.save(w, cx),
+                _ => {}
             });
+            input.update(cx, |input, cx| input.focus(window, cx));
             self.editor = Some(Editor {
                 id,
-                revision: item.revision,
+                original: title,
+                revision,
                 input,
                 pending: false,
                 error: None,
+                retry: false,
                 _changes: changes,
             });
             cx.notify();
@@ -276,6 +326,13 @@ impl BoardView {
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let browse = match &self.navigation {
+            Some(navigation::Page::Selected { board, status, .. }) if status.editable => {
+                Some(*board)
+            }
+            Some(_) => return,
+            None => None,
+        };
         let (Some(conn), Some(client), Some(editor)) =
             (self.connection, self.client.clone(), self.editor.as_mut())
         else {
@@ -284,22 +341,40 @@ impl BoardView {
         let Some(revision) = editor.revision else {
             return;
         };
-        let Some(board) = conn.board else { return };
+        let Some(board) = browse.or(conn.board) else {
+            return;
+        };
         if editor.pending || self.logging_out {
             return;
         }
         let id = editor.id;
-        let request = NameEdit {
+        let mut request = NameEdit {
             revision,
             title: editor.input.read(cx).value().to_string(),
         };
         let blank = request.title.trim().is_empty();
+        let retry = editor.retry;
+        let unchanged = editor.original == request.title;
+        if unchanged && !retry {
+            self.cancel_editor(window, cx);
+            return;
+        }
         editor.pending = true;
         editor.error = None;
+        window.focus(&self.navigation_focus, cx);
         let identifier = Login::identifier(window, cx);
-        let work = cx
-            .background_executor()
-            .spawn(async move { client.rename(board, id, &request) });
+        let work = cx.background_executor().spawn(async move {
+            if browse.is_some() {
+                // An explicit retry reconciles the accepted revision before writing the
+                // retained draft. A failed read never causes a blind repeat submission.
+                if retry {
+                    request.revision = client.read_main_table_item(board, id)?.revision;
+                }
+                client.rename_main_table_item(board, id, &request)
+            } else {
+                client.rename(board, id, &request)
+            }
+        });
         cx.spawn(async move |view, cx| {
             let result = work.await;
             _ = view.update(cx, |view, cx| {
@@ -308,12 +383,24 @@ impl BoardView {
                 };
                 editor.pending = false;
                 match result {
-                    Ok(row)
-                        if row.id == id
-                            && let Some(item) =
-                                view.board.items.iter_mut().find(|item| item.id == id) =>
-                    {
-                        *item = row.into();
+                    Ok(row) if row.id == id => {
+                        if let Some(navigation::Page::Selected {
+                            board: current,
+                            rows,
+                            ..
+                        }) = &mut view.navigation
+                        {
+                            if Some(*current) == browse
+                                && let Some(item) = rows.iter_mut().find(|item| item.id == id)
+                                && row.revision >= item.revision
+                            {
+                                *item = row;
+                            }
+                        } else if let Some(item) =
+                            view.board.items.iter_mut().find(|item| item.id == id)
+                        {
+                            *item = row.into();
+                        }
                         view.editor = None;
                     }
                     Err(error @ (EditError::SessionRejected | EditError::PermissionDenied)) => {
@@ -322,14 +409,21 @@ impl BoardView {
                         } else {
                             view.message = "No permission to edit this board.";
                             view.editor = None;
-                            view.board.items.clear();
+                            if browse.is_some() {
+                                view.navigation = Some(navigation::Page::Denied);
+                            } else {
+                                view.board.items.clear();
+                            }
                         }
                     }
                     result => {
+                        editor.retry = browse.is_some();
                         editor.error = Some(match result {
                             Err(EditError::InvalidDraft) if blank => "Name required",
                             Err(EditError::InvalidDraft) => "Name too long",
-                            Err(EditError::Conflict) => "Revision conflict. Reopen the board.",
+                            Err(EditError::Conflict) => {
+                                "Name changed elsewhere. Retry change to apply your name."
+                            }
                             Err(EditError::Missing) => "Item not found. Reopen the board.",
                             Err(EditError::AccessUnavailable) => {
                                 "Access check unavailable. Try again."
@@ -345,13 +439,113 @@ impl BoardView {
         cx.notify();
     }
 
+    fn cancel_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editor.as_ref().is_some_and(|editor| editor.pending) {
+            return;
+        }
+        self.editor = None;
+        window.focus(&self.navigation_focus, cx);
+        cx.notify();
+    }
+
+    fn render_name(&self, row: &SavedItem, editable: bool, cx: &mut Context<Self>) -> AnyElement {
+        let id = row.id;
+        if let Some(editor) = self.editor.as_ref().filter(|editor| editor.id == id) {
+            return div()
+                .flex_1()
+                .min_w_0()
+                .capture_action(cx.listener(
+                    |view, _: &gpui_kit::component::input::Escape, w, cx| {
+                        view.cancel_editor(w, cx);
+                        cx.stop_propagation();
+                    },
+                ))
+                .child(
+                    Input::new(&editor.input)
+                        .large()
+                        .disabled(editor.pending)
+                        .aria_label("Item name"),
+                )
+                .into_any_element();
+        }
+        div()
+            .flex_1()
+            .min_w_0()
+            .on_key_down(cx.listener(move |view, event: &KeyDownEvent, w, cx| {
+                if event.keystroke.key == "f2" {
+                    view.open_editor(id, w, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(
+                Button::new(SharedString::from(format!("mobile-name-{id}")))
+                    .ghost()
+                    .large()
+                    .flex_1()
+                    .min_w_0()
+                    .w_full()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_left()
+                            .truncate()
+                            .child(row.title.clone()),
+                    )
+                    .accessibility_label(format!("Rename {}", row.title))
+                    .disabled(
+                        !editable
+                            || self.logging_out
+                            || self.editor.is_some()
+                            || self.automation_pending,
+                    )
+                    .on_click(cx.listener(move |view, _, w, cx| view.open_editor(id, w, cx))),
+            )
+            .into_any_element()
+    }
+
+    fn editor_actions(&self, editor: &Editor, cx: &mut Context<Self>) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_3()
+            .py_2()
+            .children(editor.error.map(Label::new))
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Button::new("mobile-save-name")
+                            .large()
+                            .label(if editor.pending {
+                                "Saving…"
+                            } else if editor.retry {
+                                "Retry change"
+                            } else {
+                                "Save"
+                            })
+                            .disabled(editor.pending)
+                            .on_click(cx.listener(|view, _, w, cx| view.save(w, cx))),
+                    )
+                    .child(
+                        Button::new("mobile-cancel-name")
+                            .large()
+                            .label("Cancel")
+                            .disabled(editor.pending)
+                            .on_click(cx.listener(|view, _, w, cx| view.cancel_editor(w, cx))),
+                    ),
+            )
+    }
+
     fn logout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Serialize board operations: a save must settle before revocation, and
         // no new edit or save can start while the logout request is in flight.
         if (self.login.is_some() && !matches!(self.login, Some(Login::Denied)))
             || self.logging_out
             || self.navigation.as_ref().is_some_and(|page| page.pending())
-            || self.editor.as_ref().is_some_and(|e| e.pending)
+            || self.editor.is_some()
             || self.automation_pending
         {
             return;
@@ -388,7 +582,7 @@ impl BoardView {
             .disabled(
                 self.logging_out
                     || self.navigation.as_ref().is_some_and(|page| page.pending())
-                    || self.editor.as_ref().is_some_and(|e| e.pending)
+                    || self.editor.is_some()
                     || self.automation_pending,
             )
             .on_click(cx.listener(|view, _, w, cx| view.logout(w, cx)))

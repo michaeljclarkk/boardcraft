@@ -2,8 +2,10 @@ use super::*;
 use gpui_kit::{
     base::Selectable,
     component::menu::{DropdownMenu, PopupMenuItem},
+    component::{ActiveTheme, Colorize},
 };
 mod activity;
+mod filters;
 mod status;
 use activity::ItemActivity;
 use boardcraft_mobile_edit_client::{
@@ -144,7 +146,10 @@ impl BoardView {
                 _ => false,
             },
         };
-        if self.logging_out || (page.pending() && !matches!(page, Page::Activity(_))) || !reachable
+        if self.logging_out
+            || self.editor.is_some()
+            || (page.pending() && !matches!(page, Page::Activity(_)))
+            || !reachable
         {
             return;
         }
@@ -174,6 +179,9 @@ impl BoardView {
                 }),
                 Some(next),
             ) if *current == next => Some(filter.clone()),
+            (Some(Page::Activity(activity)), Some(next)) if activity.board == next => {
+                Some(self.result_search.clone())
+            }
             _ => None,
         };
         if retained_filter.is_none() {
@@ -187,6 +195,10 @@ impl BoardView {
                 .update(cx, |input, cx| input.set_value("", window, cx));
             self.views_open = false;
             self.automations_open = false;
+            self.filters_open = false;
+            self.filter_groups.clear();
+            self.filter_status.clear();
+            self.filter_blank_status = false;
         }
         // Loading exposes no actions. Only this completion can replace it.
         self.navigation = Some(Page::Loading);
@@ -234,6 +246,8 @@ impl BoardView {
                                 .retain(|id| rows.iter().any(|row| row.id == *id));
                             view.folded
                                 .retain(|id, _| groups.iter().any(|group| group.id() == id));
+                            view.filter_groups
+                                .retain(|id| groups.iter().any(|group| group.id() == id));
                         }
                         view.navigation = Some(page);
                     }
@@ -398,6 +412,9 @@ impl BoardView {
     /// Applying a saved view only replaces the board's active filter; the rows
     /// stay loaded, so switching between views needs no further board read.
     fn apply_saved_view(&mut self, id: Uuid, w: &mut Window, cx: &mut Context<Self>) {
+        if self.editor.is_some() {
+            return;
+        }
         let Some(Page::Selected { views, filter, .. }) = &mut self.navigation else {
             return;
         };
@@ -410,6 +427,9 @@ impl BoardView {
         self.result_search = value.clone();
         self.search_pending = false;
         self.search_invalid = false;
+        self.filter_groups.clear();
+        self.filter_status.clear();
+        self.filter_blank_status = false;
         self.board_search
             .update(cx, |input, cx| input.set_value(value, w, cx));
         cx.notify();
@@ -576,6 +596,11 @@ impl BoardView {
             .overflow_y_scroll()
             .track_focus(&self.navigation_focus)
             .on_key_down(cx.listener(|view, event: &KeyDownEvent, w, cx| {
+                if event.keystroke.key == "escape" && view.editor.is_some() {
+                    view.cancel_editor(w, cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 if event.keystroke.key == "escape"
                     && let Some(Page::Activity(activity)) = &view.navigation
                 {
@@ -645,7 +670,10 @@ impl BoardView {
                 automations,
                 filter,
             } => {
-                let busy = self.logging_out || self.automation_pending || status.pending.is_some();
+                let busy = self.logging_out
+                    || self.automation_pending
+                    || status.pending.is_some()
+                    || self.editor.is_some();
                 let owner = cx.weak_entity();
                 let board_id = *board;
                 column = column
@@ -683,6 +711,9 @@ impl BoardView {
                                             move |_, w, cx| {
                                                 let _ = clear.update(cx, |view, cx| {
                                                     view.clear_search(false, w, cx);
+                                                    view.filter_groups.clear();
+                                                    view.filter_status.clear();
+                                                    view.filter_blank_status = false;
                                                 });
                                             },
                                         ))
@@ -723,14 +754,18 @@ impl BoardView {
                         cx,
                     ));
                 }
+                let filtered = !filter.is_empty()
+                    || !self.filter_groups.is_empty()
+                    || !self.filter_status.is_empty()
+                    || self.filter_blank_status;
                 let visible = rows
                     .iter()
-                    .filter(|row| view_filter_matches(filter, &row.title))
+                    .filter(|row| self.matches_board_filter(row, groups, status, filter))
                     .count();
-                if !filter.is_empty() {
+                if filtered {
                     column = column.child(Label::new(format!("{visible} matching items")));
                 }
-                if visible == 0 && !filter.is_empty() {
+                if visible == 0 && filtered {
                     column = column
                         .child(Label::new("No results were found"))
                         .child(Label::new(
@@ -738,13 +773,29 @@ impl BoardView {
                         ));
                 }
                 for group in groups {
+                    if !self.filter_groups.is_empty()
+                        && !self.filter_groups.contains(group.id())
+                        && !group.items().iter().any(|row| {
+                            self.editor
+                                .as_ref()
+                                .is_some_and(|editor| editor.id == row.id)
+                        })
+                    {
+                        continue;
+                    }
                     let matching: Vec<_> = group
                         .items()
                         .iter()
                         .filter_map(|item| rows.iter().find(|row| row.id == item.id))
-                        .filter(|row| view_filter_matches(filter, &row.title))
+                        .filter(|row| {
+                            self.matches_board_filter(row, groups, status, filter)
+                                || self
+                                    .editor
+                                    .as_ref()
+                                    .is_some_and(|editor| editor.id == row.id)
+                        })
                         .collect();
-                    if !filter.is_empty() && matching.is_empty() {
+                    if filtered && matching.is_empty() {
                         continue;
                     }
                     let group_id = group.id().to_owned();
@@ -752,7 +803,12 @@ impl BoardView {
                         .folded
                         .get(&group_id)
                         .copied()
-                        .unwrap_or(group.is_collapsed());
+                        .unwrap_or(group.is_collapsed())
+                        && !matching.iter().any(|row| {
+                            self.editor
+                                .as_ref()
+                                .is_some_and(|editor| editor.id == row.id)
+                        });
                     let count = matching.len();
                     let count_label = if count == 0 {
                         "No Items".to_owned()
@@ -772,12 +828,14 @@ impl BoardView {
                             .ghost()
                             .large()
                             .w_full()
-                            .icon(if folded {
-                                gpui_kit::component::IconName::ChevronRight
-                            } else {
-                                gpui_kit::component::IconName::ChevronDown
-                            })
-                            .label(format!("{}   {count_label}", group.name()))
+                            .text_color(
+                                Hsla::parse_hex(group.colour()).unwrap_or(cx.theme().foreground),
+                            )
+                            .child(div().flex_1().min_w_0().text_left().child(format!(
+                                "{} {}   {count_label}",
+                                if folded { ">" } else { "v" },
+                                group.name()
+                            )))
                             .accessibility_label(format!("Toggle {}", group.name()))
                             .disabled(busy)
                             .on_click(cx.listener(move |view, _, _, cx| {
@@ -810,20 +868,33 @@ impl BoardView {
                         .id(SharedString::from(format!("mobile-table-{group_id}")))
                         .flex()
                         .flex_col()
-                        .overflow_x_scroll()
+                        .w_full()
+                        .min_w_0()
                         .child(
-                            BoardRow::new(Label::new("Item"))
-                                .header()
-                                .touch()
-                                .leading(checkbox)
-                                .cell(Label::new(status.title.clone())),
+                            div()
+                                .flex()
+                                .items_center()
+                                .min_h_11()
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .child(div().w_8().flex_shrink_0().child(checkbox))
+                                .child(div().flex_1().min_w_0().child(Label::new("Item")))
+                                .child(
+                                    div()
+                                        .w_24()
+                                        .flex_shrink_0()
+                                        .child(Label::new(status.title.clone())),
+                                )
+                                .child(div().w_8().flex_shrink_0()),
                         );
                     for row in matching {
                         let (board_id, item) = (*board, row.id);
                         let history =
                             Button::new(SharedString::from(format!("item-activity-{item}")))
                                 .large()
-                                .label("Activity log")
+                                .label("…")
+                                .w_8()
+                                .px_0()
                                 .accessibility_label(format!("Activity log for {}", row.title))
                                 .disabled(busy)
                                 .on_click(cx.listener(move |view, _, w, cx| {
@@ -846,29 +917,24 @@ impl BoardView {
                             },
                         ));
                         table = table.child(
-                            BoardRow::new(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .w_full()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .child(Label::new(row.title.clone())),
-                                    )
-                                    .child(history.small()),
-                            )
-                            .leading(check)
-                            .cell(status.cell(
-                                *board,
-                                row,
-                                self.logging_out || self.automation_pending,
-                                cx,
-                            ))
-                            .touch(),
+                            div()
+                                .flex()
+                                .items_center()
+                                .w_full()
+                                .min_w_0()
+                                .min_h_11()
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .child(div().w_8().flex_shrink_0().child(check))
+                                .child(self.render_name(row, status.editable, cx))
+                                .child(status.cell(*board, row, busy, cx))
+                                .child(history),
                         );
+                        if let Some(editor) =
+                            self.editor.as_ref().filter(|editor| editor.id == item)
+                        {
+                            table = table.child(self.editor_actions(editor, cx));
+                        }
                     }
                     column = column.child(table);
                 }
@@ -999,7 +1065,11 @@ impl BoardView {
             Button::new("boards")
                 .large()
                 .label(action)
-                .disabled(self.logging_out || (page.pending() && parent_board.is_none()))
+                .disabled(
+                    self.logging_out
+                        || self.editor.is_some()
+                        || (page.pending() && parent_board.is_none()),
+                )
                 .on_click(cx.listener(move |view, _, w, cx| view.navigate(parent_board, w, cx))),
         );
         if !self.message.is_empty() {
@@ -1014,7 +1084,10 @@ impl BoardView {
         );
         if matches!(page, Page::Selected { .. }) {
             page_view = page_view.child(self.search_dock(
-                self.logging_out || self.automation_pending || page.pending(),
+                self.logging_out
+                    || self.automation_pending
+                    || page.pending()
+                    || self.editor.is_some(),
                 cx,
             ));
         }
