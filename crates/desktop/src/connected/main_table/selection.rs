@@ -44,12 +44,26 @@ enum Gesture {
 }
 
 impl MainTable {
-    fn order(&self, cx: &App) -> Vec<Uuid> {
+    fn matches_filter(&self, row: &Entity<Row>, cx: &App) -> bool {
+        boardcraft_mobile_edit_client::view_filter_matches(
+            &self.filter,
+            row.read(cx).edit.accepted(),
+        )
+    }
+    pub(super) fn matching_count(&self, heading: &Heading, cx: &App) -> usize {
+        heading
+            .rows
+            .iter()
+            .filter(|row| self.matches_filter(row, cx))
+            .count()
+    }
+    pub(super) fn order(&self, cx: &App) -> Vec<Uuid> {
         self.headings
             .iter()
             .flat_map(|h| {
                 h.rows
                     .iter()
+                    .filter(|r| self.matches_filter(r, cx))
                     .map(|r| r.read(cx).edit.identity().1.as_uuid())
             })
             .collect()
@@ -63,6 +77,7 @@ impl MainTable {
                 let ids: Vec<_> = h
                     .rows
                     .iter()
+                    .filter(|r| self.matches_filter(r, cx))
                     .map(|r| r.read(cx).edit.identity().1.as_uuid())
                     .collect();
                 self.selection.block(&ids, *checked);

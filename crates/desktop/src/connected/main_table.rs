@@ -21,6 +21,8 @@ mod item_order;
 mod selection;
 mod selection_move;
 mod status;
+#[cfg(all(test, feature = "native-smoke"))]
+mod tests;
 use archive::{Archive, RootCommand, Undo};
 use group_fields::GroupDialog;
 use item_entry::GroupEntry;
@@ -50,6 +52,8 @@ pub(super) struct MainTable {
     pub(super) automations: Vec<Automation>,
     pub(super) filter: String,
     view_filter: Entity<InputState>,
+    search_task: Option<Task<()>>,
+    search_invalid: bool,
     view_name: Entity<InputState>,
     automation_name: Entity<InputState>,
     views_open: bool,
@@ -231,11 +235,16 @@ impl MainTable {
             .unwrap_or_else(|| cx.new(|cx| InputState::new(w, cx).placeholder("Search")));
         subscriptions.push(
             cx.subscribe_in(&view_filter, w, |v, _, event: &InputEvent, w, cx| {
-                if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Change) {
-                    v.apply_view_filter(w, cx);
+                if matches!(event, InputEvent::Change) {
+                    v.queue_view_filter(w, cx);
                 }
             }),
         );
+        if previous.is_some_and(|table| view_filter.read(cx).value().trim() != table.filter) {
+            // Reload replaces the table while keeping its input. Restart an unfinished search
+            // against the replacement visit rather than losing the user's last keystrokes.
+            cx.defer_in(w, |view, w, cx| view.queue_view_filter(w, cx));
+        }
         let view_name = previous
             .map(|t| t.view_name.clone())
             .unwrap_or_else(|| cx.new(|cx| InputState::new(w, cx).placeholder("View name")));
@@ -272,6 +281,8 @@ impl MainTable {
             automations: previous.map(|t| t.automations.clone()).unwrap_or_default(),
             filter: previous.map(|t| t.filter.clone()).unwrap_or_default(),
             view_filter,
+            search_task: None,
+            search_invalid: previous.is_some_and(|t| t.search_invalid),
             view_name,
             automation_name,
             views_open: previous.is_some_and(|t| t.views_open),
@@ -339,6 +350,15 @@ impl MainTable {
                 .text_sm(),
             );
         column = column.child(self.failed_item_moves(cx));
+        if self.search_invalid {
+            column = column.child(Label::new("Search must be 240 characters or fewer."));
+        }
+        if !self.filter.is_empty() {
+            column = column.child(Label::new(format!(
+                "{} matching items",
+                self.order(cx).len()
+            )));
+        }
         if self.views_open {
             column = column.child(self.render_views(cx));
         }
@@ -420,7 +440,23 @@ impl MainTable {
                     }
                 }
             }));
+        if !self.filter.is_empty() && self.order(cx).is_empty() {
+            groups = groups
+                .child(Label::new("No results were found"))
+                .child(Label::new(
+                    "Try another search or review this view’s filters.",
+                ))
+                .child(
+                    Button::new("clear-board-search")
+                        .small()
+                        .label("Clear search")
+                        .on_click(cx.listener(|v, _, w, cx| v.clear_view_filter(w, cx))),
+                );
+        }
         for h in &self.headings {
+            if !self.filter.is_empty() && self.matching_count(h, cx) == 0 {
+                continue;
+            }
             groups = groups.child(self.render_heading(h, cx));
         }
         if let Some(marker) = self.drag.borrow().marker() {
@@ -472,9 +508,11 @@ impl MainTable {
                             && let Page::Items(_, table) = &nav.page
                             && let Some(heading) = table.headings.iter().find(|h| !h.collapsed)
                         {
-                            heading
-                                .entry
-                                .update(cx, |entry, cx| entry.focus_input(w, cx));
+                            let entry = heading.entry.clone();
+                            if !table.filter.is_empty() && table.matching_count(heading, cx) == 0 {
+                                view.clear_view_filter(w, cx);
+                            }
+                            entry.update(cx, |entry, cx| entry.focus_input(w, cx));
                         }
                     })),
             )
@@ -626,7 +664,7 @@ impl MainTable {
         let id = h.id.clone();
         let menu_id = id.clone();
         let expanded = !h.collapsed;
-        let group_empty = h.rows.is_empty();
+        let group_empty = self.matching_count(h, cx) == 0;
         let view = cx.weak_entity();
         let manageable = self.manageable;
         let up = self.headings.first().is_some_and(|first| first.id != h.id);
@@ -665,20 +703,11 @@ impl MainTable {
         header = header.child(div().size_3().bg(rgb(
             u32::from_str_radix(&h.colour[1..], 16).expect("validated colour"),
         )));
-        let visible = h
-            .rows
-            .iter()
-            .filter(|r| {
-                boardcraft_mobile_edit_client::view_filter_matches(
-                    &self.filter,
-                    r.read(cx).edit.accepted(),
-                )
-            })
-            .count();
+        let visible = self.matching_count(h, cx);
         let count: SharedString = if self.filter.trim().is_empty() {
             h.count.clone()
         } else {
-            format!("{visible} of {}", h.rows.len()).into()
+            format!("{visible} {}", if visible == 1 { "item" } else { "items" }).into()
         };
         header = header.child(Label::new(count));
         header.child(
@@ -787,6 +816,7 @@ impl MainTable {
                         .set_viewport(bounds.intersect(&w.visual_viewport_bounds()));
                 });
         let group = h.id.clone();
+        let visible = self.matching_count(h, cx);
         let selected = h
             .rows
             .iter()
@@ -803,25 +833,17 @@ impl MainTable {
                     Checkbox::new(SharedString::from(format!("select-group-{group}")))
                         .small()
                         .accessibility_label(format!("Select all items in {}", h.name))
-                        .checked(!h.rows.is_empty() && selected == h.rows.len())
-                        .indeterminate(selected > 0 && selected < h.rows.len())
-                        .disabled(h.rows.is_empty() || self.pending || self.reconcile)
+                        // Tuesday counts selected physical-group records, including hidden rows,
+                        // against the filtered count; selection itself survives search.
+                        .checked(visible > 0 && selected == visible)
+                        .indeterminate(selected > 0 && selected < visible)
+                        .disabled(visible == 0 || self.pending || self.reconcile)
                         .on_change(cx.listener(move |v, checked, w, cx| {
                             v.select_main_table_group(&group, *checked, w, cx)
                         })),
                 )
                 .cell(self.status.header()),
         );
-        let visible = h
-            .rows
-            .iter()
-            .filter(|r| {
-                boardcraft_mobile_edit_client::view_filter_matches(
-                    &self.filter,
-                    r.read(cx).edit.accepted(),
-                )
-            })
-            .count();
         if h.rows.is_empty() || visible == 0 {
             body = body.child(Label::new("No items"));
         }
@@ -932,16 +954,45 @@ impl MainTable {
 }
 
 impl Connected {
-    fn apply_view_filter(&mut self, _w: &mut Window, cx: &mut Context<Self>) {
+    fn queue_view_filter(&mut self, w: &mut Window, cx: &mut Context<Self>) {
         let Screen::Navigation(nav) = &mut self.screen else {
             return;
         };
-        let Page::Items(_, table) = &mut nav.page else {
+        let Page::Items(board, table) = &mut nav.page else {
             return;
         };
-        let input = table.view_filter.clone();
-        table.filter = input.read(cx).value().trim().to_owned();
-        cx.notify();
+        let board = *board;
+        let visit = self.navigation_request;
+        let query = table.view_filter.read(cx).value().to_string();
+        table.search_task = Some(cx.spawn_in(w, async move |v, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(250))
+                .await;
+            _ = v.update_in(cx, |v, _, cx| {
+                if v.navigation_request != visit {
+                    return;
+                }
+                let Screen::Navigation(nav) = &mut v.screen else {
+                    return;
+                };
+                let Page::Items(current, table) = &mut nav.page else {
+                    return;
+                };
+                if *current != board {
+                    return;
+                }
+                table.search_invalid = query.encode_utf16().count() > 240;
+                if !table.search_invalid {
+                    table.filter = query.trim().to_owned();
+                    table.selection_cache = false;
+                    table.drag.borrow_mut().cancel();
+                    for h in &table.headings {
+                        h.row_drag.borrow_mut().cancel();
+                    }
+                }
+                cx.notify();
+            });
+        }));
     }
 
     fn clear_view_filter(&mut self, w: &mut Window, cx: &mut Context<Self>) {
@@ -953,9 +1004,13 @@ impl Connected {
                 return;
             };
             table.filter.clear();
+            table.search_task = None;
+            table.search_invalid = false;
+            table.selection_cache = false;
             table.view_filter.clone()
         };
         input.update(cx, |input, cx| input.set_value("", w, cx));
+        input.update(cx, |input, cx| input.focus(w, cx));
         cx.notify();
     }
 
@@ -972,6 +1027,9 @@ impl Connected {
             };
             let filter = view.filter.clone();
             table.filter = filter.clone();
+            table.search_task = None;
+            table.search_invalid = false;
+            table.selection_cache = false;
             (table.view_filter.clone(), filter)
         };
         input.update(cx, |input, cx| input.set_value(filter, w, cx));

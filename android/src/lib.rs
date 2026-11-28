@@ -9,7 +9,7 @@ mod session_record;
 mod session_store;
 
 use boardcraft_mobile_edit_client::{EditClient, EditError, NameEdit, SavedItem};
-use boardcraft_ui::{BoardHeader, BoardRow, BoardTabs, BoardToolbar};
+use boardcraft_ui::{BoardFindDock, BoardHeader, BoardRow, BoardTabs, BoardToolbar};
 use connection::{Connection, launch_connection};
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::{
@@ -22,6 +22,10 @@ use gpui_kit::*;
 use gpui_mobile::android::{host, jni};
 use login::Login;
 use serde::Deserialize;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 use uuid::Uuid;
 
 #[derive(Deserialize)]
@@ -67,6 +71,15 @@ struct BoardView {
     automation_pending: bool,
     board_search: Entity<InputState>,
     _board_search_events: Subscription,
+    search_task: Option<Task<()>>,
+    result_search: String,
+    search_pending: bool,
+    search_invalid: bool,
+    search_focused: bool,
+    search_focus: FocusHandle,
+    _search_focus_events: Subscription,
+    folded: HashMap<String, bool>,
+    selected: HashSet<Uuid>,
     navigation_title: String,
     views_open: bool,
     automations_open: bool,
@@ -85,16 +98,33 @@ impl BoardView {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let automation_name =
             cx.new(|cx| InputState::new(window, cx).placeholder("Automation name"));
-        let board_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
-        let board_search_events =
-            cx.subscribe(&board_search, |view: &mut Self, input, event, cx| {
-                if matches!(event, InputEvent::Change) {
-                    if let Some(navigation::Page::Selected { filter, .. }) = &mut view.navigation {
-                        *filter = input.read(cx).value().trim().to_owned();
-                    }
+        let board_search = cx.new(|cx| InputState::new(window, cx).placeholder("Quick find"));
+        let board_search_events = cx.subscribe_in(
+            &board_search,
+            window,
+            |view: &mut Self, _, event, w, cx| match event {
+                InputEvent::Change => view.search_changed(w, cx),
+                InputEvent::Focus => {
+                    view.search_focused = true;
                     cx.notify();
                 }
+                // Keep Cancel mounted while focus moves from the input to a dock action.
+                InputEvent::Blur => {}
+                InputEvent::PressEnter { .. } => {
+                    view.search_task = None;
+                    view.apply_search(cx);
+                    w.focus(&view.navigation_focus, cx);
+                }
+            },
+        );
+        let search_focus = cx.focus_handle();
+        let owner = cx.weak_entity();
+        let search_focus_events = window.on_focus_out(&search_focus, cx, move |_, _, cx| {
+            let _ = owner.update(cx, |view, cx| {
+                view.search_focused = false;
+                cx.notify();
             });
+        });
         let mut view = Self {
             board: Board {
                 title: "Sample board".into(),
@@ -115,6 +145,15 @@ impl BoardView {
             automation_pending: false,
             board_search,
             _board_search_events: board_search_events,
+            search_task: None,
+            result_search: String::new(),
+            search_pending: false,
+            search_invalid: false,
+            search_focused: false,
+            search_focus,
+            _search_focus_events: search_focus_events,
+            folded: HashMap::new(),
+            selected: HashSet::new(),
             navigation_title: "Board".into(),
             views_open: false,
             automations_open: false,
@@ -133,6 +172,77 @@ impl BoardView {
             }
         }
         view
+    }
+
+    fn search_changed(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        self.search_pending = true;
+        self.search_task = Some(cx.spawn_in(w, async move |view, cx| {
+            // BoardScreen owns 250ms; the MAUI dock coalesces native edits for 100ms first.
+            cx.background_executor()
+                .timer(Duration::from_millis(350))
+                .await;
+            let _ = view.update(cx, |view, cx| view.apply_search(cx));
+        }));
+        cx.notify();
+    }
+
+    fn apply_search(&mut self, cx: &mut Context<Self>) {
+        let query = self.board_search.read(cx).value();
+        self.search_invalid = query.encode_utf16().count() > 240;
+        self.search_pending = false;
+        if !self.search_invalid {
+            self.result_search = query.trim().to_owned();
+            if let Some(navigation::Page::Selected { filter, .. }) = &mut self.navigation {
+                *filter = self.result_search.clone();
+            }
+        }
+        cx.notify();
+    }
+
+    fn clear_search(&mut self, cancel: bool, w: &mut Window, cx: &mut Context<Self>) {
+        self.search_task = None;
+        self.board_search
+            .update(cx, |input, cx| input.set_value("", w, cx));
+        self.apply_search(cx);
+        if cancel {
+            self.search_focused = false;
+            w.focus(&self.navigation_focus, cx);
+        } else {
+            // Clear disappears with the query; keep focus inside the dock on its input.
+            self.board_search.update(cx, |input, cx| input.focus(w, cx));
+        }
+    }
+
+    fn search_dock(&self, busy: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut dock = BoardFindDock::new(&self.board_search)
+            .track_focus(&self.search_focus)
+            .busy(self.search_pending)
+            .disabled(busy)
+            .focused(self.search_focused)
+            .clear(
+                Button::new("mobile-find-clear")
+                    .on_click(cx.listener(|view, _, w, cx| view.clear_search(false, w, cx))),
+            )
+            .cancel(
+                Button::new("mobile-find-cancel")
+                    .on_click(cx.listener(|view, _, w, cx| view.clear_search(true, w, cx))),
+            );
+        if self.navigation.is_some() {
+            dock = dock.home(
+                Button::new("mobile-find-home")
+                    .disabled(busy)
+                    .on_click(cx.listener(|view, _, w, cx| view.navigate(None, w, cx))),
+            );
+        }
+        div()
+            .flex()
+            .flex_col()
+            .flex_shrink_0()
+            .children(
+                self.search_invalid
+                    .then(|| Label::new("Search must be 240 characters or fewer.")),
+            )
+            .child(dock)
     }
 
     fn open_editor(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
@@ -308,29 +418,26 @@ impl Render for BoardView {
             return self.navigation_page(page, column, cx);
         }
         column = column
+            .track_focus(&self.navigation_focus)
             .child(BoardHeader::new(self.board.title.clone()))
-            .child(BoardTabs::new())
-            .child(
-                BoardToolbar::new()
-                    .search(&self.board_search, "board-search-input")
-                    .search_disabled(self.logging_out || self.editor.is_some()),
-            );
+            .child(BoardTabs::new());
         if !self.message.is_empty() {
             column = column.child(Label::new(self.message));
         }
-        let query = self.board_search.read(cx).value().trim().to_lowercase();
+        let query = self.result_search.to_lowercase();
         let mut table = div()
             .id("mobile-main-table")
             .flex()
             .flex_col()
             .overflow_x_scroll()
             .child(BoardRow::new(Label::new("Item")).header().touch());
-        for item in self
-            .board
-            .items
-            .iter()
-            .filter(|item| item.title.to_lowercase().contains(&query))
-        {
+        for item in self.board.items.iter().filter(|item| {
+            item.title.to_lowercase().contains(&query)
+                || self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|editor| editor.id == item.id)
+        }) {
             if let Some(editor) = self.editor.as_ref().filter(|e| e.id == item.id) {
                 table = table.child(
                     BoardRow::new(
@@ -370,11 +477,18 @@ impl Render for BoardView {
                 );
             }
         }
-        column = column.child(table);
+        column = column.child(
+            div()
+                .id("sample-table-scroll")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(table),
+        );
         if self.client.is_some() {
             column = column.child(self.logout_button(cx));
         }
-        column
+        column.child(self.search_dock(self.logging_out || self.editor.is_some(), cx))
     }
 }
 

@@ -55,9 +55,12 @@ impl Table {
                 .filter(|item| self.matches_search(item.id, cx))
                 .map(|item| item.id)
                 .collect();
-            let selected = visible_ids
+            // Tuesday counts all selected parents in the physical group, including
+            // rows hidden by search, against the current matched count.
+            let selected = g
+                .items()
                 .iter()
-                .filter(|id| self.selection.contains(id))
+                .filter(|item| self.selection.contains(&item.id))
                 .count();
             let mut header = div().flex().min_h_9().items_center().gap_1();
             let geometry = self.drag.clone();

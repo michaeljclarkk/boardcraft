@@ -7,7 +7,8 @@ mod activity;
 mod status;
 use activity::ItemActivity;
 use boardcraft_mobile_edit_client::{
-    Automation, BoardSummary, InboxNotification, NotificationInbox, SavedView, view_filter_matches,
+    Automation, BoardSummary, InboxNotification, MainTableGroup, NotificationInbox, SavedView,
+    view_filter_matches,
 };
 use status::StatusColumn;
 
@@ -20,6 +21,7 @@ pub(super) enum Page {
     Selected {
         board: Uuid,
         rows: Vec<SavedItem>,
+        groups: Vec<MainTableGroup>,
         status: StatusColumn,
         views: Vec<SavedView>,
         automations: Vec<Automation>,
@@ -119,7 +121,12 @@ fn inbox_message(error: EditError) -> &'static str {
 }
 
 impl BoardView {
-    fn navigate(&mut self, board: Option<Uuid>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn navigate(
+        &mut self,
+        board: Option<Uuid>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(conn), Some(client), Some(page)) =
             (self.connection, self.client.clone(), &self.navigation)
         else {
@@ -158,10 +165,29 @@ impl BoardView {
                 self.navigation_title = title;
             }
         }
-        self.board_search
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        self.views_open = false;
-        self.automations_open = false;
+        let retained_filter = match (&self.navigation, board) {
+            (
+                Some(Page::Selected {
+                    board: current,
+                    filter,
+                    ..
+                }),
+                Some(next),
+            ) if *current == next => Some(filter.clone()),
+            _ => None,
+        };
+        if retained_filter.is_none() {
+            self.search_task = None;
+            self.result_search.clear();
+            self.search_pending = false;
+            self.search_invalid = false;
+            self.folded.clear();
+            self.selected.clear();
+            self.board_search
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            self.views_open = false;
+            self.automations_open = false;
+        }
         // Loading exposes no actions. Only this completion can replace it.
         self.navigation = Some(Page::Loading);
         self.inbox_unread = None;
@@ -170,16 +196,17 @@ impl BoardView {
         let identifier = Login::identifier(window, cx);
         let work = cx.background_executor().spawn(async move {
             match board {
-                Some(id) => StatusColumn::load(&client, id).and_then(|(rows, status)| {
+                Some(id) => StatusColumn::load(&client, id).and_then(|(rows, groups, status)| {
                     let views = client.list_views(id)?;
                     let automations = client.list_automations(id)?;
                     Ok(Page::Selected {
                         board: id,
                         rows,
+                        groups,
                         status,
                         views,
                         automations,
-                        filter: String::new(),
+                        filter: retained_filter.unwrap_or_default(),
                     })
                 }),
                 None => client.list_boards().map(Page::List),
@@ -192,7 +219,24 @@ impl BoardView {
                     return;
                 }
                 match result {
-                    Ok(page) => view.navigation = Some(page),
+                    Ok(mut page) => {
+                        if let Page::Selected {
+                            rows,
+                            groups,
+                            filter,
+                            ..
+                        } = &mut page
+                        {
+                            // A pending find can settle while Reload is reading the board.
+                            // Use that accepted query rather than the older request snapshot.
+                            *filter = view.result_search.clone();
+                            view.selected
+                                .retain(|id| rows.iter().any(|row| row.id == *id));
+                            view.folded
+                                .retain(|id, _| groups.iter().any(|group| group.id() == id));
+                        }
+                        view.navigation = Some(page);
+                    }
                     Err(EditError::SessionRejected) => view.forget_session(conn, identifier, cx),
                     Err(EditError::PermissionDenied | EditError::Missing) if board.is_some() => {
                         view.navigation = Some(Page::Denied)
@@ -362,6 +406,10 @@ impl BoardView {
         };
         *filter = view.filter.clone();
         let value = filter.clone();
+        self.search_task = None;
+        self.result_search = value.clone();
+        self.search_pending = false;
+        self.search_invalid = false;
         self.board_search
             .update(cx, |input, cx| input.set_value(value, w, cx));
         cx.notify();
@@ -591,6 +639,7 @@ impl BoardView {
             Page::Selected {
                 board,
                 rows,
+                groups,
                 status,
                 views,
                 automations,
@@ -604,8 +653,6 @@ impl BoardView {
                     .child(BoardTabs::new())
                     .child(
                         BoardToolbar::new()
-                            .search(&self.board_search, "board-search-input")
-                            .search_disabled(busy)
                             .action(
                                 Button::new("views-toggle")
                                     .label("Views")
@@ -635,15 +682,7 @@ impl BoardView {
                                         menu.item(PopupMenuItem::new("Clear filter").on_click(
                                             move |_, w, cx| {
                                                 let _ = clear.update(cx, |view, cx| {
-                                                    view.board_search.update(cx, |input, cx| {
-                                                        input.set_value("", w, cx)
-                                                    });
-                                                    if let Some(Page::Selected { filter, .. }) =
-                                                        &mut view.navigation
-                                                    {
-                                                        filter.clear();
-                                                    }
-                                                    cx.notify();
+                                                    view.clear_search(false, w, cx);
                                                 });
                                             },
                                         ))
@@ -676,9 +715,6 @@ impl BoardView {
                     }
                     column = column.child(Label::new("Views")).child(saved);
                 }
-                if !filter.is_empty() {
-                    column = column.child(Label::new(format!("Filter: {filter}")));
-                }
                 if self.automations_open {
                     column = column.child(self.render_automations(
                         automations,
@@ -691,64 +727,168 @@ impl BoardView {
                     .iter()
                     .filter(|row| view_filter_matches(filter, &row.title))
                     .count();
-                if visible == 0 {
-                    column = column.child(Label::new(if rows.is_empty() {
-                        "Empty board"
+                if !filter.is_empty() {
+                    column = column.child(Label::new(format!("{visible} matching items")));
+                }
+                if visible == 0 && !filter.is_empty() {
+                    column = column
+                        .child(Label::new("No results were found"))
+                        .child(Label::new(
+                            "Try another search or review this view’s filters.",
+                        ));
+                }
+                for group in groups {
+                    let matching: Vec<_> = group
+                        .items()
+                        .iter()
+                        .filter_map(|item| rows.iter().find(|row| row.id == item.id))
+                        .filter(|row| view_filter_matches(filter, &row.title))
+                        .collect();
+                    if !filter.is_empty() && matching.is_empty() {
+                        continue;
+                    }
+                    let group_id = group.id().to_owned();
+                    let folded = self
+                        .folded
+                        .get(&group_id)
+                        .copied()
+                        .unwrap_or(group.is_collapsed());
+                    let count = matching.len();
+                    let count_label = if count == 0 {
+                        "No Items".to_owned()
                     } else {
-                        "No items"
+                        format!("{count} {}", if count == 1 { "item" } else { "items" })
+                    };
+                    // Tuesday counts retained selected group records even when the
+                    // current search hides them; group actions still use matches only.
+                    let selected = group
+                        .items()
+                        .iter()
+                        .filter(|row| self.selected.contains(&row.id))
+                        .count();
+                    let toggle_id = group_id.clone();
+                    let heading =
+                        Button::new(SharedString::from(format!("mobile-group-{group_id}")))
+                            .ghost()
+                            .large()
+                            .w_full()
+                            .icon(if folded {
+                                gpui_kit::component::IconName::ChevronRight
+                            } else {
+                                gpui_kit::component::IconName::ChevronDown
+                            })
+                            .label(format!("{}   {count_label}", group.name()))
+                            .accessibility_label(format!("Toggle {}", group.name()))
+                            .disabled(busy)
+                            .on_click(cx.listener(move |view, _, _, cx| {
+                                view.folded.insert(toggle_id.clone(), !folded);
+                                cx.notify();
+                            }));
+                    column = column.child(heading);
+                    if folded {
+                        continue;
+                    }
+                    let ids: Vec<_> = matching.iter().map(|row| row.id).collect();
+                    let checkbox = gpui_kit::component::checkbox::Checkbox::new(
+                        SharedString::from(format!("mobile-select-group-{group_id}")),
+                    )
+                    .accessibility_label(format!("Select all items in {}", group.name()))
+                    .checked(count > 0 && selected == count)
+                    .indeterminate(selected > 0 && selected < count)
+                    .disabled(busy || count == 0)
+                    .on_click(cx.listener(move |view, checked, _, cx| {
+                        for id in &ids {
+                            if *checked {
+                                view.selected.insert(*id);
+                            } else {
+                                view.selected.remove(id);
+                            }
+                        }
+                        cx.notify();
                     }));
-                }
-                let mut table = div()
-                    .id("mobile-main-table")
-                    .flex()
-                    .flex_col()
-                    .overflow_x_scroll()
-                    .child(
-                        BoardRow::new(Label::new("Item"))
-                            .header()
-                            .touch()
-                            .cell(Label::new(status.title.clone())),
-                    );
-                for row in rows
-                    .iter()
-                    .filter(|row| view_filter_matches(filter, &row.title))
-                {
-                    let (board_id, item) = (*board, row.id);
-                    let history = Button::new(SharedString::from(format!("item-activity-{item}")))
-                        .large()
-                        .label("Activity log")
-                        .accessibility_label(format!("Activity log for {}", row.title))
-                        .disabled(
-                            self.logging_out || self.automation_pending || status.pending.is_some(),
+                    let mut table = div()
+                        .id(SharedString::from(format!("mobile-table-{group_id}")))
+                        .flex()
+                        .flex_col()
+                        .overflow_x_scroll()
+                        .child(
+                            BoardRow::new(Label::new("Item"))
+                                .header()
+                                .touch()
+                                .leading(checkbox)
+                                .cell(Label::new(status.title.clone())),
+                        );
+                    for row in matching {
+                        let (board_id, item) = (*board, row.id);
+                        let history =
+                            Button::new(SharedString::from(format!("item-activity-{item}")))
+                                .large()
+                                .label("Activity log")
+                                .accessibility_label(format!("Activity log for {}", row.title))
+                                .disabled(busy)
+                                .on_click(cx.listener(move |view, _, w, cx| {
+                                    view.open_activity(board_id, item, w, cx)
+                                }));
+                        let check = gpui_kit::component::checkbox::Checkbox::new(
+                            SharedString::from(format!("mobile-select-{item}")),
                         )
-                        .on_click(cx.listener(move |view, _, w, cx| {
-                            view.open_activity(board_id, item, w, cx)
-                        }));
-                    table = table.child(
-                        BoardRow::new(
-                            div()
-                                .flex()
-                                .items_center()
-                                .w_full()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .child(Label::new(row.title.clone())),
-                                )
-                                .child(history.small()),
-                        )
-                        .cell(status.cell(
-                            *board,
-                            row,
-                            self.logging_out || self.automation_pending,
-                            cx,
-                        ))
-                        .touch(),
+                        .accessibility_label(format!("Select {}", row.title))
+                        .checked(self.selected.contains(&item))
+                        .disabled(busy)
+                        .on_click(cx.listener(
+                            move |view, checked, _, cx| {
+                                if *checked {
+                                    view.selected.insert(item);
+                                } else {
+                                    view.selected.remove(&item);
+                                }
+                                cx.notify();
+                            },
+                        ));
+                        table = table.child(
+                            BoardRow::new(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .w_full()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .child(Label::new(row.title.clone())),
+                                    )
+                                    .child(history.small()),
+                            )
+                            .leading(check)
+                            .cell(status.cell(
+                                *board,
+                                row,
+                                self.logging_out || self.automation_pending,
+                                cx,
+                            ))
+                            .touch(),
+                        );
+                    }
+                    column = column.child(table);
+                }
+                if !self.selected.is_empty() {
+                    column = column.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(Label::new(format!("{} selected", self.selected.len())))
+                            .child(
+                                Button::new("mobile-clear-selection")
+                                    .label("Clear selection")
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        view.selected.clear();
+                                        cx.notify();
+                                    })),
+                            ),
                     );
                 }
-                column = column.child(table);
                 "Back to boards"
             }
             Page::Activity(activity) => {
@@ -866,6 +1006,18 @@ impl BoardView {
             column = column.child(Label::new(self.message));
         }
         column = column.child(self.logout_button(cx));
-        div().size_full().child(scroller.child(column.h_auto()))
+        let mut page_view = div().size_full().flex().flex_col().child(
+            div()
+                .flex_1()
+                .min_h_0()
+                .child(scroller.child(column.h_auto())),
+        );
+        if matches!(page, Page::Selected { .. }) {
+            page_view = page_view.child(self.search_dock(
+                self.logging_out || self.automation_pending || page.pending(),
+                cx,
+            ));
+        }
+        page_view
     }
 }

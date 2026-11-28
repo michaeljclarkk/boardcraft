@@ -1,5 +1,5 @@
 use super::*;
-use boardcraft_mobile_edit_client::{StatusCell, StatusChoice};
+use boardcraft_mobile_edit_client::{MainTableGroup, StatusCell, StatusChoice};
 use gpui_kit::component::{ActiveTheme, Colorize, popover::Popover};
 use std::{collections::HashMap, sync::Arc};
 
@@ -17,7 +17,7 @@ impl StatusColumn {
     pub(super) fn load(
         client: &EditClient,
         board: Uuid,
-    ) -> Result<(Vec<SavedItem>, Self), EditError> {
+    ) -> Result<(Vec<SavedItem>, Vec<MainTableGroup>, Self), EditError> {
         let board_rows = client.read_main_table(board)?;
         let table = client.read_status(board)?;
         let rows = board_rows
@@ -28,6 +28,7 @@ impl StatusColumn {
             .collect();
         Ok((
             rows,
+            board_rows.groups().to_vec(),
             Self {
                 id: table.column_id,
                 title: table.title,
@@ -162,7 +163,7 @@ struct Target {
 
 enum Outcome {
     Accepted(StatusCell),
-    Reloaded(EditError, Vec<SavedItem>, StatusColumn),
+    Reloaded(EditError, Vec<SavedItem>, Vec<MainTableGroup>, StatusColumn),
 }
 
 impl BoardView {
@@ -205,7 +206,7 @@ impl BoardView {
                 Ok(saved) => Ok(Outcome::Accepted(saved)),
                 Err(EditError::SessionRejected) => Err(EditError::SessionRejected),
                 Err(error) => StatusColumn::load(&client, target.board)
-                    .map(|(rows, status)| Outcome::Reloaded(error, rows, status)),
+                    .map(|(rows, groups, status)| Outcome::Reloaded(error, rows, groups, status)),
             }
         });
         cx.spawn(async move |view, cx| {
@@ -214,6 +215,7 @@ impl BoardView {
                 let Some(Page::Selected {
                     board,
                     rows,
+                    groups,
                     status,
                     ..
                 }) = &mut view.navigation
@@ -231,8 +233,11 @@ impl BoardView {
                         status.cells.insert(cell.item_id, cell);
                         status.pending = None;
                     }
-                    Ok(Outcome::Reloaded(error, fresh_rows, fresh_status)) => {
+                    Ok(Outcome::Reloaded(error, fresh_rows, fresh_groups, fresh_status)) => {
                         *rows = fresh_rows;
+                        *groups = fresh_groups;
+                        view.selected
+                            .retain(|id| rows.iter().any(|row| row.id == *id));
                         *status = fresh_status;
                         view.message = match error {
                             EditError::Conflict => {

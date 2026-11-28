@@ -152,7 +152,8 @@ fn newest_search_wins_and_invalid_length_preserves_the_last_results(cx: &mut Tes
                 .is_none()
         );
         w.press("ctrl-a", cx);
-        w.input(&"x".repeat(241), cx);
+        // The reference's limit counts UTF-16 units, not Unicode scalar values.
+        w.input(&"😀".repeat(121), cx);
     })
     .unwrap();
     advance_search(cx, 250);
@@ -164,6 +165,64 @@ fn newest_search_wins_and_invalid_length_preserves_the_last_results(cx: &mut Tes
             w.try_find(format!("item-{}", Uuid::from_u128(61)))
                 .is_some()
         );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn filtered_group_selection_keeps_hidden_rows_and_reference_header_count(cx: &mut TestAppContext) {
+    let (handle, table) = visit_titles(cx, true, ["Ink", "Sketch"]);
+    let ink = Uuid::from_u128(59);
+    let sketch = Uuid::from_u128(61);
+    cx.update_window(handle, |_, w, cx| {
+        table.update(cx, |table, cx| {
+            let groups = serde_json::from_value(json!([{
+                "id":"g-a", "name":"Work", "colour":"#443322",
+                "revision":1, "collapsed":false,
+                "items":[
+                    {"id":ink,"revision":1,"title":"Ink"},
+                    {"id":sketch,"revision":1,"title":"Sketch"}
+                ]
+            }]))
+            .unwrap();
+            table.read = MainTableRead::from_response(groups, 7, 1, true, true).unwrap();
+            table.mount(w, cx);
+            // Membership has already been resolved for this visit. This test
+            // exercises the local checkbox gesture, not browser transport.
+            table.selection_resolved = true;
+        });
+        w.render_frame(cx);
+        w.click(format!("check-{sketch}"), cx);
+        w.click("board-search-input", cx);
+        w.input("Ink", cx);
+    })
+    .unwrap();
+    advance_search(cx, 250);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(w.try_find(format!("item-{sketch}")).is_none());
+        assert_eq!(w.find(format!("check-{ink}")).checked(), Some(false));
+        // This apparently surprising state matches Tuesday: the hidden Sketch
+        // contributes one selected parent against one matching item (Ink).
+        assert_eq!(w.find("check-group-g-a").checked(), Some(true));
+        w.click("check-group-g-a", cx);
+        assert_eq!(table.read(cx).selection, [sketch]);
+        w.click(format!("check-{ink}"), cx);
+        assert_eq!(table.read(cx).selection, [sketch, ink]);
+        assert_eq!(w.find("check-group-g-a").checked(), Some(false));
+        w.click("board-search-input", cx);
+        w.press("ctrl-a", cx);
+        w.press("backspace", cx);
+    })
+    .unwrap();
+    advance_search(cx, 250);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert_eq!(w.find("check-group-g-a").checked(), Some(true));
+        assert_eq!(w.find(format!("check-{sketch}")).checked(), Some(true));
+        w.click("check-group-g-a", cx);
+        assert!(table.read(cx).selection.is_empty());
+        assert!(table.read(cx).saves.is_empty());
     })
     .unwrap();
 }
