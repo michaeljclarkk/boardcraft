@@ -200,6 +200,22 @@ impl InlineEdit {
         }
     }
 
+    /// Replace the clean baseline with a row the host accepted elsewhere.
+    /// A pending save owns this row until its own path finishes, and a failure
+    /// keeps the local recovery record, so neither takes a remote value here.
+    pub fn accept_remote(&mut self, item: StoredItem) -> bool {
+        if self.item.id != item.id
+            || item.revision <= self.item.revision
+            || !matches!(self.phase, Phase::Clean | Phase::Saved)
+        {
+            return false;
+        }
+        self.item = item;
+        self.request = None;
+        self.phase = Phase::Clean;
+        true
+    }
+
     pub fn finish(&mut self, result: Result<StoredItem, store::SaveError>) {
         debug_assert_eq!(self.phase, Phase::Pending);
         match result {

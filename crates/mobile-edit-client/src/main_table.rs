@@ -153,6 +153,20 @@ impl EditClient {
         Ok(saved)
     }
 
+    /// Read one accepted row through the ordinary authorized route. The realtime
+    /// feed names the row; it never carries the row's content itself.
+    pub fn read_main_table_item(&self, board: Uuid, item: Uuid) -> Result<SavedItem, EditError> {
+        let url = format!(
+            "http://127.0.0.1:{}/navigation/events/items/{board}/{item}",
+            self.port
+        );
+        let saved: SavedItem = decode(self.authorize(self.http.get(url)).call())?;
+        if saved.id != item || saved.revision < 1 {
+            return Err(EditError::Transport);
+        }
+        Ok(saved)
+    }
+
     pub fn read_main_table(&self, board: Uuid) -> Result<MainTableRead, EditError> {
         let url = format!(
             "http://127.0.0.1:{}/navigation/boards/{board}/main-table",

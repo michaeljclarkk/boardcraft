@@ -3,6 +3,7 @@
 mod connection;
 mod login;
 mod navigation;
+mod realtime;
 mod session;
 mod session_record;
 mod session_store;
@@ -51,6 +52,8 @@ struct BoardView {
     client: Option<EditClient>,
     login: Option<Login>,
     navigation: Option<navigation::Page>,
+    /// The signed-in session's accepted-change feed; None on the login screen.
+    changes: Option<realtime::Changes>,
     navigation_focus: FocusHandle,
     /// Unread inbox rows for the board list; None until the count is read.
     inbox_unread: Option<i64>,
@@ -84,6 +87,7 @@ impl BoardView {
             client: None,
             login: None,
             navigation: None,
+            changes: None,
             navigation_focus: cx.focus_handle(),
             inbox_unread: None,
             inbox_count_pending: false,
@@ -262,6 +266,11 @@ impl BoardView {
 impl Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut column = div().flex().flex_col().size_full().p_8().gap_6();
+        // The feed carries one session's token; a sign-out drops it so the next
+        // sign-in opens a feed for the new token.
+        if self.client.is_none() {
+            self.changes = None;
+        }
         if let Some(login) = &self.login {
             return login.form(column, self.message, cx);
         }
@@ -272,6 +281,7 @@ impl Render for BoardView {
             // next board list reads it again for the current session.
             self.inbox_unread = None;
         }
+        self.ensure_changes(cx);
         if let Some(page) = &self.navigation {
             return self.navigation_page(page, column, cx);
         }

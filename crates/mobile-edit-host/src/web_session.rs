@@ -54,6 +54,7 @@ impl Sessions {
         db: &mut postgres::Client,
         board: crate::BoardId,
         cookie_out: &mut Option<Header>,
+        hub: &crate::realtime::Hub,
     ) -> ApiResult {
         let origin = one(req, "Origin")?;
         if origin.is_some_and(|v| v != self.origin)
@@ -76,7 +77,7 @@ impl Sessions {
         }
         if self.disposable_viewer {
             return if binding == DISPOSABLE_VIEWER {
-                board_request(req, path, db, board, access::Actor::ReviewOwner)
+                board_request(req, path, db, board, access::Actor::ReviewOwner, hub)
             } else {
                 Err(403)
             };
@@ -115,7 +116,14 @@ impl Sessions {
                 *cookie_out = Some(self.set_cookie(""));
                 Ok((b"null".to_vec(), None))
             }
-            _ => board_request(req, path, db, board, access::Actor::Session(token.clone())),
+            _ => board_request(
+                req,
+                path,
+                db,
+                board,
+                access::Actor::Session(token.clone()),
+                hub,
+            ),
         };
         if matches!(result, Err(401)) {
             self.pairs.remove(&pair);
@@ -141,6 +149,7 @@ fn board_request(
     db: &mut postgres::Client,
     board: crate::BoardId,
     actor: access::Actor,
+    hub: &crate::realtime::Hub,
 ) -> ApiResult {
     if path == "/navigation/boards" && *req.method() == Method::Get {
         navigation_boards(db, req, Ok(actor)).map(|body| (body, None))
@@ -155,6 +164,7 @@ fn board_request(
             path,
             Ok(actor),
             crate::ReadShape::Grouped,
+            hub,
         )
     } else {
         Err(404)

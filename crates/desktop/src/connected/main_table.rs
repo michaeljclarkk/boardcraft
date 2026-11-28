@@ -1,7 +1,7 @@
 //! The visit owns local folds and focus. Only a confirmed authorized read replaces saved state.
 use super::navigation::Page;
 use super::*;
-use boardcraft_mobile_edit_client::{Automation, MainTableRead, SavedView};
+use boardcraft_mobile_edit_client::{Automation, ChangeEvent, MainTableRead, SavedItem, SavedView};
 use gpui_kit::base::ElementExt;
 use gpui_kit::component::{
     ActiveTheme, IconName, Sizable,
@@ -1124,6 +1124,101 @@ impl Connected {
                 cx.notify();
             });
         }).detach();
+        cx.notify();
+    }
+}
+
+impl Connected {
+    /// One accepted change. The event names a row of the open board; ignore it
+    /// anywhere else, read that exact row, then replace only its accepted name.
+    pub(super) fn receive_change(
+        &mut self,
+        event: ChangeEvent,
+        w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Screen::Navigation(nav) = &self.screen else {
+            return;
+        };
+        let Page::Items(board, table) = &nav.page else {
+            return;
+        };
+        if *board != event.board_id {
+            return;
+        }
+        let Some(row) = table
+            .headings
+            .iter()
+            .flat_map(|h| &h.rows)
+            .find(|row| row.read(cx).edit.identity().1.as_uuid() == event.item_id)
+            .cloned()
+        else {
+            return;
+        };
+        let client = nav.client.clone();
+        let board = *board;
+        let item = event.item_id;
+        // The feed carries no content; only this authorized read may supply it.
+        let work = cx
+            .background_executor()
+            .spawn(async move { client.read_main_table_item(board, item) });
+        cx.spawn_in(w, async move |view, cx| {
+            let saved = work.await;
+            _ = view.update_in(cx, |view, _, cx| {
+                // A failed read leaves the row exactly as it was; its own save
+                // path still owns any error it shows.
+                if let Ok(saved) = saved {
+                    view.apply_accepted(board, row, saved, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Replace one row's accepted name. The visit, focus, folds and every other
+    /// row stay as they are; no board read or rebuild happens here.
+    fn apply_accepted(
+        &mut self,
+        board: Uuid,
+        row: Entity<Row>,
+        saved: SavedItem,
+        cx: &mut Context<Self>,
+    ) {
+        let Screen::Navigation(nav) = &self.screen else {
+            return;
+        };
+        let Page::Items(current, table) = &nav.page else {
+            return;
+        };
+        if *current != board
+            || !table
+                .headings
+                .iter()
+                .flat_map(|h| &h.rows)
+                .any(|r| r == &row)
+        {
+            return;
+        }
+        let Some(id) = ItemId::new(saved.id) else {
+            return;
+        };
+        let revision = saved.revision;
+        row.update(cx, |row, cx| {
+            let applied = row.edit.accept_remote(StoredItem {
+                id,
+                title: saved.title,
+                revision,
+            });
+            if !applied {
+                return;
+            }
+            // A rename already in progress keeps its draft but now saves against
+            // the revision the other window got accepted.
+            if let Some((_, expected)) = &mut row.baseline {
+                *expected = revision;
+            }
+            cx.notify();
+        });
         cx.notify();
     }
 }

@@ -42,6 +42,10 @@ pub(super) struct Navigation {
     pub(super) _people_events: Vec<Subscription>,
 }
 
+/// Marks this window as owning one accepted-change feed. The generation lives on
+/// `Connected`, so a stopped pump can tell it was replaced.
+pub(super) struct ChangeStream;
+
 impl Connected {
     pub(super) fn navigate(
         &mut self,
@@ -106,18 +110,85 @@ impl Connected {
                         cx.new(|cx| InputState::new(w, cx).placeholder("Paste board address"))
                     });
                     view.screen = Screen::Navigation(Navigation {
-                        client,
+                        client: client.clone(),
                         page,
                         unread,
                         share: None,
                         _people_events: Vec::new(),
                     });
+                    // Navigation state exists now. The window keeps this feed
+                    // across board changes and filters events by open board.
+                    view.start_changes(client, w, cx);
                 }
                 cx.notify();
             });
         })
         .detach();
         cx.notify();
+    }
+
+    /// Open the feed once per window. The connect runs on the worker thread, so
+    /// an absent host costs the window nothing while it waits out its timeout.
+    /// A stopped or failed feed stays stopped; reconnect is a later slice.
+    pub(super) fn start_changes(
+        &mut self,
+        client: EditClient,
+        w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.changes.is_some() {
+            return;
+        }
+        self.change_generation += 1;
+        let generation = self.change_generation;
+        self.changes = Some(ChangeStream);
+        let (sender, events) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let Ok(mut feed) = client.subscribe_changes() else {
+                return;
+            };
+            while let Ok(event) = feed.next() {
+                // This window signed out, closed, or replaced the stream.
+                if sender.send(event).is_err() {
+                    return;
+                }
+            }
+        });
+        cx.spawn_in(w, async move |view, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(150))
+                    .await;
+                if !matches!(
+                    view.update_in(cx, |view, _, _| view.change_generation == generation),
+                    Ok(true)
+                ) {
+                    return;
+                }
+                loop {
+                    match events.try_recv() {
+                        Ok(event) => {
+                            if view
+                                .update_in(cx, |view, w, cx| view.receive_change(event, w, cx))
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => return,
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// End the pump, which drops the receiver and stops the worker.
+    pub(super) fn stop_changes(&mut self) {
+        if self.changes.take().is_some() {
+            self.change_generation += 1;
+        }
     }
 
     fn follow(&mut self, board: Option<Uuid>, w: &mut Window, cx: &mut Context<Self>) {

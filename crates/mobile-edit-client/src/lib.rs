@@ -17,6 +17,7 @@ mod group_order;
 mod item_placement;
 mod main_table;
 mod notifications;
+mod realtime;
 mod table_command;
 mod table_contract;
 mod views;
@@ -27,6 +28,9 @@ pub use group_fields::GroupFields;
 pub use item_placement::ItemReorder;
 pub use main_table::MainTableRead;
 pub use notifications::{InboxNotification, NotificationInbox};
+pub use realtime::{ChangeEvent, ChangeKind};
+#[cfg(not(target_family = "wasm"))]
+pub use realtime::ChangeFeed;
 pub use table_command::{RootAction, SelectionAction, TableCommand};
 pub use table_contract::MainTableGroup;
 pub use views::SavedView;

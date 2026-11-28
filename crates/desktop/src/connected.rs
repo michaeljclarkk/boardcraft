@@ -38,6 +38,8 @@ pub(super) struct Connected {
     screen: Screen,
     message: &'static str,
     scroll: ScrollHandle,
+    changes: Option<navigation::ChangeStream>,
+    change_generation: u64,
     #[cfg(all(windows, feature = "native-smoke"))]
     pub(super) submissions: usize,
     #[cfg(all(windows, feature = "native-smoke"))]
@@ -132,6 +134,8 @@ impl Connected {
             screen: Screen::Loading,
             message: "",
             scroll: ScrollHandle::new(),
+            changes: None,
+            change_generation: 0,
             #[cfg(all(windows, feature = "native-smoke"))]
             submissions: 0,
             #[cfg(all(windows, feature = "native-smoke"))]
@@ -167,6 +171,8 @@ impl Connected {
                     password: field.read(cx).value().to_string(),
                 };
                 let port = self.port;
+                // A new sign-in must not keep reading the previous stream.
+                self.stop_changes();
                 self.screen = Screen::Loading;
                 let work = cx
                     .background_executor()
@@ -312,6 +318,7 @@ impl Connected {
             let result = work.await;
             _ = view.update_in(cx, |view, w, cx| {
                 if result.is_ok() {
+                    view.stop_changes();
                     view.screen = Self::identifier(w, cx);
                     view.message = "";
                 } else if let Screen::Board { logging_out, .. } = &mut view.screen {

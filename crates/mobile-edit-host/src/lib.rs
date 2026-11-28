@@ -2,6 +2,7 @@
 mod access;
 mod directory;
 mod notifications;
+mod realtime;
 mod web_assets;
 mod web_session;
 use std::{io::Read, sync::Arc, thread};
@@ -105,6 +106,7 @@ impl Host {
         let port = server.server_addr().to_ip().expect("TCP listener").port();
         let listener = server.clone();
         let config = config.clone();
+        let hub = realtime::Hub::new();
         let worker = thread::spawn(move || {
             let mut sessions = web_session::Sessions::new(port, disposable_viewer);
             while let Ok(mut req) = listener.recv() {
@@ -127,7 +129,15 @@ impl Host {
                     if mode != Mode::Web {
                         Err(404)
                     } else {
-                        sessions.dispatch(&mut req, route, &config, &mut db, board, &mut cookie)
+                        sessions.dispatch(
+                            &mut req,
+                            route,
+                            &config,
+                            &mut db,
+                            board,
+                            &mut cookie,
+                            &hub,
+                        )
                     }
                 } else if req.headers().iter().any(|h| {
                     h.field.equiv("Boardcraft-Web")
@@ -155,6 +165,16 @@ impl Host {
                             )
                             .expect("directory route")
                         }
+                        _ if navigation && path.starts_with("/navigation/events/items/") => {
+                            let actor = access::bearer(&req).map(access::Actor::Session);
+                            realtime::read_item(&mut db, req, &path, actor);
+                            continue;
+                        }
+                        _ if navigation && path.split('?').next() == Some("/navigation/events") => {
+                            let actor = access::bearer(&req).map(access::Actor::Session);
+                            realtime::route(&mut db, req, &path, actor, &hub);
+                            continue;
+                        }
                         _ if navigation
                             && path
                                 .split('?')
@@ -174,6 +194,7 @@ impl Host {
                                 &path,
                                 token.map(access::Actor::Session),
                                 ReadShape::Flat,
+                                &hub,
                             )
                         }
                     }
@@ -354,6 +375,7 @@ fn handle(
     path: &str,
     actor: Result<access::Actor, u16>,
     shape: ReadShape,
+    events: &realtime::Hub,
 ) -> ApiResult {
     let mut path: Vec<_> = path.split('/').collect();
     // Native Archive is opt-in, like the grouped table. Normalize only these
@@ -729,6 +751,15 @@ fn handle(
     let owner = account.role == boardcraft_account::Role::Owner;
     let mut revision = None;
     let fold = matches!(action, Action::Fold(_));
+    // Realtime publishing is best effort and never changes the write result.
+    // Read the prior accepted row before the match consumes the action.
+    let rename_before = match &action {
+        Action::Rename(item, Ok(_)) => realtime::current_row(&mut tx, board, *item)
+            .ok()
+            .flatten()
+            .map(|row| (*item, row.title)),
+        _ => None,
+    };
     let body = match action {
         Action::Views => {
             let rows = views::list(&mut tx, board, account.id).map_err(view_error)?;
@@ -1011,12 +1042,16 @@ fn handle(
         }
         Action::Rename(item, edit) => {
             let edit = edit?;
-            let before = store::current_item(&mut tx, board, item).map_err(|error| match error {
-                SaveError::Rejected(RenameError::MissingItem(_)) => 404u16,
-                SaveError::Rejected(_) => 422,
-                SaveError::Conflict { .. } => 409,
-                SaveError::Database(_) => 500,
-            })?;
+            let before = realtime::current_row(&mut tx, board, item)
+                .map_err(|error| {
+                    log::error!(
+                        "current item board={requested} item={} sqlstate={:?}",
+                        item.as_uuid(),
+                        error.code()
+                    );
+                    500u16
+                })?
+                .ok_or(404u16)?;
             let saved =
                 store::rename_item_at_revision(&mut tx, board, item, edit.revision, &edit.title)
                     .map_err(|error| match error {
@@ -1059,6 +1094,12 @@ fn handle(
         log::error!("board request commit failed board={requested}");
         500u16
     })?;
+    if let Some((item, before)) = rename_before
+        && let Ok(saved) = serde_json::from_slice::<SavedItem>(&body)
+        && saved.title != before
+    {
+        events.publish_rename(requested, item.as_uuid());
+    }
     let hint = matches!(operation, ScopedRead)
         || ((mode == Mode::Web || revision.is_some()) && matches!(operation, SelectedRead));
     Ok((
