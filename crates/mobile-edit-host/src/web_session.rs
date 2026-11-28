@@ -155,6 +155,8 @@ fn board_request(
         navigation_boards(db, req, Ok(actor)).map(|body| (body, None))
     } else if path.starts_with("/navigation/users") {
         crate::directory::route(db, req, path, Ok(actor)).expect("directory route")
+    } else if path.starts_with("/navigation/status/") {
+        crate::columns::route(db, req, path, Ok(actor))
     } else if path.starts_with("/navigation/boards/") {
         crate::handle(
             db,

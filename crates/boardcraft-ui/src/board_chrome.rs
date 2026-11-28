@@ -562,16 +562,19 @@ impl RenderOnce for BoardRow {
             )
             .child(name);
         for cell in self.cells {
-            row = row.child(
-                div()
-                    .w(rems(10.))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .border_l_1()
-                    .border_color(cx.theme().border)
-                    .child(cell),
-            );
+            let mut slot = div()
+                .w(rems(10.))
+                .flex_shrink_0()
+                .flex()
+                .border_l_1()
+                .border_color(cx.theme().border)
+                .child(cell);
+            slot = if self.header {
+                slot.items_center()
+            } else {
+                slot.items_stretch()
+            };
+            row = row.child(slot);
         }
         if self.header {
             row = row.text_sm().text_color(cx.theme().muted_foreground);

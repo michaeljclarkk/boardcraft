@@ -13,7 +13,7 @@ fn visit(cx: &mut TestAppContext, owner: bool) -> (AnyWindowHandle, Entity<Table
     visit_titles(cx, owner, ["Ink", "Ink"])
 }
 
-fn visit_titles(
+pub(super) fn visit_titles(
     cx: &mut TestAppContext,
     owner: bool,
     titles: [&str; 2],

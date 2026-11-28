@@ -979,7 +979,7 @@ impl BoardView {
                                         .absolute()
                                         .left(rems(rail + name_track))
                                         .w(rems(status_width))
-                                        .child(status.cell(*board, row, busy, cx)),
+                                        .child(status.cell(*board, row, busy, window, cx)),
                                 )
                                 .child(
                                     div()

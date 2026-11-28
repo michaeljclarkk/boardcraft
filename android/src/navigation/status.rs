@@ -1,6 +1,6 @@
 use super::*;
 use boardcraft_mobile_edit_client::{MainTableGroup, StatusCell, StatusChoice};
-use gpui_kit::component::{ActiveTheme, Colorize, popover::Popover};
+use gpui_kit::component::{Colorize, button::ButtonCustomVariant, popover::Popover};
 use std::{collections::HashMap, sync::Arc};
 
 pub(crate) struct StatusColumn {
@@ -10,6 +10,7 @@ pub(crate) struct StatusColumn {
     pub(super) cells: HashMap<Uuid, StatusCell>,
     pub(crate) editable: bool,
     pub(crate) pending: Option<Uuid>,
+    needs_reload: bool,
 }
 
 impl StatusColumn {
@@ -36,6 +37,7 @@ impl StatusColumn {
                 cells: table.cells.into_iter().map(|c| (c.item_id, c)).collect(),
                 editable: board_rows.is_editable(),
                 pending: None,
+                needs_reload: false,
             },
         ))
     }
@@ -45,6 +47,7 @@ impl StatusColumn {
         board: Uuid,
         row: &SavedItem,
         busy: bool,
+        window: &mut Window,
         cx: &mut Context<BoardView>,
     ) -> AnyElement {
         let item = row.id;
@@ -61,20 +64,35 @@ impl StatusColumn {
             .find(|c| Some(&c.key) == cell.value.as_ref());
         let color = selected
             .and_then(|c| Hsla::parse_hex(&c.color).ok())
-            .unwrap_or(cx.theme().muted);
+            .unwrap_or_else(empty_color);
         let label = selected.map(|c| c.label.as_str()).unwrap_or("");
-        let disabled = busy || self.pending.is_some() || !self.editable;
+        let disabled = busy || self.pending.is_some() || self.needs_reload || !self.editable;
+        let trigger_focus = window
+            .use_keyed_state(
+                SharedString::from(format!("status-trigger-focus-{item}")),
+                cx,
+                |_, cx| cx.focus_handle().tab_stop(true),
+            )
+            .read(cx)
+            .clone();
+        let selected_focus = window
+            .use_keyed_state(
+                SharedString::from(format!("status-selected-focus-{item}")),
+                cx,
+                |_, cx| cx.focus_handle().tab_stop(true),
+            )
+            .read(cx)
+            .clone();
         let trigger = Button::new(SharedString::from(format!("status-{item}")))
             .large()
+            .track_focus(&trigger_focus)
             .w(rems(8.75))
             .flex_shrink_0()
+            .custom(tile_style(color, cx))
+            .rounded_none()
             .bg(color)
-            .text_color(if color.l < 0.45 {
-                cx.theme().background
-            } else {
-                cx.theme().foreground
-            })
-            .label(label.to_owned())
+            .text_color(gpui_kit::white())
+            .label(if label.is_empty() { " " } else { label }.to_owned())
             .accessibility_label(format!(
                 "{}: {} — {}",
                 self.title,
@@ -97,11 +115,15 @@ impl StatusColumn {
         let view = cx.weak_entity();
         Popover::new(SharedString::from(format!("status-picker-{item}")))
             .anchor(Anchor::TopRight)
-            .trigger(trigger)
-            .content(move |_, _, cx| {
+            .track_focus(&selected_focus)
+            .trigger(trigger.on_mouse_down(MouseButton::Left, move |_, w, cx| {
+                trigger_focus.focus(w, cx);
+            }))
+            .content(move |_, w, cx| {
+                let popup = cx.weak_entity();
                 let button = |id: String, label: String, value: Option<String>| {
                     let owner = view.clone();
-                    let popup = cx.weak_entity();
+                    let popup = popup.clone();
                     Button::new(SharedString::from(id))
                         .large()
                         .label(label)
@@ -112,8 +134,10 @@ impl StatusColumn {
                             });
                         })
                 };
-                let mut panel = div().flex().flex_col().gap_2();
+                let panel_width = (w.viewport_size().width / w.rem_size() - 3.).clamp(16., 21.);
+                let mut panel = div().flex().flex_col().gap_2().w(rems(panel_width));
                 let mut grid_row = div().flex().gap_2();
+                let mut handles = Vec::with_capacity(choices.len() + 1);
                 for (ix, choice) in choices
                     .iter()
                     .map(Some)
@@ -124,7 +148,7 @@ impl StatusColumn {
                     let label = choice.map(|c| c.label.as_str()).unwrap_or("Empty");
                     let color = choice
                         .and_then(|c| Hsla::parse_hex(&c.color).ok())
-                        .unwrap_or(cx.theme().muted);
+                        .unwrap_or_else(empty_color);
                     let marked = if current == value {
                         format!("✓ {label}")
                     } else {
@@ -134,23 +158,74 @@ impl StatusColumn {
                         Some(key) => format!("status-option-{item}-{key}"),
                         None => format!("status-empty-{item}"),
                     };
-                    grid_row = grid_row.child(button(id, marked, value).w_32().bg(color));
+                    let focus = if current == value {
+                        selected_focus.clone()
+                    } else {
+                        w.use_keyed_state(SharedString::from(id.clone()), cx, |_, cx| {
+                            cx.focus_handle().tab_stop(true)
+                        })
+                        .read(cx)
+                        .clone()
+                    };
+                    let checked = current == value;
+                    handles.push(focus.clone());
+                    grid_row = grid_row.child(
+                        button(id, marked, value)
+                            .track_focus(&focus)
+                            .flex_1()
+                            .min_w_0()
+                            .custom(tile_style(color, cx))
+                            .bg(color)
+                            .text_color(gpui_kit::white())
+                            .toggled(checked),
+                    );
                     if ix % 2 == 1 || ix == choices.len() {
+                        if ix % 2 == 0 {
+                            grid_row = grid_row.child(div().flex_1());
+                        }
                         panel = panel.child(grid_row);
                         grid_row = div().flex().gap_2();
                     }
                 }
-                if current.is_some() {
-                    panel = panel.child(button(
-                        format!("status-clear-{item}"),
-                        "Clear value".into(),
-                        None,
-                    ));
-                }
                 panel
+                    .child(
+                        button(format!("status-clear-{item}"), "Clear value".into(), None)
+                            .ghost()
+                            .w_full(),
+                    )
+                    .on_key_down(move |event: &KeyDownEvent, w, cx| {
+                        let Some(ix) = handles.iter().position(|handle| handle.is_focused(w))
+                        else {
+                            return;
+                        };
+                        let last = handles.len() - 1;
+                        let next = match event.keystroke.key.as_str() {
+                            "down" => (ix + 1) % handles.len(),
+                            "up" => (ix + last) % handles.len(),
+                            "home" => 0,
+                            "end" => last,
+                            _ => return,
+                        };
+                        handles[next].focus(w, cx);
+                        cx.stop_propagation();
+                    })
             })
             .into_any_element()
     }
+}
+
+// Empty grey and white label ink are reference Status palette content, not
+// application-theme surfaces. Preserve them alongside server-provided colours.
+fn empty_color() -> Hsla {
+    rgb(0xc4c4c4).into()
+}
+
+fn tile_style(color: Hsla, cx: &App) -> ButtonCustomVariant {
+    ButtonCustomVariant::new(cx)
+        .color(color)
+        .foreground(gpui_kit::white())
+        .hover(color.darken(0.08))
+        .active(color.darken(0.15))
 }
 
 #[derive(Clone, Copy)]
@@ -186,6 +261,7 @@ impl BoardView {
             || self.automation_pending
             || self.editor.is_some()
             || status.pending.is_some()
+            || status.needs_reload
             || !status
                 .cells
                 .get(&target.item)
@@ -234,7 +310,16 @@ impl BoardView {
                         status.cells.insert(cell.item_id, cell);
                         status.pending = None;
                     }
-                    Ok(Outcome::Reloaded(error, fresh_rows, fresh_groups, fresh_status)) => {
+                    Ok(Outcome::Reloaded(error, mut fresh_rows, fresh_groups, fresh_status)) => {
+                        // A realtime name can advance while reconciliation is reading.
+                        // Status recovery must never roll that accepted name back.
+                        for fresh in &mut fresh_rows {
+                            if let Some(current) = rows.iter().find(|row| row.id == fresh.id)
+                                && current.revision > fresh.revision
+                            {
+                                *fresh = current.clone();
+                            }
+                        }
                         *rows = fresh_rows;
                         *groups = fresh_groups;
                         view.selected
@@ -255,8 +340,10 @@ impl BoardView {
                         view.navigation = Some(Page::Denied)
                     }
                     Err(_) => {
-                        view.navigation = Some(Page::Fault);
-                        view.message = "Could not reload status. Reopen the board to try again.";
+                        status.pending = None;
+                        status.needs_reload = true;
+                        view.message =
+                            "Could not confirm status. Reload board before changing it again.";
                     }
                 }
                 cx.notify();

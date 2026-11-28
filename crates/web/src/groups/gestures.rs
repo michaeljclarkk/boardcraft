@@ -242,8 +242,8 @@ impl Table {
                 .child(header);
             if !collapsed {
                 let ids = visible_ids.clone();
-                // the internal tool's default system Item column is 360px at normal zoom.
-                // Only this column is returned by this viewer's table read.
+                // Item and Status retain their shared column lanes while the
+                // table scrolls horizontally in compact windows.
                 let mut grid = div()
                     .id(key(format!("grid-{id}")))
                     .role(Role::Table)
@@ -272,6 +272,7 @@ impl Table {
                                         .child("Item"),
                                 )
                                 .header()
+                                .cell(self.status_header())
                                 .leading(
                                     selection_cell()
                                         .id(key(format!("selection-header-{id}")))
@@ -313,7 +314,7 @@ impl Table {
                         let Some(name_row) = self.rows.get(&item_id) else {
                             continue;
                         };
-                        let title = name_row.read(cx).accepted_title();
+                        let title = name_row.read(cx).accepted_title().to_owned();
                         let checked = self.selection.contains(&item_id);
                         let hover = if checked {
                             cx.theme().list_active
@@ -325,6 +326,7 @@ impl Table {
                         let mut row = div()
                             .w_full()
                             .id(key(format!("row-{item_id}")))
+                            .test_support()
                             .role(Role::Row)
                             .relative()
                             .border_r_1()
@@ -432,7 +434,8 @@ impl Table {
                                             }),
                                     ),
                             )
-                            .leading(leading),
+                            .leading(leading)
+                            .cell(self.status_cell(item_id, &title, cx)),
                         );
                         if let Some((target, after)) = drag.borrow().edge()
                             && target == item_id.to_string()
@@ -472,36 +475,39 @@ impl Table {
                                     }
                                 },
                             ))
-                            .child(BoardRow::new(
-                                div()
-                                    .id(key(format!("add-cell-{id}")))
-                                    .role(Role::Cell)
-                                    .flex()
-                                    .items_center()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(
-                                        Input::new(&entry.input)
-                                            .id(key(format!("add-input-{id}")))
-                                            .small()
-                                            .bordered(false)
-                                            .flex_1()
-                                            .min_w_0()
-                                            .aria_label(format!("Add item to {name}"))
-                                            .disabled(self.busy() || !self.read.is_editable()),
-                                    )
-                                    .child(
-                                        Button::new(key(format!("create-{id}")))
-                                            .small()
-                                            .ghost()
-                                            .label("Add item")
-                                            .accessibility_id(id.clone())
-                                            .disabled(self.busy() || !self.read.is_editable())
-                                            .on_click(cx.listener(move |t, _, w, cx| {
-                                                t.create(&group, w, cx)
-                                            })),
-                                    ),
-                            )),
+                            .child(
+                                BoardRow::new(
+                                    div()
+                                        .id(key(format!("add-cell-{id}")))
+                                        .role(Role::Cell)
+                                        .flex()
+                                        .items_center()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(
+                                            Input::new(&entry.input)
+                                                .id(key(format!("add-input-{id}")))
+                                                .small()
+                                                .bordered(false)
+                                                .flex_1()
+                                                .min_w_0()
+                                                .aria_label(format!("Add item to {name}"))
+                                                .disabled(self.busy() || !self.read.is_editable()),
+                                        )
+                                        .child(
+                                            Button::new(key(format!("create-{id}")))
+                                                .small()
+                                                .ghost()
+                                                .label("Add item")
+                                                .accessibility_id(id.clone())
+                                                .disabled(self.busy() || !self.read.is_editable())
+                                                .on_click(cx.listener(move |t, _, w, cx| {
+                                                    t.create(&group, w, cx)
+                                                })),
+                                        ),
+                                )
+                                .cell(div().w_40()),
+                            ),
                     );
                     if !entry.notice.is_empty() {
                         grid = grid.child(status(entry.notice));

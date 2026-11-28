@@ -27,10 +27,12 @@ use uuid::Uuid;
 mod editor;
 mod gestures;
 mod rename;
+mod status_column;
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests;
 use editor::{Editor, Kind, Phase};
 use rename::FailedRename;
+use status_column::StatusColumn;
 
 pub(super) struct AccessLost;
 impl EventEmitter<AccessLost> for Table {}
@@ -45,6 +47,7 @@ pub(super) struct Table {
     binding: String,
     board: Uuid,
     read: MainTableRead,
+    status: StatusColumn,
     rows: HashMap<Uuid, Entity<NameRow>>,
     entries: HashMap<String, Entry>,
     selection: Vec<Uuid>,
@@ -93,6 +96,7 @@ impl Table {
             binding,
             board,
             read,
+            status: StatusColumn::new(),
             rows: HashMap::new(),
             entries: HashMap::new(),
             selection: Vec::new(),
@@ -366,6 +370,8 @@ impl Table {
                 ));
             }
         }
+        #[cfg(target_family = "wasm")]
+        self.load_status(w, cx);
         cx.notify();
     }
     fn busy(&self) -> bool {
@@ -991,6 +997,9 @@ impl Render for Table {
             for failure in &self.failed_renames {
                 body = body.child(self.rename_notice(failure, cx));
             }
+            if let Some(notice) = self.status_notice(cx) {
+                body = body.child(notice);
+            }
             if !self.result_search.is_empty() && self.matching_order(cx).is_empty() {
                 body = body.child(
                     div()
@@ -1021,7 +1030,7 @@ impl Render for Table {
                 body = body.child(self.render_groups(cx));
             }
         }
-        body = body.child(status(if self.pending {
+        body = body.child(status(if self.pending && !self.status.is_saving() {
             "Working…"
         } else {
             self.message
@@ -1039,6 +1048,7 @@ impl Render for Table {
                     .test_support()
                     .flex_1()
                     .min_h_0()
+                    .overflow_x_scroll()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
                     .child(

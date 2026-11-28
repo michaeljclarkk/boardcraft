@@ -31,7 +31,7 @@ pub fn apply_board_theme(cx: &mut gpui_kit::App) {
         theme.muted_foreground = secondary;
         theme.group_box = surface;
         theme.group_box_foreground = foreground;
-        theme.popover = background;
+        theme.popover = surface;
         theme.popover_foreground = foreground;
         theme.sidebar = surface;
         theme.sidebar_foreground = foreground;

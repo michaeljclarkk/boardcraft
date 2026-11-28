@@ -14,6 +14,8 @@ pub(super) struct StatusColumn {
     // A board can be reloaded or revisited while its old read is still running.
     visit: Uuid,
     read: ColumnRead,
+    requires_reload: bool,
+    pending: Option<Uuid>,
     notice: Option<(Uuid, String)>,
 }
 
@@ -43,11 +45,14 @@ impl StatusColumn {
         Self {
             visit,
             read: ColumnRead::Loading,
+            requires_reload: false,
+            pending: None,
             notice: None,
         }
     }
 
     fn accept(&mut self, read: StatusTable, cx: &mut App) {
+        self.requires_reload = false;
         let cells = read
             .cells
             .into_iter()
@@ -85,6 +90,9 @@ impl StatusColumn {
     }
 
     pub(super) fn notice_for(&self, item: Uuid) -> Option<String> {
+        if self.pending == Some(item) {
+            return None;
+        }
         self.notice
             .as_ref()
             .filter(|(id, _)| *id == item)
@@ -95,6 +103,7 @@ impl StatusColumn {
 fn lane() -> Div {
     div()
         .w_40()
+        .h_full()
         .flex_none()
         .flex()
         .items_center()
@@ -144,8 +153,18 @@ impl MainTable {
             .iter()
             .find(|c| Some(&c.key) == cell.saved.value.as_ref());
         // The palette (including the reference UI's empty grey) is cell content.
-        let bg = selected.map_or_else(|| rgb(0xc4c4c4).into(), |c| color(c, cx));
-        let label = selected.map(|c| c.label.as_str());
+        let pending = self.status.pending == Some(id);
+        let bg = if pending {
+            // The source's saving prompt is cell content, not a table notice.
+            rgb(0x757575).into()
+        } else {
+            selected.map_or_else(|| rgb(0xc4c4c4).into(), |c| color(c, cx))
+        };
+        let label = if pending {
+            Some("Saving…")
+        } else {
+            selected.map(|c| c.label.as_str())
+        };
         let button = Button::new(SharedString::from(format!("status-{id}")))
             .track_focus(&cell.trigger)
             .custom(tile_style(bg, cx))
@@ -153,9 +172,10 @@ impl MainTable {
             .bg(bg)
             .text_color(gpui_kit::white())
             .w_40()
+            .h_full()
             .label(label.unwrap_or(" ").to_owned())
             .accessibility_label(format!("{title} for {name}: {}", label.unwrap_or("Empty")));
-        if !self.editable || self.pending || self.reconcile {
+        if !self.editable || self.pending || self.reconcile || self.status.requires_reload {
             return lane().child(button.disabled(true)).into_any_element();
         }
         let target = Target {
@@ -169,7 +189,9 @@ impl MainTable {
         let value = cell.saved.value.clone();
         let trigger = cell.trigger.clone();
         let initial = cell.selected.clone();
+        let chooser_label = format!("Choose {title}");
         let menu = Popover::new(SharedString::from(format!("status-popup-{id}")))
+            .trigger_style(StyleRefinement::default().w_full().h_full())
             .track_focus(&initial)
             .trigger(button.on_mouse_down(MouseButton::Left, move |_, w, cx| trigger.focus(w, cx)))
             .content(move |_, w, cx| {
@@ -182,7 +204,16 @@ impl MainTable {
                         _ = view.update(cx, |v, cx| v.set_status(target, key.clone(), w, cx));
                     }
                 };
-                let mut panel = div().flex().flex_col().gap_2();
+                // Together with Kit's 12px surface inset this is the source's
+                // 360px picker; both tile columns share the available width.
+                let mut panel = div().flex().flex_col().gap_2().w(rems(21.));
+                let mut options = div()
+                    .id("status-options")
+                    .role(Role::ListBox)
+                    .aria_label(chooser_label.clone())
+                    .flex()
+                    .flex_col()
+                    .gap_2();
                 let mut row = div().flex().gap_2();
                 let mut handles = Vec::with_capacity(choices.len() + 1);
                 for (ix, option) in choices
@@ -206,7 +237,11 @@ impl MainTable {
                     };
                     let bg = option.map_or_else(|| rgb(0xc4c4c4).into(), |c| color(c, cx));
                     let tile = Button::new(id)
-                        .w_40()
+                        .flex_1()
+                        .min_w_0()
+                        .h_8()
+                        .rounded_sm()
+                        .role(Role::ListBoxOption)
                         .track_focus(&handle)
                         .label(option.map_or("Empty", |c| c.label.as_str()).to_owned())
                         .custom(tile_style(bg, cx))
@@ -218,18 +253,18 @@ impl MainTable {
                     handles.push(handle);
                     row = row.child(tile);
                     if ix % 2 == 1 || ix == choices.len() {
-                        panel = panel.child(row);
+                        options = options.child(row);
                         row = div().flex().gap_2();
                     }
                 }
-                if value.is_some() {
-                    panel = panel.child(
-                        Button::new("status-clear")
-                            .ghost()
-                            .label("Clear value")
-                            .on_click(commit(None)),
-                    );
-                }
+                panel = panel.child(options).child(
+                    Button::new("status-clear")
+                        .w_full()
+                        .h_8()
+                        .bg(cx.theme().muted)
+                        .label("Clear value")
+                        .on_click(commit(None)),
+                );
                 panel.on_key_down(move |event: &KeyDownEvent, w, cx| {
                     let Some(ix) = handles.iter().position(|h| h.is_focused(w)) else {
                         return;
@@ -295,7 +330,12 @@ impl Connected {
             return;
         }
         match result {
-            Ok(table) => t.status.accept(table, cx),
+            Ok(table) => {
+                t.status.accept(table, cx);
+                if self.message == "Could not load statuses. Reload board to try again." {
+                    self.message = "";
+                }
+            }
             Err(EditError::SessionRejected) => {
                 self.stop_changes();
                 self.link_input = None;
@@ -308,7 +348,12 @@ impl Connected {
                 self.message = "Destination unavailable";
             }
             Err(_) => {
-                t.status.read = ColumnRead::Failed;
+                // Keep an accepted cell visible after an unavailable recovery
+                // read, but require a deliberate reload before another write.
+                t.status.requires_reload = true;
+                if !matches!(t.status.read, ColumnRead::Ready { .. }) {
+                    t.status.read = ColumnRead::Failed;
+                }
                 self.message = "Could not load statuses. Reload board to try again.";
             }
         }
@@ -328,7 +373,12 @@ impl Connected {
         let Page::Items(board, t) = &mut nav.page else {
             return;
         };
-        if t.status.visit != target.visit || !t.editable || t.pending || t.reconcile {
+        if t.status.visit != target.visit
+            || !t.editable
+            || t.pending
+            || t.reconcile
+            || t.status.requires_reload
+        {
             return;
         }
         let ColumnRead::Ready { choices, cells, .. } = &t.status.read else {
@@ -348,7 +398,8 @@ impl Connected {
             .to_owned();
         let board = *board;
         let client = nav.client.clone();
-        t.status.notice = Some((target.item, format!("Saving status: {draft}…")));
+        t.status.pending = Some(target.item);
+        t.status.notice = None;
         t.set_busy(true, cx);
         let work = cx.background_executor().spawn(async move {
             match client.set_status(board, target.column, target.item, target.revision, value) {
@@ -370,6 +421,7 @@ impl Connected {
                 if t.status.visit != target.visit {
                     return;
                 }
+                t.status.pending = None;
                 t.set_busy(false, cx);
                 match result {
                     Write::Accepted(saved) => {

@@ -1,7 +1,7 @@
 //! Same-origin transport; the host alone holds the account bearer.
 use boardcraft_mobile_edit_client::{
     ArchiveRead, BOARD_ACCESS_HEADER, EditError, MainTableGroup, MainTableRead, NameEdit,
-    SavedItem, TableCommand,
+    SavedItem, StatusCell, StatusEdit, StatusTable, TableCommand,
 };
 use futures::{FutureExt, future::Either};
 use serde::{Serialize, de::DeserializeOwned};
@@ -133,6 +133,44 @@ fn body(value: &impl Serialize) -> Result<Option<String>, EditError> {
     serde_json::to_string(value)
         .map(Some)
         .map_err(|_| EditError::Transport)
+}
+
+pub(super) async fn read_status(
+    binding: &str,
+    board: Uuid,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<StatusTable, EditError> {
+    request(
+        binding,
+        "GET",
+        &format!("/navigation/status/{board}"),
+        None,
+        executor,
+    )
+    .await
+    .map(|(table, _)| table)
+}
+
+pub(super) async fn set_status(
+    binding: &str,
+    board: Uuid,
+    column: Uuid,
+    item: Uuid,
+    edit: &StatusEdit,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<StatusCell, EditError> {
+    let (saved, _) = request::<StatusCell>(
+        binding,
+        "PUT",
+        &format!("/navigation/status/{board}/{column}/{item}"),
+        body(edit)?,
+        executor,
+    )
+    .await?;
+    if saved.item_id != item || saved.revision < edit.revision || saved.value != edit.value {
+        return Err(EditError::Transport);
+    }
+    Ok(saved)
 }
 
 #[cfg(target_family = "wasm")]

@@ -260,6 +260,111 @@ pub(super) fn groups() {
     selection::check_groups(&f, false);
 }
 
+#[test]
+fn browser_status_set_replace_clear_reload_and_access() {
+    use boardcraft_mobile_edit_client::{StatusCell, StatusTable};
+    use selection::SELECTED;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    let f = Fixture::start();
+    let password = Uuid::new_v4().to_string();
+    let member = f.seed_account("reader", &password, Role::Member);
+    let catalog = selection::Catalog::new(&f, member);
+    let host = Host::start_web_api(&f.schema.config, BoardId::new(f.board).unwrap()).unwrap();
+    let authority = format!("127.0.0.1:{}", host.port);
+    let origin = format!("http://{authority}");
+    let call = |method: &str, path: &str, fields: &[(&str, &str)], body: &str| {
+        send(host.port, method, path, &authority, fields, body)
+    };
+    let login = call(
+        "POST",
+        "/web/api/session",
+        &[("Origin", &origin), ("Boardcraft-Web", "login")],
+        &json!({"identifier":"reader","password":password}).to_string(),
+    );
+    assert_eq!(login.status, 200);
+    let binding: String = serde_json::from_str(&login.body).unwrap();
+    let cookie = login.cookie.as_deref().unwrap().split(';').next().unwrap();
+    let pair = [("Cookie", cookie), ("Boardcraft-Web", binding.as_str())];
+    let path = format!("/web/api/navigation/status/{SELECTED}");
+    let read = || {
+        let reply = call("GET", &path, &pair, "");
+        assert_eq!(reply.status, 200);
+        serde_json::from_str::<StatusTable>(&reply.body).unwrap()
+    };
+    let table = read();
+    let item = Uuid::from_u128(61);
+    let cell_path = format!("{path}/{}/{item}", table.column_id);
+    let write = |revision, value: Option<&str>| {
+        call(
+            "PUT",
+            &cell_path,
+            &[pair[0], pair[1], ("Origin", &origin)],
+            &json!({"revision":revision,"value":value}).to_string(),
+        )
+    };
+    assert_eq!(call("GET", &path, &pair[..1], "").status, 401);
+    assert_eq!(
+        call("PUT", &cell_path, &pair, r#"{"revision":0,"value":"done"}"#).status,
+        403
+    );
+    for (revision, value) in [(0, Some("done")), (1, Some("stuck")), (2, None)] {
+        let reply = write(revision, value);
+        assert_eq!(reply.status, 200);
+        let saved: StatusCell = serde_json::from_str(&reply.body).unwrap();
+        assert_eq!(
+            (saved.item_id, saved.revision, saved.value.as_deref()),
+            (item, revision + 1, value)
+        );
+        assert_eq!(
+            read().cells.iter().find(|c| c.item_id == item),
+            Some(&saved)
+        );
+        assert_eq!(write(revision, value).status, 409);
+    }
+    assert_eq!(write(3, Some("unknown")).status, 422);
+    assert_eq!(write(3, None).status, 200);
+    let unchanged = read()
+        .cells
+        .into_iter()
+        .find(|c| c.item_id == item)
+        .unwrap();
+    assert_eq!((unchanged.revision, unchanged.value), (3, None));
+    // Names and sibling cells are independent of this cell's revision.
+    let row = f
+        .connect()
+        .query_one(
+            "SELECT revision,title FROM board_items WHERE id=$1",
+            &[&item],
+        )
+        .unwrap();
+    assert_eq!(
+        (row.get::<_, i64>(0), row.get::<_, String>(1)),
+        (1, "Ink".into())
+    );
+    f.connect()
+        .execute("UPDATE accounts SET role='viewer' WHERE id=$1", &[&member])
+        .unwrap();
+    assert_eq!(read().column_id, table.column_id);
+    assert_eq!(write(3, Some("done")).status, 403);
+    f.connect()
+        .execute("UPDATE accounts SET role='member' WHERE id=$1", &[&member])
+        .unwrap();
+    catalog.membership(&f, false);
+    assert_eq!(call("GET", &path, &pair, "").status, 403);
+    assert_eq!(write(3, Some("done")).status, 403);
+    catalog.membership(&f, true);
+    assert_eq!(read().column_id, table.column_id);
+    f.connect()
+        .execute(
+            "DELETE FROM account_sessions WHERE account_id=$1",
+            &[&member],
+        )
+        .unwrap();
+    assert_eq!(call("GET", &path, &pair, "").status, 401);
+}
+
 pub(super) fn check() {
     let f = Fixture::start();
     let board = BoardId::new(f.board).unwrap();
