@@ -18,10 +18,16 @@ pub(super) struct GroupEntry {
 impl EventEmitter<Create> for GroupEntry {}
 
 impl GroupEntry {
+    pub(super) fn has_draft(&self, cx: &App) -> bool {
+        !self.input.read(cx).value().is_empty()
+    }
     pub(super) fn new(group: &str, name: &str, w: &mut Window, cx: &mut Context<Self>) -> Self {
         let label: SharedString = format!("Add item to {name}").into();
         let input = cx.new(|cx| InputState::new(w, cx).placeholder("Item name"));
         let events = cx.subscribe_in(&input, w, |e, _, event, _, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
             if matches!(event, InputEvent::PressEnter { .. }) {
                 e.submit(cx);
             }

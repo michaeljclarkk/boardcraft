@@ -365,6 +365,156 @@ fn browser_status_set_replace_clear_reload_and_access() {
     assert_eq!(call("GET", &path, &pair, "").status, 401);
 }
 
+#[test]
+fn saved_quick_filters_reopen_across_clients_and_keep_personal_names_private() {
+    use boardcraft_mobile_edit_client::{SavedView, ViewFilters};
+    use selection::SELECTED;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    let f = Fixture::start();
+    let password = Uuid::new_v4().to_string();
+    let member = f.seed_account("reader", &password, Role::Member);
+    let catalog = selection::Catalog::new(&f, member);
+    let host = Host::start_web_api(&f.schema.config, BoardId::new(f.board).unwrap()).unwrap();
+    let authority = format!("127.0.0.1:{}", host.port);
+    let origin = format!("http://{authority}");
+    let login = send(
+        host.port,
+        "POST",
+        "/web/api/session",
+        &authority,
+        &[("Origin", &origin), ("Boardcraft-Web", "login")],
+        &json!({"identifier":"reader","password":password}).to_string(),
+    );
+    assert_eq!(login.status, 200);
+    let binding: String = serde_json::from_str(&login.body).unwrap();
+    let cookie = login.cookie.as_deref().unwrap().split(';').next().unwrap();
+    let pair = [
+        ("Cookie", cookie),
+        ("Boardcraft-Web", binding.as_str()),
+        ("Origin", origin.as_str()),
+    ];
+    let path = format!("/web/api/navigation/boards/{SELECTED}/views");
+    let filters = ViewFilters {
+        status_values: vec!["stuck".into()],
+        include_empty_status: false,
+        group_ids: vec!["main".into()],
+    };
+    let id = Uuid::new_v4();
+    let draft = json!({"id":id,"name":"Scope","filter":"Ink","filters":filters});
+    let reply = send(
+        host.port,
+        "POST",
+        &path,
+        &authority,
+        &pair,
+        &draft.to_string(),
+    );
+    assert_eq!(reply.status, 200);
+    let saved: SavedView = serde_json::from_str(&reply.body).unwrap();
+    assert_eq!(
+        (&saved.filters, saved.shared, saved.owner),
+        (&filters, false, member)
+    );
+    let token = boardcraft_account::sign_in(&f.schema.config, "reader", &password).unwrap();
+    let native = EditClient::with_bearer(host.port, token.encoded()).unwrap();
+    assert_eq!(native.list_views(SELECTED).unwrap(), vec![saved.clone()]);
+    for (name, query) in [
+        ("🎨".repeat(81), String::new()),
+        ("Too long".into(), "🎨".repeat(121)),
+    ] {
+        assert!(matches!(
+            native.create_view_with_filters(SELECTED, Uuid::new_v4(), &name, &query, &filters),
+            Err(boardcraft_mobile_edit_client::EditError::InvalidDraft)
+        ));
+    }
+    for bad in [
+        ViewFilters {
+            status_values: vec!["missing".into()],
+            ..filters.clone()
+        },
+        ViewFilters {
+            group_ids: vec!["missing".into()],
+            ..filters.clone()
+        },
+        ViewFilters {
+            include_empty_status: true,
+            ..filters.clone()
+        },
+    ] {
+        assert!(matches!(
+            native.create_view_with_filters(SELECTED, Uuid::new_v4(), "Bad", "", &bad),
+            Err(boardcraft_mobile_edit_client::EditError::InvalidDraft)
+        ));
+    }
+    let second_password = Uuid::new_v4().to_string();
+    let second = f.seed_account("second", &second_password, Role::Member);
+    let mut db = f.connect();
+    db.execute("INSERT INTO workspace_members(workspace_id,account_id) SELECT workspace_id,$2 FROM board_policies WHERE board_id=$1", &[&SELECTED,&second]).unwrap();
+    db.execute(
+        "INSERT INTO board_subscribers VALUES ($1,$2)",
+        &[&SELECTED, &second],
+    )
+    .unwrap();
+    let token = boardcraft_account::sign_in(&f.schema.config, "second", &second_password).unwrap();
+    let other = EditClient::with_bearer(host.port, token.encoded()).unwrap();
+    assert!(other.list_views(SELECTED).unwrap().is_empty());
+    let own = other
+        .create_view_with_filters(
+            SELECTED,
+            Uuid::new_v4(),
+            "Scope",
+            "Sketch",
+            &ViewFilters::default(),
+        )
+        .unwrap();
+    assert_eq!(other.list_views(SELECTED).unwrap(), vec![own.clone()]);
+    assert_eq!(native.list_views(SELECTED).unwrap(), vec![saved]);
+    db.execute("UPDATE saved_views SET shared=true WHERE id=$1", &[&own.id])
+        .unwrap();
+    let visible = native.list_views(SELECTED).unwrap();
+    assert_eq!(visible.len(), 2);
+    assert!(visible.iter().any(|view| view.id == own.id && view.shared));
+    // Migration reruns do not erase already-saved filters.
+    boardcraft_board::store::migrate(&mut db).unwrap();
+    assert_eq!(native.list_views(SELECTED).unwrap(), visible);
+    db.execute("UPDATE accounts SET role='viewer' WHERE id=$1", &[&member])
+        .unwrap();
+    assert_eq!(native.list_views(SELECTED).unwrap(), visible);
+    assert_eq!(
+        send(
+            host.port,
+            "POST",
+            &path,
+            &authority,
+            &pair,
+            &draft.to_string()
+        )
+        .status,
+        403
+    );
+    db.execute("UPDATE accounts SET role='member' WHERE id=$1", &[&member])
+        .unwrap();
+    catalog.membership(&f, false);
+    assert!(matches!(
+        native.list_views(SELECTED),
+        Err(boardcraft_mobile_edit_client::EditError::PermissionDenied)
+    ));
+    assert_eq!(
+        send(
+            host.port,
+            "POST",
+            &path,
+            &authority,
+            &pair,
+            &draft.to_string()
+        )
+        .status,
+        403
+    );
+}
+
 pub(super) fn check() {
     let f = Fixture::start();
     let board = BoardId::new(f.board).unwrap();

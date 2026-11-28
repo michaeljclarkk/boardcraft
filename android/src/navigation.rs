@@ -6,6 +6,7 @@ use gpui_kit::{
 };
 mod activity;
 mod filters;
+pub(super) use filters::ViewDraft;
 mod status;
 use activity::ItemActivity;
 use boardcraft_mobile_edit_client::{
@@ -195,6 +196,9 @@ impl BoardView {
             self.board_search
                 .update(cx, |input, cx| input.set_value("", window, cx));
             self.views_open = false;
+            self.view_draft = None;
+            self.view_name
+                .update(cx, |input, cx| input.set_value("", window, cx));
             self.automations_open = false;
             self.filters_open = false;
             self.filter_groups.clear();
@@ -202,6 +206,8 @@ impl BoardView {
             self.filter_blank_status = false;
         }
         // Loading exposes no actions. Only this completion can replace it.
+        self.navigation_visit = Uuid::new_v4();
+        let visit = self.navigation_visit;
         self.navigation = Some(Page::Loading);
         self.inbox_unread = None;
         self.message = "";
@@ -228,7 +234,8 @@ impl BoardView {
         cx.spawn(async move |view, cx| {
             let result = work.await;
             _ = view.update(cx, |view, cx| {
-                if !matches!(view.navigation, Some(Page::Loading)) {
+                if view.navigation_visit != visit || !matches!(view.navigation, Some(Page::Loading))
+                {
                     return;
                 }
                 match result {
@@ -413,7 +420,12 @@ impl BoardView {
     /// Applying a saved view only replaces the board's active filter; the rows
     /// stay loaded, so switching between views needs no further board read.
     fn apply_saved_view(&mut self, id: Uuid, w: &mut Window, cx: &mut Context<Self>) {
-        if self.editor.is_some() {
+        if self.editor.is_some()
+            || self.logging_out
+            || self.automation_pending
+            || self.filters_open
+            || self.navigation.as_ref().is_some_and(Page::pending)
+        {
             return;
         }
         let Some(Page::Selected { views, filter, .. }) = &mut self.navigation else {
@@ -428,9 +440,9 @@ impl BoardView {
         self.result_search = value.clone();
         self.search_pending = false;
         self.search_invalid = false;
-        self.filter_groups.clear();
-        self.filter_status.clear();
-        self.filter_blank_status = false;
+        self.filter_groups = view.filters.group_ids.iter().cloned().collect();
+        self.filter_status = view.filters.status_values.iter().cloned().collect();
+        self.filter_blank_status = view.filters.include_empty_status;
         self.board_search
             .update(cx, |input, cx| input.set_value(value, w, cx));
         cx.notify();
@@ -732,7 +744,7 @@ impl BoardView {
                                     }),
                             ),
                     );
-                if self.views_open && !views.is_empty() {
+                if self.views_open {
                     let mut saved = div().flex().flex_wrap().gap_2();
                     for view in views {
                         let id = view.id;
@@ -740,14 +752,28 @@ impl BoardView {
                             Button::new(SharedString::from(format!("view-{id}")))
                                 .large()
                                 .flex_shrink_0()
-                                .label(view.name.clone())
-                                .disabled(self.logging_out)
+                                .label(if view.shared {
+                                    format!("{} · Shared", view.name)
+                                } else {
+                                    view.name.clone()
+                                })
+                                .disabled(busy)
                                 .on_click(cx.listener(move |view, _, w, cx| {
                                     view.apply_saved_view(id, w, cx);
                                 })),
                         );
                     }
                     column = column.child(Label::new("Views")).child(saved);
+                    if views.is_empty() {
+                        column = column.child(Label::new("No saved views"));
+                    }
+                    column = column.child(
+                        Button::new("mobile-save-view-open")
+                            .large()
+                            .label("Save personal view…")
+                            .disabled(busy || !status.editable)
+                            .on_click(cx.listener(|view, _, w, cx| view.open_filters(w, cx))),
+                    );
                 }
                 if self.automations_open {
                     column = column.child(self.render_automations(

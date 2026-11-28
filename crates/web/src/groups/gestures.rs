@@ -38,6 +38,11 @@ impl Table {
                 )
             });
         for (ix, g) in self.read.groups().iter().enumerate() {
+            if !self.view_filters.group_ids.is_empty()
+                && !self.view_filters.group_ids.iter().any(|id| id == g.id())
+            {
+                continue;
+            }
             let id = g.id().to_owned();
             let name = g.name().to_owned();
             // This user-chosen colour is part of the accepted record, independent of
@@ -360,6 +365,7 @@ impl Table {
                                     .disabled(
                                         self.busy()
                                             || !self.result_search.is_empty()
+                                            || self.view_filters != ViewFilters::default()
                                             || !self.read.is_editable()
                                             || (checked && self.selection.len() > 1),
                                     ),
@@ -564,13 +570,14 @@ impl Table {
                         if t.busy() || t.inventory.is_some() {
                             return;
                         }
-                        if t.read.is_manageable() {
+                        if t.read.is_manageable() && t.view_filters == ViewFilters::default() {
                             t.drag.borrow_mut().press(e.position);
                         }
                         // A filtered list does not expose every physical drop target.
                         if !t.drag.borrow().is_held()
                             && t.read.is_editable()
                             && t.result_search.is_empty()
+                            && t.view_filters == ViewFilters::default()
                         {
                             for (id, drag) in &t.row_drags {
                                 if t.read

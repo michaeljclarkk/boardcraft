@@ -44,17 +44,22 @@ enum Gesture {
 }
 
 impl MainTable {
-    fn matches_filter(&self, row: &Entity<Row>, cx: &App) -> bool {
+    pub(super) fn matches_filter(&self, row: &Entity<Row>, group: &str, cx: &App) -> bool {
+        let status = self
+            .status
+            .filter_value(row.read(cx).edit.identity().1.as_uuid());
         boardcraft_mobile_edit_client::view_filter_matches(
             &self.filter,
             row.read(cx).edit.accepted(),
-        )
+        ) && ((self.filters.status_values.is_empty() && !self.filters.include_empty_status)
+            || status.is_some())
+            && self.filters.matches(status.flatten(), group)
     }
     pub(super) fn matching_count(&self, heading: &Heading, cx: &App) -> usize {
         heading
             .rows
             .iter()
-            .filter(|row| self.matches_filter(row, cx))
+            .filter(|row| self.matches_filter(row, &heading.id, cx))
             .count()
     }
     pub(super) fn order(&self, cx: &App) -> Vec<Uuid> {
@@ -63,7 +68,7 @@ impl MainTable {
             .flat_map(|h| {
                 h.rows
                     .iter()
-                    .filter(|r| self.matches_filter(r, cx))
+                    .filter(|r| self.matches_filter(r, &h.id, cx))
                     .map(|r| r.read(cx).edit.identity().1.as_uuid())
             })
             .collect()
@@ -77,7 +82,7 @@ impl MainTable {
                 let ids: Vec<_> = h
                     .rows
                     .iter()
-                    .filter(|r| self.matches_filter(r, cx))
+                    .filter(|r| self.matches_filter(r, &h.id, cx))
                     .map(|r| r.read(cx).edit.identity().1.as_uuid())
                     .collect();
                 self.selection.block(&ids, *checked);
@@ -123,9 +128,11 @@ impl MainTable {
                                 .headings
                                 .iter()
                                 .filter(|heading| !heading.collapsed)
-                                .flat_map(|heading| &heading.rows)
-                                .find(|row| t.matches_filter(row, cx))
-                                .map(|row| row.read(cx).display_focus.clone());
+                                .flat_map(|heading| {
+                                    heading.rows.iter().map(move |row| (heading, row))
+                                })
+                                .find(|(heading, row)| t.matches_filter(row, &heading.id, cx))
+                                .map(|(_, row)| row.read(cx).display_focus.clone());
                             if let Some(focus) = focus {
                                 focus.focus(w, cx);
                             } else {

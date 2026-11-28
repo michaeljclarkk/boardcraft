@@ -1,5 +1,5 @@
 use super::*;
-use boardcraft_mobile_edit_client::{StatusCell, StatusChoice};
+use boardcraft_mobile_edit_client::{StatusCell, StatusChoice, ViewFilters};
 use gpui_kit::component::{
     ActiveTheme, WindowExt,
     checkbox::Checkbox,
@@ -14,6 +14,18 @@ struct Filters {
 }
 
 impl Filters {
+    fn saved(&self) -> ViewFilters {
+        let mut status_values: Vec<_> = self.statuses.iter().cloned().collect();
+        let mut group_ids: Vec<_> = self.groups.iter().cloned().collect();
+        status_values.sort();
+        group_ids.sort();
+        ViewFilters {
+            status_values,
+            include_empty_status: self.blank,
+            group_ids,
+        }
+    }
+
     fn matches(
         &self,
         row: &SavedItem,
@@ -42,11 +54,32 @@ impl Filters {
     }
 }
 
+/// Kept by the board while a save is unconfirmed, including closing/reopening
+/// Filters. Checking this exact identity never submits another create request.
+#[derive(Clone)]
+pub(crate) struct ViewDraft {
+    id: Uuid,
+    name: String,
+    query: String,
+    filters: ViewFilters,
+    uncertain: bool,
+}
+
+impl ViewDraft {
+    fn is_saved_as(&self, view: &SavedView) -> bool {
+        view.id == self.id
+            && view.name == self.name
+            && view.filter == self.query
+            && view.filters == self.filters
+    }
+}
+
 /// One opened native view-settings dialog owns its draft and debounce. The board
 /// receives preview values; closing keeps them, while Discard restores the baseline.
 struct FilterDialog {
     owner: WeakEntity<BoardView>,
     board: Uuid,
+    visit: Uuid,
     baseline: Filters,
     draft: Filters,
     groups: Vec<MainTableGroup>,
@@ -60,6 +93,10 @@ struct FilterDialog {
     dirty: bool,
     closed: bool,
     preview: Option<Task<()>>,
+    name: Entity<InputState>,
+    request: Option<ViewDraft>,
+    saving: bool,
+    message: &'static str,
 }
 
 impl BoardView {
@@ -92,6 +129,13 @@ impl BoardView {
     }
 
     pub(crate) fn open_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editor.is_none()
+            && self.search_pending
+            && matches!(self.navigation, Some(Page::Selected { .. }))
+        {
+            self.search_task = None;
+            self.apply_search(cx);
+        }
         let Some(Page::Selected {
             board,
             groups,
@@ -120,6 +164,7 @@ impl BoardView {
         let dialog = cx.new(|_| FilterDialog {
             owner,
             board: *board,
+            visit: self.navigation_visit,
             draft: baseline.clone(),
             baseline,
             groups: groups.clone(),
@@ -133,6 +178,18 @@ impl BoardView {
             dirty: false,
             closed: false,
             preview: None,
+            name: self.view_name.clone(),
+            request: self.view_draft.clone(),
+            saving: false,
+            message: if self
+                .view_draft
+                .as_ref()
+                .is_some_and(|draft| draft.uncertain)
+            {
+                "The last save is unconfirmed. Check saved views before saving again."
+            } else {
+                ""
+            },
         });
         self.filters_open = true;
         self.search_focused = false;
@@ -141,10 +198,13 @@ impl BoardView {
             let close = dialog.clone();
             let dismiss = dialog.clone();
             let actions = dialog.update(cx, |dialog, cx| dialog.footer(cx));
+            let saving = dialog.read(cx).saving;
             surface
                 .w(window.viewport_size().width)
                 .centered()
                 .close_button(false)
+                .keyboard(!saving)
+                .overlay_closable(!saving)
                 .title(
                     div()
                         .flex()
@@ -156,9 +216,11 @@ impl BoardView {
                                 .large()
                                 .ghost()
                                 .label("Close")
+                                .disabled(saving)
                                 .on_click(move |_, window, cx| {
-                                    close.update(cx, |dialog, cx| dialog.finish(false, cx));
-                                    window.close_dialog(cx);
+                                    if close.update(cx, |dialog, cx| dialog.finish(false, cx)) {
+                                        window.close_dialog(cx);
+                                    }
                                 }),
                         ),
                 )
@@ -173,9 +235,179 @@ impl BoardView {
 }
 
 impl FilterDialog {
+    fn locked(&self) -> bool {
+        !self.writable || self.saving || self.request.as_ref().is_some_and(|r| r.uncertain)
+    }
+
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let checking = self.request.as_ref().is_some_and(|r| r.uncertain);
+        if self.closed || self.saving || (!self.writable && !checking) {
+            return;
+        }
+        let name = self.name.read(cx).value().trim().to_owned();
+        if !checking && name.is_empty() {
+            self.message = "Enter a view name.";
+            cx.notify();
+            return;
+        }
+        let filters = self.draft.saved();
+        let mut request = if checking {
+            self.request.clone().expect("unconfirmed request")
+        } else {
+            let id = self
+                .request
+                .as_ref()
+                .filter(|r| r.name == name && r.query == self.query && r.filters == filters)
+                .map_or_else(Uuid::new_v4, |r| r.id);
+            ViewDraft {
+                id,
+                name,
+                query: self.query.clone(),
+                filters,
+                uncertain: false,
+            }
+        };
+        // Persist the uncertain identity before crossing the network boundary.
+        request.uncertain = true;
+        let context = self.owner.update(cx, |view, cx| {
+            if view.navigation_visit != self.visit
+                || view.editor.is_some()
+                || view.logging_out
+                || view.automation_pending
+                || !matches!(&view.navigation, Some(Page::Selected { board, status, .. })
+                    if *board == self.board && (checking || status.editable) && status.pending.is_none())
+            {
+                return None;
+            }
+            let client = view.client.clone()?;
+            let connection = view.connection?;
+            view.view_draft = Some(request.clone());
+            Some((client, connection, Login::identifier(window, cx)))
+        });
+        let Ok(Some((client, connection, identifier))) = context else {
+            return;
+        };
+        self.preview = None;
+        self.publish(&self.draft, cx);
+        self.saving = true;
+        self.message = "";
+        self.request = Some(request.clone());
+        let board = self.board;
+        let work = cx.background_executor().spawn(async move {
+            if checking {
+                return client
+                    .list_views(board)
+                    .map_err(|error| (error, true))
+                    .and_then(|views| {
+                        let saved = views.iter().find(|v| v.id == request.id).cloned();
+                        if saved
+                            .as_ref()
+                            .is_some_and(|view| !request.is_saved_as(view))
+                        {
+                            return Err((EditError::Conflict, false));
+                        }
+                        Ok((saved, Some(views)))
+                    });
+            }
+            match client.create_view_with_filters(
+                board,
+                request.id,
+                &request.name,
+                &request.query,
+                &request.filters,
+            ) {
+                Ok(saved) => Ok((Some(saved), None)),
+                Err(
+                    error @ (EditError::SessionRejected
+                    | EditError::PermissionDenied
+                    | EditError::InvalidDraft),
+                ) => Err((error, false)),
+                Err(error) => match client.list_views(board) {
+                    Ok(views) => match views.iter().find(|v| v.id == request.id).cloned() {
+                        Some(saved) if request.is_saved_as(&saved) => {
+                            Ok((Some(saved), Some(views)))
+                        }
+                        Some(_) => Err((EditError::Conflict, false)),
+                        None => Err((error, false)),
+                    },
+                    Err(read_error) => Err((read_error, true)),
+                },
+            }
+        });
+        cx.spawn_in(window, async move |dialog, cx| {
+            let result = work.await;
+            let _ = dialog.update_in(cx, |dialog, window, cx| {
+                dialog.saving = false;
+                if dialog.closed { return; }
+                let current = dialog.owner.update(cx, |view, _| {
+                    view.navigation_visit == dialog.visit
+                        && matches!(view.navigation, Some(Page::Selected { board, .. }) if board == dialog.board)
+                }).unwrap_or(false);
+                if !current {
+                    dialog.closed = true;
+                    window.close_dialog(cx);
+                    return;
+                }
+                match result {
+                    Ok((saved, loaded)) => {
+                        let accepted = saved.is_some();
+                        let _ = dialog.owner.update(cx, |view, cx| {
+                            if let Some(Page::Selected { views, .. }) = &mut view.navigation {
+                                if let Some(loaded) = loaded { *views = loaded; }
+                                if let Some(saved) = saved {
+                                    views.retain(|v| v.id != saved.id);
+                                    views.push(saved);
+                                    views.sort_by_key(|v| (v.name.to_lowercase(), v.id));
+                                }
+                            }
+                            if accepted {
+                                view.view_draft = None;
+                                view.views_open = true;
+                                view.view_name.update(cx, |input, cx| input.set_value("", window, cx));
+                            } else if let Some(request) = &mut view.view_draft {
+                                request.uncertain = false;
+                            }
+                            cx.notify();
+                        });
+                        if accepted {
+                            dialog.request = None;
+                            dialog.message = "Personal view saved.";
+                        } else {
+                            if let Some(request) = &mut dialog.request { request.uncertain = false; }
+                            dialog.message = "The view was not saved. Review it and choose Save personal view.";
+                        }
+                    }
+                    Err((EditError::SessionRejected, _)) => {
+                        let _ = dialog.owner.update(cx, |view, cx| view.forget_session(connection, identifier, cx));
+                        dialog.closed = true;
+                        window.close_dialog(cx);
+                    }
+                    Err((error, uncertain)) => {
+                        if let Some(request) = &mut dialog.request { request.uncertain = uncertain; }
+                        let _ = dialog.owner.update(cx, |view, _| view.view_draft = dialog.request.clone());
+                        dialog.message = if uncertain {
+                            "Could not confirm the save. Check saved views before saving again."
+                        } else {
+                            match error {
+                                EditError::PermissionDenied => "No permission to save views.",
+                                EditError::InvalidDraft => "Check the view name and filter choices, then save again.",
+                                EditError::Conflict => "This view changed. Review the name and filters before saving again.",
+                                _ => "Could not save the view. Your name and filters are kept. Try again.",
+                            }
+                        };
+                    }
+                }
+                window.refresh();
+                cx.notify();
+            });
+        }).detach();
+        window.refresh();
+        cx.notify();
+    }
+
     fn publish(&self, filters: &Filters, cx: &mut Context<Self>) {
         let _ = self.owner.update(cx, |view, cx| {
-            if !view.filters_open || !matches!(view.navigation, Some(Page::Selected { board, .. }) if board == self.board) {
+            if !view.filters_open || view.navigation_visit != self.visit || !matches!(view.navigation, Some(Page::Selected { board, .. }) if board == self.board) {
                 return;
             }
             view.filter_groups = filters.groups.clone();
@@ -200,9 +432,12 @@ impl FilterDialog {
         cx.notify();
     }
 
-    fn finish(&mut self, discard: bool, cx: &mut Context<Self>) {
+    fn finish(&mut self, discard: bool, cx: &mut Context<Self>) -> bool {
+        if self.saving {
+            return false;
+        }
         if self.closed {
-            return;
+            return true;
         }
         self.preview = None;
         if discard {
@@ -212,9 +447,12 @@ impl FilterDialog {
         }
         self.closed = true;
         let _ = self.owner.update(cx, |view, cx| {
-            view.filters_open = false;
-            cx.notify();
+            if view.navigation_visit == self.visit {
+                view.filters_open = false;
+                cx.notify();
+            }
         });
+        true
     }
 
     fn footer(&self, cx: &mut Context<Self>) -> Div {
@@ -227,9 +465,11 @@ impl FilterDialog {
                     .large()
                     .flex_1()
                     .label("Discard draft")
+                    .disabled(self.saving)
                     .on_click(cx.listener(|dialog, _, window, cx| {
-                        dialog.finish(true, cx);
-                        window.close_dialog(cx);
+                        if dialog.finish(true, cx) {
+                            window.close_dialog(cx);
+                        }
                     })),
             )
             .child(
@@ -238,9 +478,11 @@ impl FilterDialog {
                     .primary()
                     .flex_1()
                     .label("Apply")
+                    .disabled(self.saving)
                     .on_click(cx.listener(|dialog, _, window, cx| {
-                        dialog.finish(false, cx);
-                        window.close_dialog(cx);
+                        if dialog.finish(false, cx) {
+                            window.close_dialog(cx);
+                        }
                     })),
             )
     }
@@ -273,7 +515,7 @@ impl FilterDialog {
                 Button::new(SharedString::from(format!("mobile-filter-status-{key}")))
                     .large()
                     .w_full()
-                    .disabled(!self.writable)
+                    .disabled(self.locked())
                     .selected(self.draft.statuses.contains(&key))
                     .child(
                         div()
@@ -295,7 +537,7 @@ impl FilterDialog {
             Button::new("mobile-filter-status-blank")
                 .large()
                 .w_full()
-                .disabled(!self.writable)
+                .disabled(self.locked())
                 .selected(self.draft.blank)
                 .child(div().flex_1().text_left().child("Blank"))
                 .on_click(cx.listener(|dialog, _, _, cx| {
@@ -319,7 +561,7 @@ impl FilterDialog {
                     .min_h_11()
                     .label("All groups")
                     .checked(all)
-                    .disabled(!self.writable)
+                    .disabled(self.locked())
                     .on_click(cx.listener(|dialog, checked, _, cx| {
                         dialog.draft.groups = if *checked {
                             HashSet::new()
@@ -342,7 +584,7 @@ impl FilterDialog {
                     .label(group.name().to_owned())
                     .checked(all || self.draft.groups.contains(&id))
                     .disabled(
-                        !self.writable
+                        self.locked()
                             || (!all
                                 && self.draft.groups.len() == 1
                                 && self.draft.groups.contains(&id)),
@@ -391,7 +633,7 @@ impl Render for FilterDialog {
                     .underline()
                     .selected_index(self.section)
                     .child(Tab::new().label("Filter"))
-                    .child(Tab::new().label("Group by"))
+                    .child(Tab::new().label("Groups"))
                     .on_click(cx.listener(|dialog, section, _, cx| {
                         dialog.section = *section;
                         cx.notify();
@@ -405,13 +647,13 @@ impl Render for FilterDialog {
                     .child(div().flex_1().child(Label::new(if self.section == 0 {
                         "Quick filters"
                     } else {
-                        "Group by"
+                        "Groups"
                     })))
                     .child(
                         Button::new("mobile-filter-clear")
                             .large()
                             .label("Clear all")
-                            .disabled(!self.writable)
+                            .disabled(self.locked())
                             .on_click(cx.listener(|dialog, _, _, cx| {
                                 if dialog.section == 0 {
                                     dialog.draft.statuses.clear();
@@ -442,5 +684,37 @@ impl Render for FilterDialog {
                         self.groups(cx)
                     }),
             )
+            .children(
+                (self.writable || self.request.as_ref().is_some_and(|r| r.uncertain)).then(|| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(Label::new("Personal view name"))
+                        .child(
+                            Input::new(&self.name)
+                                .id("mobile-view-name")
+                                .large()
+                                .aria_label("Personal view name")
+                                .disabled(self.locked()),
+                        )
+                        .child(
+                            Button::new("mobile-view-save")
+                                .large()
+                                .label(if self.saving {
+                                    "Saving…"
+                                } else if self.request.as_ref().is_some_and(|r| r.uncertain) {
+                                    "Check saved views"
+                                } else {
+                                    "Save personal view"
+                                })
+                                .disabled(self.saving)
+                                .on_click(
+                                    cx.listener(|dialog, _, window, cx| dialog.save(window, cx)),
+                                ),
+                        )
+                }),
+            )
+            .children((!self.message.is_empty()).then(|| Label::new(self.message)))
     }
 }

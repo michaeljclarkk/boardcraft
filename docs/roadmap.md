@@ -6,7 +6,7 @@ Updated 2026-11-28. This file holds the one task to work on next. The delivery o
 
 ## Next task
 
-**Continue Views: persist and reopen the existing filter/saved-view journey across clients.** UI presentation and the existing Status set/replace/clear/reload slice have been implemented and recorded. Preserve preview, Apply, Close, Discard, personal/shared visibility and active entry/name drafts; establish shared rules before dependent controls. Then continue missing board bulk actions, one focused action per verified commit. Michael authorized this multi-slice continuation and separate concurrent automation-engine agents; do not edit or include their changes.
+**Continue selection bulk actions: port Change label for the existing Status column.** Views now persists Status/Blank/physical-group presets, with observed Windows restart/apply and browser preview retention; remaining source flows and verification limits are recorded. The source selection action edits each selected item's Status independently and preserves selection/failures; reuse the existing Status contract and permissions. This action belongs to Columns within the authorized selection-workflow continuation. Michael authorized multiple slices and separate concurrent automation-engine agents; do not edit or include their changes.
 
 Android's updated companion reaches sign-in. Connected Status and frozen-name verification remain pending user test sign-in, with no percentage credit. Continue independent Windows/browser work. Current estimates: UI 43%, Columns 12%; scoped native Main table Windows 45%, Android 38%. Exact reference sizing, native mobile comparison, configured columns, label management and summaries remain open in the workflow register.
 Acceptance:

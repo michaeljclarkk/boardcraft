@@ -1,7 +1,7 @@
 //! Same-origin transport; the host alone holds the account bearer.
 use boardcraft_mobile_edit_client::{
     ArchiveRead, BOARD_ACCESS_HEADER, EditError, MainTableGroup, MainTableRead, NameEdit,
-    SavedItem, StatusCell, StatusEdit, StatusTable, TableCommand,
+    SavedItem, SavedView, StatusCell, StatusEdit, StatusTable, TableCommand, ViewFilters,
 };
 use futures::{FutureExt, future::Either};
 use serde::{Serialize, de::DeserializeOwned};
@@ -149,6 +149,45 @@ pub(super) async fn read_status(
     )
     .await
     .map(|(table, _)| table)
+}
+
+pub(super) async fn list_views(
+    binding: &str,
+    board: Uuid,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<Vec<SavedView>, EditError> {
+    request(
+        binding,
+        "GET",
+        &format!("/navigation/boards/{board}/views"),
+        None,
+        executor,
+    )
+    .await
+    .map(|(views, _)| views)
+}
+
+pub(super) async fn save_view(
+    binding: &str,
+    board: Uuid,
+    id: Uuid,
+    name: &str,
+    filter: &str,
+    filters: &ViewFilters,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<SavedView, EditError> {
+    let (saved, _) = request::<SavedView>(
+        binding,
+        "POST",
+        &format!("/navigation/boards/{board}/views"),
+        body(&serde_json::json!({"id":id,"name":name,"filter":filter,"filters":filters}))?,
+        executor,
+    )
+    .await?;
+    if saved.id != id || saved.shared {
+        return Err(EditError::Transport);
+    }
+    Ok(saved)
 }
 
 pub(super) async fn set_status(

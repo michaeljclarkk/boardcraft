@@ -37,6 +37,25 @@ struct CellView {
 }
 
 impl StatusColumn {
+    pub(super) fn filters_ready(&self) -> bool {
+        matches!(self.read, ColumnRead::Ready { .. }) && !self.requires_reload
+    }
+
+    pub(super) fn filter_value(&self, item: Uuid) -> Option<Option<&str>> {
+        match &self.read {
+            ColumnRead::Ready { cells, .. } if !self.requires_reload => {
+                cells.get(&item).map(|cell| cell.saved.value.as_deref())
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn filter_choices(&self) -> Vec<StatusChoice> {
+        match &self.read {
+            ColumnRead::Ready { choices, .. } => choices.to_vec(),
+            _ => Vec::new(),
+        }
+    }
     pub(super) fn load(board: Uuid, w: &Window, cx: &mut Context<Connected>) -> Self {
         let visit = Uuid::new_v4();
         // MainTable::new is also used for reload, insert, restore and move.
@@ -51,7 +70,7 @@ impl StatusColumn {
         }
     }
 
-    fn accept(&mut self, read: StatusTable, cx: &mut App) {
+    pub(super) fn accept(&mut self, read: StatusTable, cx: &mut App) {
         self.requires_reload = false;
         let cells = read
             .cells

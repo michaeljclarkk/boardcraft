@@ -516,7 +516,7 @@ fn handle(
             (board, SelectedRead, None)
         }
         (Method::Post, ["", "navigation", "boards", board, "views"]) if mode != Mode::Scoped => {
-            (board, SelectedRead, None)
+            (board, SelectedWrite, None)
         }
         (Method::Get, ["", "navigation", "boards", board, "automations"])
             if mode != Mode::Scoped =>
@@ -775,6 +775,7 @@ fn handle(
                         "filter": view.filter,
                         "shared": view.shared,
                         "owner": view.owner,
+                        "filters": {"status_values": view.filters.status_values, "include_empty_status": view.filters.include_empty_status, "group_ids": view.filters.group_ids},
                     })
                 })
                 .collect();
@@ -782,14 +783,27 @@ fn handle(
         }
         Action::CreateView(draft) => {
             let d = draft?;
-            let saved = views::create(&mut tx, board, d.id, &d.name, &d.filter, account.id)
-                .map_err(view_error)?;
+            let saved = views::create_with_filters(
+                &mut tx,
+                board,
+                d.id,
+                &d.name,
+                &d.filter,
+                account.id,
+                views::ViewFilters {
+                    status_values: d.filters.status_values,
+                    include_empty_status: d.filters.include_empty_status,
+                    group_ids: d.filters.group_ids,
+                },
+            )
+            .map_err(view_error)?;
             serde_json::to_vec(&serde_json::json!({
                 "id": saved.id,
                 "name": saved.name,
                 "filter": saved.filter,
                 "shared": saved.shared,
                 "owner": saved.owner,
+                "filters": {"status_values": saved.filters.status_values, "include_empty_status": saved.filters.include_empty_status, "group_ids": saved.filters.group_ids},
             }))
             .expect("serializable view")
         }
@@ -1146,6 +1160,8 @@ struct ViewDraft {
     id: Uuid,
     name: String,
     filter: String,
+    #[serde(default)]
+    filters: boardcraft_mobile_edit_client::ViewFilters,
 }
 
 fn automation_error(error: automation::AutomationError) -> u16 {

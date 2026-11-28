@@ -9,7 +9,7 @@ use gpui_kit::{
 };
 use uuid::Uuid;
 
-fn table(view: &Connected) -> &MainTable {
+pub(super) fn table(view: &Connected) -> &MainTable {
     let Screen::Navigation(nav) = &view.screen else {
         panic!("navigation")
     };
@@ -19,7 +19,7 @@ fn table(view: &Connected) -> &MainTable {
     table
 }
 
-fn visit(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Connected>) {
+pub(super) fn visit(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Connected>) {
     cx.update(gpui_kit::init);
     cx.update(|cx| {
         gpui_kit::open_window(
@@ -50,7 +50,7 @@ fn visit(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Connected>) {
     })
 }
 
-fn advance(cx: &mut TestAppContext, millis: u64) {
+pub(super) fn advance(cx: &mut TestAppContext, millis: u64) {
     cx.run_until_parked();
     cx.background_executor
         .advance_clock(std::time::Duration::from_millis(millis));

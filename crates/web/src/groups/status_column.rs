@@ -54,7 +54,7 @@ impl StatusColumn {
         }
     }
 
-    fn accept(&mut self, read: StatusTable, cx: &mut App) {
+    pub(super) fn accept(&mut self, read: StatusTable, cx: &mut App) {
         self.cells
             .retain(|id, _| read.cells.iter().any(|cell| cell.item_id == *id));
         for cell in &read.cells {
@@ -71,6 +71,10 @@ impl StatusColumn {
 
     pub(super) fn is_saving(&self) -> bool {
         self.pending.is_some()
+    }
+
+    pub(super) fn snapshot(&self) -> Option<&StatusTable> {
+        self.accepted.as_ref()
     }
 }
 

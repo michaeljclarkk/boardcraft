@@ -37,7 +37,7 @@ pub use realtime::{ChangeEvent, ChangeKind};
 pub use status::{StatusCell, StatusChoice, StatusEdit, StatusTable};
 pub use table_command::{RootAction, SelectionAction, TableCommand};
 pub use table_contract::MainTableGroup;
-pub use views::SavedView;
+pub use views::{SavedView, ViewFilters};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedItem {

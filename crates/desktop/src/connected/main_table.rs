@@ -21,6 +21,7 @@ mod item_order;
 mod selection;
 mod selection_move;
 mod status;
+mod views;
 #[cfg(all(test, feature = "native-smoke"))]
 mod tests;
 use archive::{Archive, RootCommand, Undo};
@@ -51,6 +52,11 @@ pub(super) struct MainTable {
     pub(super) views: Vec<SavedView>,
     pub(super) automations: Vec<Automation>,
     pub(super) filter: String,
+    filters: boardcraft_mobile_edit_client::ViewFilters,
+    filters_open: bool,
+    filter_focus: FocusHandle,
+    view_save_id: Option<Uuid>,
+    view_save_unconfirmed: bool,
     view_filter: Entity<InputState>,
     search_task: Option<Task<()>>,
     search_invalid: bool,
@@ -142,6 +148,7 @@ impl MainTable {
                             v.create_main_table_item(entry.clone(), w, cx)
                         },
                     ));
+                    subscriptions.push(cx.observe(&entry, |_, _, cx| cx.notify()));
                     let rows =
                         g.items()
                             .iter()
@@ -188,6 +195,7 @@ impl MainTable {
                                         v.rename_main_table_item(row.clone(), save.clone(), w, cx)
                                     },
                                 ));
+                                subscriptions.push(cx.observe(&row, |_, _, cx| cx.notify()));
                                 row
                             })
                             .collect();
@@ -280,6 +288,13 @@ impl MainTable {
             views: previous.map(|t| t.views.clone()).unwrap_or_default(),
             automations: previous.map(|t| t.automations.clone()).unwrap_or_default(),
             filter: previous.map(|t| t.filter.clone()).unwrap_or_default(),
+            filters: previous.map(|t| t.filters.clone()).unwrap_or_default(),
+            filters_open: false,
+            filter_focus: previous
+                .map(|t| t.filter_focus.clone())
+                .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
+            view_save_id: previous.and_then(|t| t.view_save_id),
+            view_save_unconfirmed: previous.is_some_and(|t| t.view_save_unconfirmed),
             view_filter,
             search_task: None,
             search_invalid: previous.is_some_and(|t| t.search_invalid),
@@ -353,7 +368,7 @@ impl MainTable {
         if self.search_invalid {
             column = column.child(Label::new("Search must be 240 characters or fewer."));
         }
-        if !self.filter.is_empty() {
+        if self.has_filters() {
             column = column.child(Label::new(format!(
                 "{} matching items",
                 self.order(cx).len()
@@ -437,7 +452,7 @@ impl MainTable {
                     }
                 }
             }));
-        if !self.filter.is_empty() && self.order(cx).is_empty() {
+        if self.has_filters() && self.order(cx).is_empty() {
             groups = groups
                 .child(Label::new("No results were found"))
                 .child(Label::new(
@@ -446,12 +461,17 @@ impl MainTable {
                 .child(
                     Button::new("clear-board-search")
                         .small()
-                        .label("Clear search")
-                        .on_click(cx.listener(|v, _, w, cx| v.clear_view_filter(w, cx))),
+                        .label(if self.editable {
+                            "Clear filters"
+                        } else {
+                            "Clear search"
+                        })
+                        .disabled(!self.editable && self.filter.is_empty())
+                        .on_click(cx.listener(|v, _, w, cx| v.clear_all_view_filters(w, cx))),
                 );
         }
         for h in &self.headings {
-            if !self.filter.is_empty() && self.matching_count(h, cx) == 0 {
+            if self.has_filters() && self.matching_count(h, cx) == 0 {
                 continue;
             }
             groups = groups.child(self.render_heading(h, cx));
@@ -507,8 +527,8 @@ impl MainTable {
                             && let Some(heading) = table.headings.iter().find(|h| !h.collapsed)
                         {
                             let entry = heading.entry.clone();
-                            if !table.filter.is_empty() && table.matching_count(heading, cx) == 0 {
-                                view.clear_view_filter(w, cx);
+                            if table.has_filters() && table.matching_count(heading, cx) == 0 {
+                                view.clear_all_view_filters(w, cx);
                             }
                             entry.update(cx, |entry, cx| entry.focus_input(w, cx));
                         }
@@ -517,6 +537,14 @@ impl MainTable {
             .new_item_options(self.new_group_options(cx))
             .search(&self.view_filter, "view-filter")
             .search_disabled(self.pending || self.reconcile)
+            .action(
+                Button::new("quick-filters")
+                    .label("Filter")
+                    .selected(self.filters != Default::default())
+                    .track_focus(&self.filter_focus)
+                    .disabled(self.view_actions_blocked(cx) || !self.status.filters_ready())
+                    .on_click(cx.listener(|view, _, w, cx| view.open_quick_filters(w, cx))),
+            )
             .action(
                 Button::new("views-toggle")
                     .label("Views")
@@ -594,7 +622,7 @@ impl MainTable {
                         .separator()
                         .item(
                             PopupMenuItem::new("Clear filter").on_click(move |_, w, cx| {
-                                let _ = clear.update(cx, |view, cx| view.clear_view_filter(w, cx));
+                                let _ = clear.update(cx, |view, cx| view.clear_all_view_filters(w, cx));
                             }),
                         )
                         .item(PopupMenuItem::new("Archive…").on_click(move |_, w, cx| {
@@ -605,45 +633,6 @@ impl MainTable {
                         }))
                     }),
             )
-    }
-
-    fn render_views(&self, cx: &mut Context<Connected>) -> impl IntoElement {
-        let mut panel = div()
-            .id("views")
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(Label::new("Views"))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(Input::new(&self.view_name).id("view-name"))
-                    .child(
-                        Button::new("save-view")
-                            .small()
-                            .label("Save view")
-                            .on_click(cx.listener(|view, _, w, cx| view.save_view(w, cx))),
-                    ),
-            );
-        if !self.views.is_empty() {
-            panel = panel.child(Label::new("Saved views"));
-            for view in &self.views {
-                let id = view.id;
-                let mut row = div().flex().items_center().gap_2().child(
-                    Button::new(SharedString::from(format!("view-{id}")))
-                        .small()
-                        .label(view.name.clone())
-                        .on_click(cx.listener(move |v, _, w, cx| v.apply_saved_view(id, w, cx))),
-                );
-                if view.shared {
-                    row = row.child(Label::new("Shared"));
-                }
-                panel = panel.child(row);
-            }
-        }
-        panel
     }
 
     fn render_automations(&self, cx: &mut Context<Connected>) -> impl IntoElement {
@@ -739,7 +728,7 @@ impl MainTable {
         );
         header = header.child(self.group_name(h, cx));
         let visible = self.matching_count(h, cx);
-        let count: SharedString = if self.filter.trim().is_empty() {
+        let count: SharedString = if !self.has_filters() {
             h.count.clone()
         } else {
             format!("{visible} {}", if visible == 1 { "item" } else { "items" }).into()
@@ -886,7 +875,7 @@ impl MainTable {
         }
         for r in &h.rows {
             let name = r.read(cx).edit.accepted().to_owned();
-            if !boardcraft_mobile_edit_client::view_filter_matches(&self.filter, &name) {
+            if !self.matches_filter(r, &h.id, cx) {
                 continue;
             }
             let id = r.read(cx).edit.identity().1.as_uuid();
@@ -1051,94 +1040,6 @@ impl Connected {
         cx.notify();
     }
 
-    fn apply_saved_view(&mut self, id: Uuid, w: &mut Window, cx: &mut Context<Self>) {
-        let (input, filter) = {
-            let Screen::Navigation(nav) = &mut self.screen else {
-                return;
-            };
-            let Page::Items(_, table) = &mut nav.page else {
-                return;
-            };
-            let Some(view) = table.views.iter().find(|view| view.id == id) else {
-                return;
-            };
-            let filter = view.filter.clone();
-            table.filter = filter.clone();
-            table.search_task = None;
-            table.search_invalid = false;
-            table.selection_cache = false;
-            (table.view_filter.clone(), filter)
-        };
-        input.update(cx, |input, cx| input.set_value(filter, w, cx));
-        cx.notify();
-    }
-
-    fn save_view(&mut self, w: &mut Window, cx: &mut Context<Self>) {
-        let (client, board, name, filter, name_input) = {
-            let Screen::Navigation(nav) = &self.screen else {
-                return;
-            };
-            let Page::Items(board, table) = &nav.page else {
-                return;
-            };
-            (
-                nav.client.clone(),
-                *board,
-                table.view_name.read(cx).value().trim().to_owned(),
-                table.filter.clone(),
-                table.view_name.clone(),
-            )
-        };
-        if name.is_empty() {
-            self.message = "Enter a view name.";
-            cx.notify();
-            return;
-        }
-        self.message = "";
-        let work = cx
-            .background_executor()
-            .spawn(async move { client.create_view(board, Uuid::new_v4(), &name, &filter) });
-        cx.spawn_in(w, async move |view, cx| {
-            let result = work.await;
-            _ = view.update_in(cx, |view, w, cx| {
-                if matches!(&result, Err(EditError::SessionRejected)) {
-                    view.link_input = None;
-                    view.message = "Session expired. Sign in again.";
-                    view.screen = Self::identifier(w, cx);
-                    return;
-                }
-                let message;
-                {
-                    let Screen::Navigation(nav) = &mut view.screen else {
-                        return;
-                    };
-                    let Page::Items(current, table) = &mut nav.page else {
-                        return;
-                    };
-                    if *current != board {
-                        return;
-                    }
-                    match result {
-                        Ok(saved) => {
-                            table.views.push(saved);
-                            table.views.sort_by_key(|a| a.name.to_lowercase());
-                            name_input.update(cx, |input, cx| input.set_value("", w, cx));
-                            message = "View saved";
-                        }
-                        Err(EditError::Conflict) => {
-                            message = "A view with that name already exists.";
-                        }
-                        Err(EditError::InvalidDraft) => message = "Enter a view name.",
-                        Err(_) => message = "Could not save the view.",
-                    }
-                }
-                view.message = message;
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
-    }
 }
 
 impl Connected {

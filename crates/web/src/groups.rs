@@ -5,6 +5,7 @@ use crate::{
 };
 use boardcraft_mobile_edit_client::{
     ArchiveRead, EditError, ItemReorder, MainTableRead, RootAction, SelectionAction, TableCommand,
+    ViewFilters,
 };
 use boardcraft_ui::{BoardSelectionBar, BoardToolbar, HeadingDrag};
 use gpui_kit::{
@@ -30,6 +31,7 @@ mod rename;
 mod status_column;
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests;
+mod views;
 use editor::{Editor, Kind, Phase};
 use rename::FailedRename;
 use status_column::StatusColumn;
@@ -48,6 +50,12 @@ pub(super) struct Table {
     board: Uuid,
     read: MainTableRead,
     status: StatusColumn,
+    view_filters: ViewFilters,
+    filter_dialog: Option<Entity<views::FilterDialog>>,
+    saved_views: Option<Entity<views::ViewsDialog>>,
+    views_open: bool,
+    filter_focus: FocusHandle,
+    views_focus: FocusHandle,
     rows: HashMap<Uuid, Entity<NameRow>>,
     entries: HashMap<String, Entry>,
     selection: Vec<Uuid>,
@@ -97,6 +105,12 @@ impl Table {
             board,
             read,
             status: StatusColumn::new(),
+            view_filters: ViewFilters::default(),
+            filter_dialog: None,
+            saved_views: None,
+            views_open: false,
+            filter_focus: cx.focus_handle().tab_stop(true),
+            views_focus: cx.focus_handle().tab_stop(true),
             rows: HashMap::new(),
             entries: HashMap::new(),
             selection: Vec::new(),
@@ -151,13 +165,14 @@ impl Table {
     }
 
     fn matches_search(&self, id: Uuid, cx: &App) -> bool {
-        self.result_search.is_empty()
-            || self.rows.get(&id).is_some_and(|row| {
-                row.read(cx)
-                    .accepted_title()
-                    .to_lowercase()
-                    .contains(&self.result_search)
-            })
+        self.matches_view_filters(id)
+            && (self.result_search.is_empty()
+                || self.rows.get(&id).is_some_and(|row| {
+                    row.read(cx)
+                        .accepted_title()
+                        .to_lowercase()
+                        .contains(&self.result_search)
+                }))
     }
 
     fn matching_order(&self, cx: &App) -> Vec<Uuid> {
@@ -170,9 +185,16 @@ impl Table {
     fn new_item_available(&self, cx: &App) -> bool {
         !self.busy()
             && self.read.is_editable()
-            && (self.result_search.is_empty() || !self.matching_order(cx).is_empty())
+            && ((self.result_search.is_empty() && self.view_filters == ViewFilters::default())
+                || !self.matching_order(cx).is_empty())
             && self.read.groups().iter().any(|group| {
                 !self.folded(group.id(), group.is_collapsed())
+                    && (self.view_filters.group_ids.is_empty()
+                        || self
+                            .view_filters
+                            .group_ids
+                            .iter()
+                            .any(|id| id == group.id()))
                     && self.entries.contains_key(group.id())
             })
     }
@@ -181,12 +203,15 @@ impl Table {
         if !self.new_item_available(cx) {
             return;
         }
-        if let Some(group) = self
-            .read
-            .groups()
-            .iter()
-            .find(|group| !self.folded(group.id(), group.is_collapsed()))
-            && let Some(entry) = self.entries.get(group.id())
+        if let Some(group) = self.read.groups().iter().find(|group| {
+            !self.folded(group.id(), group.is_collapsed())
+                && (self.view_filters.group_ids.is_empty()
+                    || self
+                        .view_filters
+                        .group_ids
+                        .iter()
+                        .any(|id| id == group.id()))
+        }) && let Some(entry) = self.entries.get(group.id())
         {
             entry.input.update(cx, |input, cx| input.focus(w, cx));
         }
@@ -221,6 +246,20 @@ impl Table {
                     }),
             )
             .search(&self.search, "board-search-input")
+            .action(
+                Button::new("board-filter")
+                    .label("Filter")
+                    .track_focus(&self.filter_focus)
+                    .disabled(busy)
+                    .on_click(cx.listener(|table, _, w, cx| table.open_filters(w, cx))),
+            )
+            .action(
+                Button::new("board-views")
+                    .label("Views")
+                    .track_focus(&self.views_focus)
+                    .disabled(busy)
+                    .on_click(cx.listener(|table, _, w, cx| table.open_views(w, cx))),
+            )
             .tools(
                 BoardToolbar::tools_trigger("board-tools-menu")
                     .disabled(self.pending || self.editor.is_some())
@@ -375,7 +414,11 @@ impl Table {
         cx.notify();
     }
     fn busy(&self) -> bool {
-        self.pending || self.reconcile || self.editor.is_some()
+        self.pending
+            || self.reconcile
+            || self.editor.is_some()
+            || self.filter_dialog.is_some()
+            || self.views_open
     }
     fn report(&mut self, error: &EditError, cx: &mut Context<Self>) {
         self.message = match error {
@@ -950,7 +993,7 @@ impl Render for Table {
                         .child("Search is limited to 240 characters."),
                 );
             }
-            if !self.result_search.is_empty() {
+            if !self.result_search.is_empty() || self.view_filters != ViewFilters::default() {
                 body = body.child(
                     div()
                         .id("board-match-summary")
@@ -1000,7 +1043,9 @@ impl Render for Table {
             if let Some(notice) = self.status_notice(cx) {
                 body = body.child(notice);
             }
-            if !self.result_search.is_empty() && self.matching_order(cx).is_empty() {
+            if (!self.result_search.is_empty() || self.view_filters != ViewFilters::default())
+                && self.matching_order(cx).is_empty()
+            {
                 body = body.child(
                     div()
                         .id("board-no-results")
@@ -1015,7 +1060,11 @@ impl Render for Table {
                         .child("Try another search or review this view’s filters.")
                         .child(
                             Button::new("clear-board-search")
-                                .label("Clear search")
+                                .label(if self.view_filters == ViewFilters::default() {
+                                    "Clear search"
+                                } else {
+                                    "Clear filters"
+                                })
                                 .on_click(cx.listener(|t, _, w, cx| {
                                     t.search.update(cx, |input, cx| {
                                         input.set_value("", w, cx);
@@ -1023,6 +1072,7 @@ impl Render for Table {
                                     });
                                     // Programmatic changes do not emit InputEvent::Change.
                                     t.search_changed(w, cx);
+                                    t.view_filters = ViewFilters::default();
                                 })),
                         ),
                 );

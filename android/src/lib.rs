@@ -59,6 +59,7 @@ struct BoardView {
     client: Option<EditClient>,
     login: Option<Login>,
     navigation: Option<navigation::Page>,
+    navigation_visit: Uuid,
     /// The signed-in session's accepted-change feed; None on the login screen.
     changes: Option<realtime::Changes>,
     navigation_focus: FocusHandle,
@@ -84,6 +85,8 @@ struct BoardView {
     table_scroll: ScrollHandle,
     navigation_title: String,
     views_open: bool,
+    view_name: Entity<InputState>,
+    view_draft: Option<navigation::ViewDraft>,
     automations_open: bool,
     filters_open: bool,
     filter_focus: FocusHandle,
@@ -108,6 +111,7 @@ impl BoardView {
         let automation_name =
             cx.new(|cx| InputState::new(window, cx).placeholder("Automation name"));
         let board_search = cx.new(|cx| InputState::new(window, cx).placeholder("Quick find"));
+        let view_name = cx.new(|cx| InputState::new(window, cx).placeholder("View name"));
         let board_search_events = cx.subscribe_in(
             &board_search,
             window,
@@ -143,6 +147,7 @@ impl BoardView {
             client: None,
             login: None,
             navigation: None,
+            navigation_visit: Uuid::new_v4(),
             changes: None,
             navigation_focus: cx.focus_handle(),
             inbox_unread: None,
@@ -166,6 +171,8 @@ impl BoardView {
             table_scroll: ScrollHandle::new(),
             navigation_title: "Board".into(),
             views_open: false,
+            view_name,
+            view_draft: None,
             automations_open: false,
             filters_open: false,
             filter_focus: cx.focus_handle().tab_stop(true),
