@@ -37,6 +37,7 @@ fn read_only_item_menu_opens_retryable_log_and_restores_focus(cx: &mut TestAppCo
                     page: Page::Items(board, Box::new(table)),
                     unread: 0,
                     share: None,
+                    workspace: None,
                     _people_events: Vec::new(),
                 });
                 view

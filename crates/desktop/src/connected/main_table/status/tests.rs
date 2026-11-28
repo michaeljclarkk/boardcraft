@@ -56,6 +56,7 @@ fn status_grid_returns_focus_to_the_item(cx: &mut TestAppContext) {
                         page: Page::Items(board, Box::new(t)),
                         unread: 0,
                         share: None,
+                        workspace: None,
                         _people_events: Vec::new(),
                     });
                     view

@@ -1,14 +1,15 @@
 //! The navigation view and its independent, scrollable board detail pane.
 
 use gpui_kit::{
-    Context, FontWeight, InteractiveElement, IntoElement, ParentElement, Role,
-    StatefulInteractiveElement, Styled,
+    Context, InteractiveElement, IntoElement, ParentElement, Role, StatefulInteractiveElement,
+    Styled,
     base::Disableable,
     component::{ActiveTheme, button::Button},
     div,
 };
 
 use super::{Page, Shell, status};
+use boardcraft_ui::{BoardHeader, BoardTabs};
 
 impl Shell {
     pub(super) fn workspace(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -88,14 +89,14 @@ impl Shell {
                     .flex_col()
                     .child(
                         div()
-                            .id("board-title")
-                            .role(Role::Heading)
                             .flex_shrink_0()
                             .px_6()
-                            .py_4()
-                            .text_2xl()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(title.to_owned()),
+                            .py_2()
+                            .child(BoardHeader::new(title.to_owned())),
+                    )
+                    .children(
+                        matches!(self.page, Page::Board(_))
+                            .then(|| div().px_6().pb_3().child(BoardTabs::new())),
                     )
                     .child(
                         div()

@@ -419,7 +419,9 @@ impl Render for Connected {
             Screen::Loading => return column.child(Label::new("Loading…")),
             Screen::Navigation(nav) => {
                 return column
-                    .child(nav.render(cx))
+                    .p_0()
+                    .overflow_hidden()
+                    .child(div().flex_1().min_h_0().min_w_0().child(nav.render(cx)))
                     .child(
                         Input::new(self.link_input.as_ref().expect("browse input"))
                             .id("board-link"),

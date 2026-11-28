@@ -5,16 +5,19 @@ use std::time::Duration;
 use boardcraft_mobile_edit_client::BoardSummary;
 use gpui_kit::{
     AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ParentElement, Render, Role, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Task, Window,
+    IntoElement, ParentElement, Pixels, Render, Role, SharedString, StatefulInteractiveElement,
+    Styled, Subscription, Task, Window,
     assets::IconName,
-    base::{Disableable, Selectable},
+    base::{
+        Disableable, Selectable,
+        motion::{Easing, Presence, Transition},
+    },
     component::{
         ActiveTheme, Sizable,
         button::{Button, ButtonVariants},
         input::{Input, InputEvent, InputState},
     },
-    deferred, div, rems,
+    deferred, div, px, rems,
 };
 use uuid::Uuid;
 
@@ -47,6 +50,9 @@ enum BoardList {
 /// belong to this view and survive board changes and pin/collapse transitions.
 pub(crate) struct Navigation {
     presentation: Presentation,
+    compact: bool,
+    drawer_open: bool,
+    _window_bounds: Subscription,
     pointer: [bool; 2], // trigger and panel form one hover region
     transition: Option<(bool, Task<()>)>,
     rail_focus: FocusHandle,
@@ -74,6 +80,23 @@ impl Navigation {
         });
         Self {
             presentation: Presentation::Pinned,
+            compact: is_compact(w),
+            drawer_open: false,
+            _window_bounds: cx.observe_window_bounds(w, |view, w, cx| {
+                let compact = is_compact(w);
+                if compact != view.compact {
+                    view.compact = compact;
+                    view.transition = None;
+                    view.pointer = [false; 2];
+                    if view.presentation == Presentation::Peek {
+                        view.presentation = Presentation::Collapsed;
+                    }
+                    if compact && !view.drawer_open && view.panel_focus.contains_focused(w, cx) {
+                        view.rail_focus.focus(w, cx);
+                    }
+                }
+                cx.notify();
+            }),
             pointer: [false; 2],
             transition: None,
             rail_focus: cx.focus_handle().tab_stop(true),
@@ -142,11 +165,14 @@ impl Navigation {
     pub(crate) fn dismiss(&mut self, w: &mut Window, cx: &mut Context<Self>) {
         self.transition = None;
         self.pointer = [false; 2];
-        if self.presentation == Presentation::Peek {
-            if self.panel_focus.contains_focused(w, cx) {
+        if self.drawer_open || self.presentation == Presentation::Peek {
+            if self.drawer_open || self.panel_focus.contains_focused(w, cx) {
                 self.rail_focus.focus(w, cx);
             }
-            self.presentation = Presentation::Collapsed;
+            self.drawer_open = false;
+            if self.presentation == Presentation::Peek {
+                self.presentation = Presentation::Collapsed;
+            }
             cx.notify();
         }
     }
@@ -154,6 +180,16 @@ impl Navigation {
     fn set_pinned(&mut self, pinned: bool, w: &mut Window, cx: &mut Context<Self>) {
         self.transition = None;
         self.pointer = [false; 2];
+        if self.compact {
+            self.drawer_open = pinned;
+            if pinned {
+                self.panel_focus.focus(w, cx);
+            } else {
+                self.rail_focus.focus(w, cx);
+            }
+            cx.notify();
+            return;
+        }
         self.presentation = if pinned {
             Presentation::Pinned
         } else {
@@ -171,7 +207,12 @@ impl Navigation {
         cx: &mut Context<Self>,
     ) {
         self.pointer[region] = over;
-        if self.busy || self.presentation == Presentation::Pinned || !hover_enabled() {
+        if self.busy
+            || self.compact
+            || self.drawer_open
+            || self.presentation == Presentation::Pinned
+            || !hover_enabled()
+        {
             self.transition = None;
             return;
         }
@@ -195,7 +236,12 @@ impl Navigation {
                     .timer(Duration::from_millis(if over { 140 } else { 220 }))
                     .await;
                 let _ = view.update_in(cx, |view, w, cx| {
-                    if view.presentation == Presentation::Pinned || view.busy || !hover_enabled() {
+                    if view.presentation == Presentation::Pinned
+                        || view.busy
+                        || view.compact
+                        || view.drawer_open
+                        || !hover_enabled()
+                    {
                         return;
                     }
                     if over && view.pointer.iter().any(|over| *over) {
@@ -237,7 +283,7 @@ impl Navigation {
             self.set_search_open(false, w, cx);
             self.search_focus.focus(w, cx);
             cx.stop_propagation();
-        } else if self.presentation == Presentation::Peek {
+        } else if self.drawer_open || self.presentation == Presentation::Peek {
             self.dismiss(w, cx);
             cx.stop_propagation();
         }
@@ -268,12 +314,14 @@ impl Navigation {
                             .h_12()
                             .px_0()
                             .accessibility_label("Workspace navigation")
-                            .tooltip(if self.presentation == Presentation::Pinned {
-                                "Collapse workspace navigation"
-                            } else {
-                                "Open workspace navigation"
-                            })
-                            .aria_expanded(self.presentation != Presentation::Collapsed)
+                            .tooltip(
+                                if !self.compact && self.presentation == Presentation::Pinned {
+                                    "Collapse workspace navigation"
+                                } else {
+                                    "Open workspace navigation"
+                                },
+                            )
+                            .aria_expanded(self.panel_visible())
                             .track_focus(&self.rail_focus)
                             .disabled(self.busy)
                             .child(
@@ -287,13 +335,34 @@ impl Navigation {
                                     .child(div().text_xs().child("Workspace")),
                             )
                             .on_click(cx.listener(|s, _, w, cx| {
-                                s.set_pinned(s.presentation != Presentation::Pinned, w, cx)
+                                s.set_pinned(
+                                    if s.compact {
+                                        !s.drawer_open
+                                    } else {
+                                        s.presentation != Presentation::Pinned
+                                    },
+                                    w,
+                                    cx,
+                                )
                             })),
                     ),
             )
     }
 
-    fn panel(&self, peek: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn panel_visible(&self) -> bool {
+        self.drawer_open || (!self.compact && self.presentation != Presentation::Collapsed)
+    }
+
+    fn panel(
+        &self,
+        overlay: bool,
+        visible: bool,
+        width: Pixels,
+        progress: f32,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        // A closing panel can still paint its slide, but cannot accept a command.
+        let disabled = self.busy || !visible;
         let mut list = div()
             .id("board-list")
             .flex_1()
@@ -312,7 +381,7 @@ impl Navigation {
                             Button::new(SharedString::from(format!("board-{id}")))
                                 .ghost()
                                 .selected(active)
-                                .disabled(self.busy)
+                                .disabled(disabled)
                                 .w_full()
                                 .accessibility_label(if active {
                                     format!("{}, current board", board.name)
@@ -359,7 +428,7 @@ impl Navigation {
                 list = list.child("Could not load boards").child(
                     Button::new("retry-list")
                         .label("Retry board list")
-                        .disabled(self.busy)
+                        .disabled(disabled)
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(NavigationEvent::Refresh))),
                 );
             }
@@ -373,7 +442,7 @@ impl Navigation {
             .flex()
             .flex_col()
             .h_full()
-            .w(rems(17.375))
+            .w(width)
             .flex_shrink_0()
             .px_3()
             .py_4()
@@ -398,7 +467,7 @@ impl Navigation {
                             .tooltip("Search workspace boards")
                             .aria_expanded(self.search_open)
                             .track_focus(&self.search_focus)
-                            .disabled(self.busy)
+                            .disabled(disabled)
                             .on_click(
                                 cx.listener(|s, _, w, cx| s.set_search_open(!s.search_open, w, cx)),
                             ),
@@ -409,8 +478,11 @@ impl Navigation {
                             .icon(IconName::ChevronLeft)
                             .accessibility_label("Close workspace navigation")
                             .tooltip("Collapse workspace navigation")
-                            .disabled(self.busy)
-                            .on_click(cx.listener(|s, _, w, cx| s.set_pinned(false, w, cx))),
+                            .disabled(disabled)
+                            .on_click(cx.listener(|s, _, w, cx| {
+                                s.drawer_open = false;
+                                s.set_pinned(false, w, cx);
+                            })),
                     ),
             )
             .child(
@@ -419,7 +491,7 @@ impl Navigation {
                     .accessibility_label("Boards")
                     .child(div().flex_1().child("Boards"))
                     .selected(self.selected.is_none())
-                    .disabled(self.busy)
+                    .disabled(disabled)
                     .on_click(cx.listener(|s, _, w, cx| {
                         s.dismiss(w, cx);
                         cx.emit(NavigationEvent::Open(None));
@@ -432,7 +504,7 @@ impl Navigation {
                         .id("workspace-search-input")
                         .small()
                         .w_full()
-                        .disabled(self.busy)
+                        .disabled(disabled)
                         .aria_label("Search boards"),
                 )
             }))
@@ -446,23 +518,28 @@ impl Navigation {
                         Button::new("check-session")
                             .ghost()
                             .label("Check session")
-                            .disabled(self.busy)
+                            .disabled(disabled)
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(NavigationEvent::Refresh))),
                     )
                     .child(
                         Button::new("logout")
                             .ghost()
                             .label("Log out")
-                            .disabled(self.busy)
+                            .disabled(disabled)
                             .loading(self.busy)
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(NavigationEvent::LogOut))),
                     ),
             );
         }
-        if peek {
+        if overlay {
+            if visible {
+                // A flyout covers the board's hit targets as well as its paint.
+                // Otherwise a sidebar click can also focus or activate a row below it.
+                panel = panel.occlude();
+            }
             panel = panel
                 .absolute()
-                .left(rems(4.5))
+                .left(-width * (1.0 - progress))
                 .top_0()
                 .bottom_0()
                 .shadow_lg();
@@ -472,7 +549,24 @@ impl Navigation {
 }
 
 impl Render for Navigation {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let visible = self.panel_visible();
+        let pinned = !self.compact && self.presentation == Presentation::Pinned;
+        let rail_width = rems(4.5).to_pixels(w.rem_size());
+        let width = rems(17.375)
+            .to_pixels(w.rem_size())
+            .min((w.viewport_size().width - rail_width).max(px(0.)));
+        let motion = if reduced_motion(cx) {
+            Duration::ZERO
+        } else {
+            Duration::from_millis(300)
+        };
+        let overlay =
+            Presence::new("workspace-navigation-slide", visible && !pinned)
+                .transition(Transition::new(motion).easing(
+                    Easing::cubic_bezier(0.4, 0.0, 0.2, 1.0).expect("valid sidebar easing"),
+                ))
+                .sample(w, cx);
         div()
             .id("workspace-navigation")
             .relative()
@@ -480,16 +574,54 @@ impl Render for Navigation {
             .h_full()
             .flex_shrink_0()
             .child(self.rail(cx))
-            .children((self.presentation == Presentation::Pinned).then(|| self.panel(false, cx)))
-            // Paint outside this view's collapsed width, above the later table.
-            // There is no hidden duplicate panel or second text-input owner.
-            .children(
-                (self.presentation == Presentation::Peek)
-                    .then(|| deferred(self.panel(true, cx)).with_priority(1)),
-            )
+            .children(pinned.then(|| self.panel(false, true, width, 1.0, cx)))
+            // Desktop reveals a stationary panel; compact moves the drawer.
+            // Both clip at the rail and never reserve table space.
+            .children((!pinned && overlay.should_render()).then(|| {
+                deferred(
+                    div()
+                        .id("workspace-overlay-clip")
+                        .absolute()
+                        .left(rail_width)
+                        .top_0()
+                        .bottom_0()
+                        .w(if self.compact {
+                            width
+                        } else {
+                            width * overlay.progress
+                        })
+                        .overflow_hidden()
+                        .child(self.panel(
+                            true,
+                            visible,
+                            width,
+                            if self.compact { overlay.progress } else { 1.0 },
+                            cx,
+                        )),
+                )
+                .with_priority(1)
+            }))
     }
 }
 
+fn is_compact(w: &Window) -> bool {
+    // This is the reference viewport breakpoint, independent of UI font zoom.
+    w.viewport_size().width <= px(700.)
+}
+
+fn reduced_motion(cx: &gpui_kit::App) -> bool {
+    #[cfg(target_family = "wasm")]
+    if web_sys::window().is_some_and(|window| {
+        window
+            .match_media("(prefers-reduced-motion: reduce)")
+            .ok()
+            .flatten()
+            .is_some_and(|query| query.matches())
+    }) {
+        return true;
+    }
+    cx.reduce_motion()
+}
 fn hover_enabled() -> bool {
     #[cfg(target_family = "wasm")]
     {

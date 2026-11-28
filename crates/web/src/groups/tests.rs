@@ -2,15 +2,28 @@
 use super::Table;
 use boardcraft_mobile_edit_client::MainTableRead;
 use gpui_kit::{
-    AnyWindowHandle, AppContext, Bounds, Entity, ScrollHandle, TestAppContext, WindowBounds,
-    WindowOptions, px, size, test::TestWindowExt,
+    AnyWindowHandle, AppContext, Bounds, Entity, MouseButton, ScrollHandle, TestAppContext,
+    WindowBounds, WindowOptions, px, size,
+    test::{TestEventExt, TestQueryExt, TestWindowExt},
 };
 use serde_json::json;
 use uuid::Uuid;
 
 fn visit(cx: &mut TestAppContext, owner: bool) -> (AnyWindowHandle, Entity<Table>) {
-    let group = |id: &str, item: u128| json!({"id":id,"name":"Work","colour":"#443322","revision":1,"collapsed":false,"items":[{"id":Uuid::from_u128(item),"revision":1,"title":"Ink"}]});
-    let groups = serde_json::from_value(json!([group("g-a", 59), group("g-b", 61)])).unwrap();
+    visit_titles(cx, owner, ["Ink", "Ink"])
+}
+
+fn visit_titles(
+    cx: &mut TestAppContext,
+    owner: bool,
+    titles: [&str; 2],
+) -> (AnyWindowHandle, Entity<Table>) {
+    let group = |id: &str, item: u128, title: &str| json!({"id":id,"name":"Work","colour":"#443322","revision":1,"collapsed":false,"items":[{"id":Uuid::from_u128(item),"revision":1,"title":title}]});
+    let groups = serde_json::from_value(json!([
+        group("g-a", 59, titles[0]),
+        group("g-b", 61, titles[1])
+    ]))
+    .unwrap();
     let read = MainTableRead::from_response(groups, 7, 1, owner, owner).unwrap();
     cx.update(gpui_kit::init);
     cx.update(|cx| {
@@ -38,6 +51,207 @@ fn visit(cx: &mut TestAppContext, owner: bool) -> (AnyWindowHandle, Entity<Table
         )
         .unwrap()
     })
+}
+
+fn advance_search(cx: &mut TestAppContext, millis: u64) {
+    cx.run_until_parked();
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(millis));
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn item_search_debounces_and_clear_restores_hidden_selection_and_entry_draft(
+    cx: &mut TestAppContext,
+) {
+    let (handle, table) = visit_titles(cx, true, ["Ink", "Sketch"]);
+    let ink = Uuid::from_u128(59);
+    let sketch = Uuid::from_u128(61);
+    let row = cx.update(|cx| table.read(cx).rows[&sketch].entity_id());
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.click(format!("check-{sketch}"), cx);
+        w.click("add-input-g-b", cx);
+        w.input("Unsubmitted item", cx);
+        w.click("board-search-input", cx);
+        w.input(" iNk ", cx);
+    })
+    .unwrap();
+    advance_search(cx, 249);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(w.try_find(format!("item-{sketch}")).is_some());
+    })
+    .unwrap();
+    advance_search(cx, 1);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(w.try_find(format!("item-{ink}")).is_some());
+        assert!(w.try_find(format!("item-{sketch}")).is_none());
+        assert_eq!(table.read(cx).selection, [sketch]);
+        w.click_with_modifiers(format!("check-{ink}"), gpui_kit::Modifiers::shift(), cx);
+        assert_eq!(table.read(cx).selection, [sketch]);
+        assert_eq!(
+            table.read(cx).message,
+            "An item left this view. Reload the board and select the range again."
+        );
+        w.click("board-search-input", cx);
+        w.press("ctrl-a", cx);
+        w.input("QXZ", cx);
+    })
+    .unwrap();
+    advance_search(cx, 250);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(w.try_find(format!("item-{ink}")).is_none());
+        assert_ne!(w.find("new-item").disabled(), Some(true));
+        w.click("clear-board-search", cx);
+    })
+    .unwrap();
+    advance_search(cx, 250);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert_eq!(w.find("board-search-input").value(), Some(""));
+        assert_eq!(w.find("board-search-input").focused(), Some(true));
+        assert!(w.try_find(format!("item-{ink}")).is_some());
+        assert_eq!(w.find(format!("check-{sketch}")).checked(), Some(true));
+        assert_eq!(w.find("add-input-g-b").value(), Some("Unsubmitted item"));
+        assert_eq!(table.read(cx).rows[&sketch].entity_id(), row);
+        assert!(table.read(cx).saves.is_empty());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn newest_search_wins_and_invalid_length_preserves_the_last_results(cx: &mut TestAppContext) {
+    let (handle, table) = visit_titles(cx, false, ["Ink", "Sketch"]);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.click("board-search-input", cx);
+        w.input("Ink", cx);
+    })
+    .unwrap();
+    advance_search(cx, 100);
+    cx.update_window(handle, |_, w, cx| {
+        w.press("ctrl-a", cx);
+        w.input("Sketch", cx);
+    })
+    .unwrap();
+    advance_search(cx, 150);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(table.read(cx).result_search.is_empty());
+    })
+    .unwrap();
+    advance_search(cx, 100);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert_eq!(table.read(cx).result_search, "sketch");
+        assert!(
+            w.try_find(format!("item-{}", Uuid::from_u128(59)))
+                .is_none()
+        );
+        w.press("ctrl-a", cx);
+        w.input(&"x".repeat(241), cx);
+    })
+    .unwrap();
+    advance_search(cx, 250);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(table.read(cx).search_invalid);
+        assert_eq!(table.read(cx).result_search, "sketch");
+        assert!(
+            w.try_find(format!("item-{}", Uuid::from_u128(61)))
+                .is_some()
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn board_tools_keep_reload_reachable_when_a_conflict_requires_reconciliation(
+    cx: &mut TestAppContext,
+) {
+    let (handle, table) = visit(cx, true);
+    cx.update_window(handle, |_, w, cx| {
+        table.update(cx, |table, cx| {
+            table.reconcile = true;
+            cx.notify();
+        });
+        w.render_frame(cx);
+        assert_eq!(w.find("new-item").disabled(), Some(true));
+        w.click("board-tools-menu", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert_ne!(w.find_by_label("Reload board").disabled(), Some(true));
+        let add = w.find_by_label("Add group").bounds().center();
+        w.pointer_down(add, MouseButton::Left, cx);
+        w.pointer_up(add, MouseButton::Left, cx);
+        assert!(table.read(cx).editor.is_none());
+        let recovery = w
+            .find_by_label("Archived & deleted content")
+            .bounds()
+            .center();
+        w.pointer_down(recovery, MouseButton::Left, cx);
+        w.pointer_up(recovery, MouseButton::Left, cx);
+        assert!(table.read(cx).inventory.is_none());
+        w.press("escape", cx);
+        assert!(table.read(cx).reconcile);
+        assert!(!table.read(cx).pending);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn new_item_focuses_existing_entry_and_new_group_menu_opens_real_editor(cx: &mut TestAppContext) {
+    let (handle, table) = visit(cx, true);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.click("new-item", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert_eq!(w.find("add-input-g-a").focused(), Some(true));
+        w.click("new-item-options", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(w.find_by_label("New group of items").visible());
+        w.press("down", cx);
+        w.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(table.read(cx).editor.is_some());
+        assert!(w.try_find("group-name").is_some());
+        w.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(table.read(cx).editor.is_none());
+        w.click("board-tools-menu", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(w.find_by_label("Reload board").visible());
+        assert!(w.find_by_label("Archived & deleted content").visible());
+        w.press("escape", cx);
+        assert!(!table.read(cx).pending);
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

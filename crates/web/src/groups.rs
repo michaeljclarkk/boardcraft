@@ -6,14 +6,15 @@ use crate::{
 use boardcraft_mobile_edit_client::{
     ArchiveRead, EditError, ItemReorder, MainTableRead, RootAction, SelectionAction, TableCommand,
 };
-use boardcraft_ui::HeadingDrag;
+use boardcraft_ui::{BoardToolbar, HeadingDrag};
 use gpui_kit::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
     ParentElement, Render, Role, SharedString, StatefulInteractiveElement, Styled, Subscription,
     Task, WeakEntity, Window,
+    assets::IconName,
     base::Disableable,
     component::{
-        ActiveTheme, WindowExt,
+        ActiveTheme, Sizable, WindowExt,
         button::Button,
         checkbox::Checkbox,
         input::{Input, InputEvent, InputState},
@@ -21,7 +22,7 @@ use gpui_kit::{
     },
     div,
 };
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
 use uuid::Uuid;
 mod editor;
 mod gestures;
@@ -64,6 +65,11 @@ pub(super) struct Table {
     saves: Vec<Task<()>>,
     failed_renames: Vec<FailedRename>,
     subscriptions: Vec<Subscription>,
+    search: Entity<InputState>,
+    result_search: String,
+    search_invalid: bool,
+    search_task: Option<Task<()>>,
+    _search_events: Subscription,
 }
 impl Table {
     pub(super) fn new(
@@ -74,6 +80,12 @@ impl Table {
         w: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let search = cx.new(|cx| InputState::new(w, cx).placeholder("Search"));
+        let search_events = cx.subscribe_in(&search, w, |t, _, event, w, cx| {
+            if matches!(event, InputEvent::Change) {
+                t.search_changed(w, cx);
+            }
+        });
         let mut table = Self {
             binding,
             board,
@@ -98,10 +110,140 @@ impl Table {
             saves: Vec::new(),
             failed_renames: Vec::new(),
             subscriptions: Vec::new(),
+            search,
+            result_search: String::new(),
+            search_invalid: false,
+            search_task: None,
+            _search_events: search_events,
         };
         table.mount(w, cx);
         table
     }
+    fn search_changed(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        let query = self.search.read(cx).value().to_string();
+        self.search_task = Some(cx.spawn_in(w, async move |table, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(250))
+                .await;
+            let _ = table.update_in(cx, |table, _, cx| {
+                table.search_invalid = query.encode_utf16().count() > 240;
+                if !table.search_invalid {
+                    table.result_search = query.trim().to_lowercase();
+                    // An old drag's hit regions must not survive a changed result set.
+                    table.drag.borrow_mut().cancel();
+                    for drag in table.row_drags.values() {
+                        drag.borrow_mut().cancel();
+                    }
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    fn matches_search(&self, id: Uuid, cx: &App) -> bool {
+        self.result_search.is_empty()
+            || self.rows.get(&id).is_some_and(|row| {
+                row.read(cx)
+                    .accepted_title()
+                    .to_lowercase()
+                    .contains(&self.result_search)
+            })
+    }
+
+    fn matching_order(&self, cx: &App) -> Vec<Uuid> {
+        self.order()
+            .into_iter()
+            .filter(|id| self.matches_search(*id, cx))
+            .collect()
+    }
+
+    fn new_item_available(&self, cx: &App) -> bool {
+        !self.busy()
+            && self.read.is_editable()
+            && (self.result_search.is_empty() || !self.matching_order(cx).is_empty())
+            && self.read.groups().iter().any(|group| {
+                !self.folded(group.id(), group.is_collapsed())
+                    && self.entries.contains_key(group.id())
+            })
+    }
+
+    fn focus_new_item(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        if !self.new_item_available(cx) {
+            return;
+        }
+        if let Some(group) = self
+            .read
+            .groups()
+            .iter()
+            .find(|group| !self.folded(group.id(), group.is_collapsed()))
+            && let Some(entry) = self.entries.get(group.id())
+        {
+            entry.input.update(cx, |input, cx| input.focus(w, cx));
+        }
+    }
+
+    fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let group = cx.weak_entity();
+        let tools = cx.weak_entity();
+        let manageable = self.read.is_manageable();
+        let busy = self.busy();
+        BoardToolbar::new()
+            .search_disabled(busy)
+            .new_item(
+                Button::new("new-item")
+                    .disabled(busy || !self.read.is_editable())
+                    .on_click(cx.listener(|t, _, w, cx| t.focus_new_item(w, cx))),
+            )
+            .new_item_options(
+                BoardToolbar::new_item_options_trigger("new-item-options")
+                    .disabled(busy)
+                    .dropdown_menu(move |menu, _, _| {
+                        let group = group.clone();
+                        menu.item(
+                            PopupMenuItem::new("New group of items")
+                                .disabled(!manageable)
+                                .on_click(move |_, w, cx| {
+                                    let _ = group.update(cx, |t, cx| {
+                                        t.open_editor(Kind::Group(None), w, cx)
+                                    });
+                                }),
+                        )
+                    }),
+            )
+            .search(&self.search, "board-search-input")
+            .tools(
+                BoardToolbar::tools_trigger("board-tools-menu")
+                    .disabled(self.pending || self.editor.is_some())
+                    .dropdown_menu(move |menu, _, _| {
+                        let add = tools.clone();
+                        let reload = tools.clone();
+                        let recovery = tools.clone();
+                        menu.item(
+                            PopupMenuItem::new("Add group")
+                                .disabled(busy || !manageable)
+                                .on_click(move |_, w, cx| {
+                                    let _ = add.update(cx, |t, cx| {
+                                        t.open_editor(Kind::Group(None), w, cx)
+                                    });
+                                }),
+                        )
+                        .item(
+                            PopupMenuItem::new("Reload board").on_click(move |_, w, cx| {
+                                let _ = reload.update(cx, |t, cx| t.reload(w, cx));
+                            }),
+                        )
+                        .item(
+                            PopupMenuItem::new("Archived & deleted content")
+                                .disabled(busy)
+                                .on_click(move |_, w, cx| {
+                                    let _ = recovery
+                                        .update(cx, |t, cx| t.open_inventory(false, None, w, cx));
+                                }),
+                        )
+                    }),
+            )
+    }
+
     fn order(&self) -> Vec<Uuid> {
         self.read
             .groups()
@@ -491,12 +633,16 @@ impl Table {
             return;
         }
         if shift && let Some(anchor) = self.anchor {
-            let order = self.order();
+            let order = self.matching_order(cx);
             if let (Some(a), Some(b)) = (
                 order.iter().position(|r| *r == anchor),
                 order.iter().position(|r| *r == id),
             ) {
                 self.select(order[a.min(b)..=a.max(b)].to_vec(), checked, w, cx);
+            } else {
+                self.message =
+                    "An item left this view. Reload the board and select the range again.";
+                cx.notify();
             }
         } else {
             self.apply_selection(vec![id], checked);
@@ -608,7 +754,30 @@ impl Render for Table {
             }));
         if let Some((trash, pages)) = &self.inventory {
             let trash = *trash;
-            body = body.child(status(if trash { "Trash" } else { "Archive" }));
+            body = body.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Button::new("archive")
+                            .small()
+                            .label("Archive")
+                            .disabled(self.pending || !trash)
+                            .on_click(
+                                cx.listener(|t, _, w, cx| t.open_inventory(false, None, w, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("trash")
+                            .small()
+                            .label("Trash")
+                            .disabled(self.pending || trash)
+                            .on_click(
+                                cx.listener(|t, _, w, cx| t.open_inventory(true, None, w, cx)),
+                            ),
+                    ),
+            );
             for (ix, page) in pages.iter().enumerate() {
                 if ix == 0 {
                     body = body.child(format!("{} items", page.total()));
@@ -719,35 +888,26 @@ impl Render for Table {
                         })),
                 );
         } else {
-            body = body.child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        Button::new("add-group")
-                            .label("New group…")
-                            .disabled(self.busy() || !self.read.is_manageable())
-                            .on_click(
-                                cx.listener(|t, _, w, cx| t.open_editor(Kind::Group(None), w, cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("archive")
-                            .label("Archive…")
-                            .disabled(self.busy())
-                            .on_click(
-                                cx.listener(|t, _, w, cx| t.open_inventory(false, None, w, cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("trash")
-                            .label("Trash…")
-                            .disabled(self.busy())
-                            .on_click(
-                                cx.listener(|t, _, w, cx| t.open_inventory(true, None, w, cx)),
-                            ),
-                    ),
-            );
+            body = body.child(self.toolbar(cx));
+            if self.search_invalid {
+                body = body.child(
+                    div()
+                        .id("board-search-error")
+                        .role(Role::Status)
+                        .text_color(cx.theme().danger)
+                        .child("Search is limited to 240 characters."),
+                );
+            }
+            if !self.result_search.is_empty() {
+                body = body.child(
+                    div()
+                        .id("board-match-summary")
+                        .role(Role::Status)
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("{} matching items", self.matching_order(cx).len())),
+                );
+            }
             if let Some((id, name, revision)) = self.undo_group.clone() {
                 body =
                     body.child(
@@ -829,18 +989,40 @@ impl Render for Table {
             for failure in &self.failed_renames {
                 body = body.child(self.rename_notice(failure, cx));
             }
-            body = body.child(self.render_groups(cx));
+            if !self.result_search.is_empty() && self.matching_order(cx).is_empty() {
+                body = body.child(
+                    div()
+                        .id("board-no-results")
+                        .role(Role::Status)
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap_3()
+                        .py_6()
+                        .child(IconName::Search)
+                        .child(div().text_lg().child("No results were found"))
+                        .child("Try another search or review this view’s filters.")
+                        .child(
+                            Button::new("clear-board-search")
+                                .label("Clear search")
+                                .on_click(cx.listener(|t, _, w, cx| {
+                                    t.search.update(cx, |input, cx| {
+                                        input.set_value("", w, cx);
+                                        input.focus(w, cx);
+                                    });
+                                    // Programmatic changes do not emit InputEvent::Change.
+                                    t.search_changed(w, cx);
+                                })),
+                        ),
+                );
+            } else {
+                body = body.child(self.render_groups(cx));
+            }
         }
         body.child(status(if self.pending {
             "Working…"
         } else {
             self.message
         }))
-        .child(
-            Button::new("reload-board")
-                .label("Reload board")
-                .disabled(self.pending || self.editor.is_some() || self.inventory.is_some())
-                .on_click(cx.listener(|t, _, w, cx| t.reload(w, cx))),
-        )
     }
 }

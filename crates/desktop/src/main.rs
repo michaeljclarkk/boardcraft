@@ -4,6 +4,7 @@ use boardcraft_board::{
 };
 use boardcraft_desktop::{Failure, InlineEdit, Phase, Save, database};
 use gpui_kit::base::Disableable;
+use gpui_kit::component::{Sizable, button::ButtonVariants};
 use gpui_kit::component::{
     button::Button,
     input::{Input, InputEvent, InputState},
@@ -219,6 +220,7 @@ impl Row {
                     .child(
                         div().flex_1().child(
                             Input::new(&self.input)
+                                .small()
                                 .id(self.input_id())
                                 .disabled(!self.editable),
                         ),
@@ -233,8 +235,18 @@ impl Row {
                     }))
                     .child(
                         Button::new(self.title_id())
+                            .ghost()
+                            .small()
+                            .w_full()
                             .disabled(!self.editable)
-                            .label(self.edit.display().to_owned())
+                            .accessibility_label(self.edit.display().to_owned())
+                            .child(
+                                div()
+                                    .w_full()
+                                    .text_left()
+                                    .truncate()
+                                    .child(self.edit.display().to_owned()),
+                            )
                             .track_focus(&self.display_focus)
                             .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
                                 this.display_focus.focus(window, cx);
@@ -245,7 +257,7 @@ impl Row {
                     )
                 },
             ))
-            .child(component::label::Label::new(message))
+            .children((!message.is_empty()).then(|| component::label::Label::new(message)))
             .when_some(self.draft_warning, |el, warning| el.child(warning))
     }
 }

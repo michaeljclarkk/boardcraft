@@ -1,5 +1,6 @@
 //! Composition of stock Kit controls with the shared native/wasm drag state.
 use super::*;
+use boardcraft_ui::BoardRow;
 use gpui_kit::assets::IconName;
 use gpui_kit::base::ElementExt;
 use gpui_kit::component::{Sizable, button::ButtonVariants};
@@ -17,15 +18,6 @@ fn selection_cell() -> gpui_kit::Div {
         .pr_2()
         .w(gpui_kit::rems(3.5))
         .flex_shrink_0()
-}
-
-fn table_band(cx: &App) -> gpui_kit::Div {
-    div()
-        .flex()
-        .items_center()
-        .min_h_9()
-        .border_t_1()
-        .border_color(cx.theme().border)
 }
 
 impl Table {
@@ -57,10 +49,15 @@ impl Table {
                 .map(|rgb| gpui_kit::rgb(rgb).into())
                 .unwrap_or(cx.theme().foreground);
             let collapsed = self.folded(&id, g.is_collapsed());
-            let selected = g
+            let visible_ids: Vec<_> = g
                 .items()
                 .iter()
-                .filter(|r| self.selection.contains(&r.id))
+                .filter(|item| self.matches_search(item.id, cx))
+                .map(|item| item.id)
+                .collect();
+            let selected = visible_ids
+                .iter()
+                .filter(|id| self.selection.contains(id))
                 .count();
             let mut header = div().flex().min_h_9().items_center().gap_1();
             let geometry = self.drag.clone();
@@ -113,7 +110,7 @@ impl Table {
                             })),
                     ),
             );
-            let count = match g.items().len() {
+            let count = match visible_ids.len() {
                 0 => "No Items".into(),
                 1 => "1 item".into(),
                 n => format!("{n} items"),
@@ -129,7 +126,7 @@ impl Table {
             let manageable = self.read.is_manageable();
             let busy = self.busy();
             let last = ix + 1 == self.read.groups().len();
-            let group_ids: Vec<_> = g.items().iter().map(|r| r.id).collect();
+            let group_ids = visible_ids.clone();
             header = header.child(
                 Button::new(key(format!("group-menu-{id}")))
                     .small()
@@ -241,7 +238,7 @@ impl Table {
                 })
                 .child(header);
             if !collapsed {
-                let ids: Vec<_> = g.items().iter().map(|r| r.id).collect();
+                let ids = visible_ids.clone();
                 // the internal tool's default system Item column is 360px at normal zoom.
                 // Only this column is returned by this viewer's table read.
                 let mut grid = div()
@@ -251,45 +248,47 @@ impl Table {
                     .flex()
                     .flex_col()
                     .w_full()
-                    .max_w(gpui_kit::rems(26.5))
                     .border_l(gpui_kit::rems(0.375))
                     .border_color(hue)
                     .child(
-                        table_band(cx)
+                        div()
                             .id(key(format!("columns-{id}")))
                             .role(Role::Row)
+                            .border_t_1()
                             .border_r_1()
+                            .border_color(cx.theme().border)
                             .child(
-                                selection_cell()
-                                    .id(key(format!("selection-header-{id}")))
-                                    .role(Role::ColumnHeader)
-                                    .child(
-                                        Checkbox::new(key(format!("check-group-{id}")))
-                                            .small()
-                                            .accessibility_label(format!(
-                                                "Select all items in {name}"
-                                            ))
-                                            .checked(!ids.is_empty() && selected == ids.len())
-                                            .indeterminate(selected > 0 && selected < ids.len())
-                                            .disabled(self.busy() || ids.is_empty())
-                                            .on_change(cx.listener(move |t, checked, w, cx| {
-                                                t.select(ids.clone(), *checked, w, cx)
-                                            })),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id(key(format!("name-header-{id}")))
-                                    .role(Role::ColumnHeader)
-                                    .flex()
-                                    .flex_1()
-                                    .items_center()
-                                    .justify_center()
-                                    .h_9()
-                                    .border_l_1()
-                                    .border_color(cx.theme().border)
-                                    .text_sm()
-                                    .child("Item"),
+                                BoardRow::new(
+                                    div()
+                                        .id(key(format!("name-header-{id}")))
+                                        .role(Role::ColumnHeader)
+                                        .flex()
+                                        .flex_1()
+                                        .items_center()
+                                        .justify_center()
+                                        .child("Item"),
+                                )
+                                .header()
+                                .leading(
+                                    selection_cell()
+                                        .id(key(format!("selection-header-{id}")))
+                                        .role(Role::ColumnHeader)
+                                        .child(
+                                            Checkbox::new(key(format!("check-group-{id}")))
+                                                .small()
+                                                .accessibility_label(format!(
+                                                    "Select all items in {name}"
+                                                ))
+                                                .checked(!ids.is_empty() && selected == ids.len())
+                                                .indeterminate(selected > 0 && selected < ids.len())
+                                                .disabled(self.busy() || ids.is_empty())
+                                                .on_change(cx.listener(
+                                                    move |t, checked, w, cx| {
+                                                        t.select(ids.clone(), *checked, w, cx)
+                                                    },
+                                                )),
+                                        ),
+                                ),
                             ),
                     );
                 if let Some(drag) = self.row_drags.get(&id) {
@@ -302,7 +301,11 @@ impl Table {
                                 .intersect(&w.visual_viewport_bounds()),
                         )
                     });
-                    for item in g.items() {
+                    for item in g
+                        .items()
+                        .iter()
+                        .filter(|item| visible_ids.contains(&item.id))
+                    {
                         let item_id = item.id;
                         let Some(name_row) = self.rows.get(&item_id) else {
                             continue;
@@ -316,7 +319,8 @@ impl Table {
                         };
                         let geometry = drag.clone();
                         let rid = item_id.to_string();
-                        let mut row = table_band(cx)
+                        let mut row = div()
+                            .w_full()
                             .id(key(format!("row-{item_id}")))
                             .role(Role::Row)
                             .relative()
@@ -350,84 +354,82 @@ impl Table {
                                     .accessibility_id(format!("grip-{item_id}"))
                                     .disabled(
                                         self.busy()
+                                            || !self.result_search.is_empty()
                                             || !self.read.is_editable()
                                             || (checked && self.selection.len() > 1),
                                     ),
                             );
-                        row = row.child(
-                            selection_cell()
-                                .id(key(format!("selection-cell-{item_id}")))
-                                .role(Role::Cell)
-                                .child(grip)
-                                .child(
-                                    Checkbox::new(key(format!("check-{item_id}")))
-                                        .small()
-                                        .accessibility_label(format!("Select {title}"))
-                                        .checked(checked)
-                                        .disabled(self.busy())
-                                        .on_change(cx.listener(move |t, checked, w, cx| {
-                                            t.select_row(
-                                                item_id,
-                                                *checked,
-                                                w.modifiers().shift,
-                                                w,
-                                                cx,
-                                            )
-                                        })),
-                                ),
-                        );
+                        let leading = selection_cell()
+                            .id(key(format!("selection-cell-{item_id}")))
+                            .role(Role::Cell)
+                            .child(grip)
+                            .child(
+                                Checkbox::new(key(format!("check-{item_id}")))
+                                    .small()
+                                    .accessibility_label(format!("Select {title}"))
+                                    .checked(checked)
+                                    .disabled(self.busy())
+                                    .on_change(cx.listener(move |t, checked, w, cx| {
+                                        t.select_row(item_id, *checked, w.modifiers().shift, w, cx)
+                                    })),
+                            );
                         let weak = cx.weak_entity();
                         let editable = self.read.is_editable();
                         let manageable = self.read.is_manageable();
                         row = row.child(
-                            div()
-                                .id(key(format!("name-cell-{item_id}")))
-                                .role(Role::Cell)
-                                .flex()
-                                .items_center()
-                                .flex_1()
-                                .min_w_0()
-                                .pr_1()
-                                .child(name_row.clone())
-                                .child(
-                                    Button::new(key(format!("item-menu-{item_id}")))
-                                        .icon(IconName::Ellipsis)
-                                        .small()
-                                        .ghost()
-                                        .accessibility_label(format!("More options for {title}"))
-                                        .accessibility_id(format!("menu-{item_id}"))
-                                        .disabled(self.busy())
-                                        .dropdown_menu(move |menu, _, _| {
-                                            let moving = weak.clone();
-                                            let archive = weak.clone();
-                                            menu.item(
-                                                PopupMenuItem::new("Move to…")
-                                                    .disabled(!editable)
-                                                    .on_click(move |_, w, cx| {
-                                                        let _ = moving.update(cx, |t, cx| {
-                                                            t.open_editor(
-                                                                Kind::Move(item_id),
-                                                                w,
-                                                                cx,
-                                                            )
-                                                        });
-                                                    }),
-                                            )
-                                            .item(
-                                                PopupMenuItem::new("Archive item…")
-                                                    .disabled(!manageable)
-                                                    .on_click(move |_, w, cx| {
-                                                        let _ = archive.update(cx, |t, cx| {
-                                                            t.open_editor(
-                                                                Kind::ArchiveRoot(item_id),
-                                                                w,
-                                                                cx,
-                                                            )
-                                                        });
-                                                    }),
-                                            )
-                                        }),
-                                ),
+                            BoardRow::new(
+                                div()
+                                    .id(key(format!("name-cell-{item_id}")))
+                                    .role(Role::Cell)
+                                    .flex()
+                                    .items_center()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .pr_1()
+                                    .child(name_row.clone())
+                                    .child(
+                                        Button::new(key(format!("item-menu-{item_id}")))
+                                            .icon(IconName::Ellipsis)
+                                            .small()
+                                            .ghost()
+                                            .accessibility_label(format!(
+                                                "More options for {title}"
+                                            ))
+                                            .accessibility_id(format!("menu-{item_id}"))
+                                            .disabled(self.busy())
+                                            .dropdown_menu(move |menu, _, _| {
+                                                let moving = weak.clone();
+                                                let archive = weak.clone();
+                                                menu.item(
+                                                    PopupMenuItem::new("Move to…")
+                                                        .disabled(!editable)
+                                                        .on_click(move |_, w, cx| {
+                                                            let _ = moving.update(cx, |t, cx| {
+                                                                t.open_editor(
+                                                                    Kind::Move(item_id),
+                                                                    w,
+                                                                    cx,
+                                                                )
+                                                            });
+                                                        }),
+                                                )
+                                                .item(
+                                                    PopupMenuItem::new("Archive item…")
+                                                        .disabled(!manageable)
+                                                        .on_click(move |_, w, cx| {
+                                                            let _ = archive.update(cx, |t, cx| {
+                                                                t.open_editor(
+                                                                    Kind::ArchiveRoot(item_id),
+                                                                    w,
+                                                                    cx,
+                                                                )
+                                                            });
+                                                        }),
+                                                )
+                                            }),
+                                    ),
+                            )
+                            .leading(leading),
                         );
                         if let Some((target, after)) = drag.borrow().edge()
                             && target == item_id.to_string()
@@ -448,11 +450,11 @@ impl Table {
                     let group = id.clone();
                     let cancel_id = id.clone();
                     grid = grid.child(
-                        table_band(cx)
+                        div()
                             .id(key(format!("add-row-{id}")))
                             .role(Role::Row)
-                            .border_b_1()
                             .border_r_1()
+                            .border_color(cx.theme().border)
                             .capture_key_down(cx.listener(
                                 move |t, event: &gpui_kit::KeyDownEvent, w, cx| {
                                     if event.keystroke.key == "escape"
@@ -467,13 +469,7 @@ impl Table {
                                     }
                                 },
                             ))
-                            .child(
-                                selection_cell()
-                                    .h_9()
-                                    .border_r_1()
-                                    .border_color(cx.theme().border),
-                            )
-                            .child(
+                            .child(BoardRow::new(
                                 div()
                                     .id(key(format!("add-cell-{id}")))
                                     .role(Role::Cell)
@@ -481,9 +477,9 @@ impl Table {
                                     .items_center()
                                     .flex_1()
                                     .min_w_0()
-                                    .px_1()
                                     .child(
                                         Input::new(&entry.input)
+                                            .id(key(format!("add-input-{id}")))
                                             .small()
                                             .bordered(false)
                                             .flex_1()
@@ -502,7 +498,7 @@ impl Table {
                                                 t.create(&group, w, cx)
                                             })),
                                     ),
-                            ),
+                            )),
                     );
                     if !entry.notice.is_empty() {
                         grid = grid.child(status(entry.notice));
@@ -562,7 +558,11 @@ impl Table {
                         if t.read.is_manageable() {
                             t.drag.borrow_mut().press(e.position);
                         }
-                        if !t.drag.borrow().is_held() && t.read.is_editable() {
+                        // A filtered list does not expose every physical drop target.
+                        if !t.drag.borrow().is_held()
+                            && t.read.is_editable()
+                            && t.result_search.is_empty()
+                        {
                             for (id, drag) in &t.row_drags {
                                 if t.read
                                     .groups()

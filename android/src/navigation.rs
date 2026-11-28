@@ -1,4 +1,8 @@
 use super::*;
+use gpui_kit::{
+    base::Selectable,
+    component::menu::{DropdownMenu, PopupMenuItem},
+};
 mod activity;
 mod status;
 use activity::ItemActivity;
@@ -129,6 +133,7 @@ impl BoardView {
                 Page::List(boards) => boards.iter().any(|board| board.id == id),
                 Page::Inbox(inbox) => inbox.notifications.iter().any(|row| row.board_id == id),
                 Page::Activity(activity) => activity.board == id,
+                Page::Selected { board, .. } => *board == id,
                 _ => false,
             },
         };
@@ -136,6 +141,27 @@ impl BoardView {
         {
             return;
         }
+        if let Some(id) = board {
+            let title = match page {
+                Page::List(list) => list
+                    .iter()
+                    .find(|board| board.id == id)
+                    .map(|board| board.name.clone()),
+                Page::Inbox(inbox) => inbox
+                    .notifications
+                    .iter()
+                    .find(|row| row.board_id == id)
+                    .map(|row| row.board_name.clone()),
+                _ => None,
+            };
+            if let Some(title) = title {
+                self.navigation_title = title;
+            }
+        }
+        self.board_search
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.views_open = false;
+        self.automations_open = false;
         // Loading exposes no actions. Only this completion can replace it.
         self.navigation = Some(Page::Loading);
         self.inbox_unread = None;
@@ -327,7 +353,7 @@ impl BoardView {
 
     /// Applying a saved view only replaces the board's active filter; the rows
     /// stay loaded, so switching between views needs no further board read.
-    fn apply_saved_view(&mut self, id: Uuid, cx: &mut Context<Self>) {
+    fn apply_saved_view(&mut self, id: Uuid, w: &mut Window, cx: &mut Context<Self>) {
         let Some(Page::Selected { views, filter, .. }) = &mut self.navigation else {
             return;
         };
@@ -335,6 +361,9 @@ impl BoardView {
             return;
         };
         *filter = view.filter.clone();
+        let value = filter.clone();
+        self.board_search
+            .update(cx, |input, cx| input.set_value(value, w, cx));
         cx.notify();
     }
 
@@ -567,8 +596,70 @@ impl BoardView {
                 automations,
                 filter,
             } => {
-                column = column.child(Label::new("Board items").text_xl());
-                if !views.is_empty() {
+                let busy = self.logging_out || self.automation_pending || status.pending.is_some();
+                let owner = cx.weak_entity();
+                let board_id = *board;
+                column = column
+                    .child(BoardHeader::new(self.navigation_title.clone()))
+                    .child(BoardTabs::new())
+                    .child(
+                        BoardToolbar::new()
+                            .search(&self.board_search, "board-search-input")
+                            .search_disabled(busy)
+                            .action(
+                                Button::new("views-toggle")
+                                    .label("Views")
+                                    .selected(self.views_open)
+                                    .disabled(busy)
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        view.views_open = !view.views_open;
+                                        cx.notify();
+                                    })),
+                            )
+                            .action(
+                                Button::new("automations-toggle")
+                                    .label("Automate")
+                                    .selected(self.automations_open)
+                                    .disabled(busy)
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        view.automations_open = !view.automations_open;
+                                        cx.notify();
+                                    })),
+                            )
+                            .tools(
+                                BoardToolbar::tools_trigger("board-tools-menu")
+                                    .disabled(busy)
+                                    .dropdown_menu(move |menu, _, _| {
+                                        let clear = owner.clone();
+                                        let reload = owner.clone();
+                                        menu.item(PopupMenuItem::new("Clear filter").on_click(
+                                            move |_, w, cx| {
+                                                let _ = clear.update(cx, |view, cx| {
+                                                    view.board_search.update(cx, |input, cx| {
+                                                        input.set_value("", w, cx)
+                                                    });
+                                                    if let Some(Page::Selected { filter, .. }) =
+                                                        &mut view.navigation
+                                                    {
+                                                        filter.clear();
+                                                    }
+                                                    cx.notify();
+                                                });
+                                            },
+                                        ))
+                                        .item(
+                                            PopupMenuItem::new("Reload board").on_click(
+                                                move |_, w, cx| {
+                                                    let _ = reload.update(cx, |view, cx| {
+                                                        view.navigate(Some(board_id), w, cx)
+                                                    });
+                                                },
+                                            ),
+                                        )
+                                    }),
+                            ),
+                    );
+                if self.views_open && !views.is_empty() {
                     let mut saved = div().flex().flex_wrap().gap_2();
                     for view in views {
                         let id = view.id;
@@ -578,8 +669,8 @@ impl BoardView {
                                 .flex_shrink_0()
                                 .label(view.name.clone())
                                 .disabled(self.logging_out)
-                                .on_click(cx.listener(move |view, _, _, cx| {
-                                    view.apply_saved_view(id, cx);
+                                .on_click(cx.listener(move |view, _, w, cx| {
+                                    view.apply_saved_view(id, w, cx);
                                 })),
                         );
                     }
@@ -588,12 +679,14 @@ impl BoardView {
                 if !filter.is_empty() {
                     column = column.child(Label::new(format!("Filter: {filter}")));
                 }
-                column = column.child(self.render_automations(
-                    automations,
-                    status.editable && status.pending.is_none(),
-                    *board,
-                    cx,
-                ));
+                if self.automations_open {
+                    column = column.child(self.render_automations(
+                        automations,
+                        status.editable && status.pending.is_none(),
+                        *board,
+                        cx,
+                    ));
+                }
                 let visible = rows
                     .iter()
                     .filter(|row| view_filter_matches(filter, &row.title))
@@ -605,14 +698,17 @@ impl BoardView {
                         "No items"
                     }));
                 }
-                column = column.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(div().flex_1().child(Label::new("Name")))
-                        .child(div().w_32().child(Label::new(status.title.clone()))),
-                );
+                let mut table = div()
+                    .id("mobile-main-table")
+                    .flex()
+                    .flex_col()
+                    .overflow_x_scroll()
+                    .child(
+                        BoardRow::new(Label::new("Item"))
+                            .header()
+                            .touch()
+                            .cell(Label::new(status.title.clone())),
+                    );
                 for row in rows
                     .iter()
                     .filter(|row| view_filter_matches(filter, &row.title))
@@ -628,30 +724,31 @@ impl BoardView {
                         .on_click(cx.listener(move |view, _, w, cx| {
                             view.open_activity(board_id, item, w, cx)
                         }));
-                    column = column.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .items_start()
-                                    .gap_1()
-                                    .child(Label::new(row.title.clone()))
-                                    .child(history),
-                            )
-                            .child(status.cell(
-                                *board,
-                                row,
-                                self.logging_out || self.automation_pending,
-                                cx,
-                            )),
+                    table = table.child(
+                        BoardRow::new(
+                            div()
+                                .flex()
+                                .items_center()
+                                .w_full()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(Label::new(row.title.clone())),
+                                )
+                                .child(history.small()),
+                        )
+                        .cell(status.cell(
+                            *board,
+                            row,
+                            self.logging_out || self.automation_pending,
+                            cx,
+                        ))
+                        .touch(),
                     );
                 }
+                column = column.child(table);
                 "Back to boards"
             }
             Page::Activity(activity) => {

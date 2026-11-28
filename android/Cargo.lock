@@ -698,6 +698,7 @@ version = "0.1.0"
 dependencies = [
  "android-activity",
  "boardcraft-mobile-edit-client",
+ "boardcraft-ui",
  "gpui-kit",
  "gpui-pre-mobile",
  "jni 0.22.4",
@@ -716,6 +717,14 @@ dependencies = [
  "serde_json",
  "ureq",
  "uuid",
+]
+
+[[package]]
+name = "boardcraft-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "web-time",
 ]
 
 [[package]]

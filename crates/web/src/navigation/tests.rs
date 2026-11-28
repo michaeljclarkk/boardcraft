@@ -7,12 +7,13 @@ use gpui_kit::{
 
 struct Visit {
     navigation: Entity<Navigation>,
+    board_focus: FocusHandle,
     opened: Vec<Option<Uuid>>,
     _events: Subscription,
 }
 
 impl Render for Visit {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .size_full()
@@ -20,6 +21,8 @@ impl Render for Visit {
             .child(
                 Button::new("board-surface")
                     .label("Board surface")
+                    .track_focus(&self.board_focus)
+                    .on_click(cx.listener(|s, _, w, cx| s.board_focus.focus(w, cx)))
                     .flex_1()
                     .h_full(),
             )
@@ -39,6 +42,7 @@ fn boards() -> Vec<BoardSummary> {
 
 fn visit(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Visit>) {
     cx.update(gpui_kit::init);
+    cx.update(|cx| cx.set_reduce_motion(true));
     cx.update(|cx| {
         gpui_kit::open_window(
             WindowOptions {
@@ -64,6 +68,7 @@ fn visit(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Visit>) {
                     });
                     Visit {
                         navigation,
+                        board_focus: cx.focus_handle().tab_stop(true),
                         opened: Vec::new(),
                         _events: events,
                     }
@@ -357,6 +362,213 @@ fn workspace_change_resets_search_but_failed_reload_does_not(cx: &mut TestAppCon
         assert!(w.try_find("workspace-search-input").is_none());
         assert!(w.try_find(board(42)).is_none());
         assert!(w.try_find(board(63)).is_some());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn compact_drawer_overlays_the_board_and_keeps_desktop_pin_and_search(cx: &mut TestAppContext) {
+    let (handle, visit) = visit(cx);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.click("workspace-search-toggle", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.input("rev", cx);
+    })
+    .unwrap();
+    cx.simulate_window_resize(handle, size(px(700.), px(800.)));
+    cx.run_until_parked();
+    let narrow = cx
+        .update_window(handle, |_, w, cx| {
+            w.render_frame(cx);
+            assert!(w.try_find("workspace-search-toggle").is_none());
+            assert_eq!(w.find("workspace-navigation-toggle").focused(), Some(true));
+            let bounds = w.find("board-surface").bounds();
+            w.click("workspace-navigation-toggle", cx);
+            assert_eq!(w.find("board-surface").bounds(), bounds);
+            assert_eq!(w.find("workspace-search-input").value(), Some("rev"));
+            assert!(visit.read(cx).navigation.read(cx).drawer_open);
+            assert_eq!(
+                visit.read(cx).navigation.read(cx).presentation,
+                Presentation::Pinned
+            );
+            bounds
+        })
+        .unwrap();
+    cx.update_window(handle, |_, w, cx| {
+        w.press("escape", cx);
+        assert!(w.try_find("workspace-search-toggle").is_none());
+        assert_eq!(w.find("board-surface").bounds(), narrow);
+        assert_eq!(w.find("workspace-navigation-toggle").focused(), Some(true));
+    })
+    .unwrap();
+    cx.simulate_window_resize(handle, size(px(701.), px(800.)));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(w.try_find("workspace-search-toggle").is_some());
+        assert_eq!(w.find("workspace-search-input").value(), Some("rev"));
+        assert_eq!(
+            visit.read(cx).navigation.read(cx).presentation,
+            Presentation::Pinned
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn compact_hover_does_not_open_and_search_escape_precedes_drawer_escape(cx: &mut TestAppContext) {
+    let (handle, visit) = visit(cx);
+    cx.simulate_window_resize(handle, size(px(600.), px(800.)));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.hover("workspace-navigation-toggle", cx);
+    })
+    .unwrap();
+    advance(cx, 500);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(!visit.read(cx).navigation.read(cx).drawer_open);
+        assert!(w.try_find("workspace-search-toggle").is_none());
+        w.click("workspace-navigation-toggle", cx);
+        w.click("workspace-search-toggle", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.input("QXZ", cx);
+        assert!(w.try_find(board(42)).is_none());
+        w.press("escape", cx);
+        assert!(visit.read(cx).navigation.read(cx).drawer_open);
+        assert!(w.try_find("workspace-search-input").is_none());
+        assert_eq!(w.find("workspace-search-toggle").focused(), Some(true));
+        w.press("escape", cx);
+        assert!(!visit.read(cx).navigation.read(cx).drawer_open);
+        assert!(w.try_find("workspace-search-toggle").is_none());
+        assert_eq!(w.find("workspace-navigation-toggle").focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn compact_selection_dismisses_but_outside_click_keeps_drawer(cx: &mut TestAppContext) {
+    let (handle, visit) = visit(cx);
+    cx.simulate_window_resize(handle, size(px(680.), px(800.)));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.click("workspace-navigation-toggle", cx);
+        w.click("board-surface", cx);
+        w.press("escape", cx);
+        assert!(visit.read(cx).navigation.read(cx).drawer_open);
+        w.click(board(17), cx);
+        assert!(!visit.read(cx).navigation.read(cx).drawer_open);
+        assert_eq!(w.find("workspace-navigation-toggle").focused(), Some(true));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(visit.read(cx).opened, [Some(Uuid::from_u128(17))]));
+}
+
+#[gpui_kit::test]
+fn explicitly_open_drawer_survives_widening_without_losing_desktop_collapse(
+    cx: &mut TestAppContext,
+) {
+    let (handle, visit) = visit(cx);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.click("workspace-navigation-close", cx);
+    })
+    .unwrap();
+    cx.simulate_window_resize(handle, size(px(680.), px(800.)));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.click("workspace-navigation-toggle", cx);
+    })
+    .unwrap();
+    cx.simulate_window_resize(handle, size(px(1000.), px(800.)));
+    cx.run_until_parked();
+    let table = cx
+        .update_window(handle, |_, w, cx| {
+            w.render_frame(cx);
+            assert!(w.try_find("workspace-search-toggle").is_some());
+            assert_eq!(
+                visit.read(cx).navigation.read(cx).presentation,
+                Presentation::Collapsed
+            );
+            let table = w.find("board-surface").bounds();
+            w.hover("board-surface", cx);
+            table
+        })
+        .unwrap();
+    advance(cx, 500);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(w.try_find("workspace-search-toggle").is_some());
+        w.click("workspace-navigation-close", cx);
+        assert!(w.try_find("workspace-search-toggle").is_none());
+        assert_eq!(w.find("board-surface").bounds(), table);
+        assert_eq!(w.find("workspace-navigation-toggle").focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn drawer_slide_reverses_without_shifting_table_and_reduced_motion_finishes(
+    cx: &mut TestAppContext,
+) {
+    let (handle, visit) = visit(cx);
+    cx.simulate_window_resize(handle, size(px(600.), px(800.)));
+    cx.run_until_parked();
+    let (board_bounds, open_button) = cx
+        .update_window(handle, |_, w, cx| {
+            w.render_frame(cx);
+            let bounds = w.find("board-surface").bounds();
+            w.click("workspace-navigation-toggle", cx);
+            let open_button = w.find("workspace-search-toggle").bounds();
+            w.click("workspace-navigation-toggle", cx);
+            (bounds, open_button)
+        })
+        .unwrap();
+    cx.update(|cx| cx.set_reduce_motion(false));
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.click("workspace-navigation-toggle", cx);
+    })
+    .unwrap();
+    advance(cx, 150);
+    let middle = cx
+        .update_window(handle, |_, w, cx| {
+            w.render_frame(cx);
+            assert_eq!(w.find("board-surface").bounds(), board_bounds);
+            let bounds = w.find("workspace-search-toggle").bounds();
+            assert!(bounds.left() < open_button.left());
+            w.click("workspace-navigation-toggle", cx);
+            assert!(!visit.read(cx).navigation.read(cx).drawer_open);
+            bounds
+        })
+        .unwrap();
+    advance(cx, 40);
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(w.find("workspace-search-toggle").bounds().left() < middle.left());
+        assert_eq!(w.find("board-surface").bounds(), board_bounds);
+    })
+    .unwrap();
+    cx.update(|cx| cx.set_reduce_motion(true));
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(w.try_find("workspace-search-toggle").is_none());
+        w.click("workspace-navigation-toggle", cx);
+        assert_eq!(w.find("workspace-search-toggle").bounds(), open_button);
+        assert_eq!(w.find("board-surface").bounds(), board_bounds);
     })
     .unwrap();
 }

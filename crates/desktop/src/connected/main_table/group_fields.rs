@@ -172,9 +172,8 @@ impl MainTable {
     pub(super) fn new_group_options(&self, cx: &mut Context<Connected>) -> AnyElement {
         let view = cx.weak_entity();
         let manageable = self.manageable;
-        Button::new("new-item-options")
+        BoardToolbar::new_item_options_trigger("new-item-options")
             .small()
-            .label("New item options")
             .track_focus(&self.group_focus)
             .disabled(self.pending || self.reconcile)
             .dropdown_menu(move |menu, _, _| {

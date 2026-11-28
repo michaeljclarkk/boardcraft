@@ -22,7 +22,7 @@ pub(super) fn id(prefix: &str, n: u128) -> SharedString {
 
 // Check every possible catalog and item control in this fixture, including absence.
 pub(super) fn controls(w: &Window, listed: bool, items: &[(u128, &str)]) {
-    let expected_boards = if listed {
+    let expected_boards = if listed || !items.is_empty() {
         &[(203, "Quartz"), (202, "Review"), (201, "Review")][..]
     } else {
         &[]

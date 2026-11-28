@@ -2,7 +2,8 @@
 use super::navigation::Page;
 use super::*;
 use boardcraft_mobile_edit_client::{Automation, ChangeEvent, MainTableRead, SavedItem, SavedView};
-use gpui_kit::base::ElementExt;
+use boardcraft_ui::{BoardRow, BoardTabs, BoardToolbar};
+use gpui_kit::base::{ElementExt, Selectable};
 use gpui_kit::component::{
     ActiveTheme, IconName, Sizable,
     button::ButtonVariants,
@@ -51,6 +52,8 @@ pub(super) struct MainTable {
     view_filter: Entity<InputState>,
     view_name: Entity<InputState>,
     automation_name: Entity<InputState>,
+    views_open: bool,
+    automations_open: bool,
     editable: bool,
     manageable: bool,
     pending: bool,
@@ -72,7 +75,6 @@ pub(super) struct MainTable {
     archive: Option<Archive>,
     recovery_trash: bool,
     archive_focus: FocusHandle,
-    trash_focus: FocusHandle,
     archive_triggers: std::collections::HashMap<Uuid, FocusHandle>,
     root_command: Option<RootCommand>,
     undo: Option<Undo>,
@@ -226,10 +228,10 @@ impl MainTable {
         selection.retain(&available);
         let view_filter = previous
             .map(|t| t.view_filter.clone())
-            .unwrap_or_else(|| cx.new(|cx| InputState::new(w, cx).placeholder("Filter items")));
+            .unwrap_or_else(|| cx.new(|cx| InputState::new(w, cx).placeholder("Search")));
         subscriptions.push(
             cx.subscribe_in(&view_filter, w, |v, _, event: &InputEvent, w, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
+                if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Change) {
                     v.apply_view_filter(w, cx);
                 }
             }),
@@ -272,6 +274,8 @@ impl MainTable {
             view_filter,
             view_name,
             automation_name,
+            views_open: previous.is_some_and(|t| t.views_open),
+            automations_open: previous.is_some_and(|t| t.automations_open),
             editable,
             manageable: read.is_manageable(),
             pending: false,
@@ -303,9 +307,6 @@ impl MainTable {
             archive_focus: previous
                 .map(|t| t.archive_focus.clone())
                 .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
-            trash_focus: previous
-                .map(|t| t.trash_focus.clone())
-                .unwrap_or_else(|| cx.focus_handle().tab_stop(true)),
             root_command: None,
             archive_triggers,
             undo: None,
@@ -327,38 +328,23 @@ impl MainTable {
             .flex()
             .flex_col()
             .gap_3()
-            .child(Label::new("Main table"))
-            .child(Label::new(if self.editable && !self.reconcile {
-                "Board items"
-            } else {
-                "Board items Â· Read only"
-            }));
-        column = column.child(self.new_group_options(cx));
+            .child(BoardTabs::new())
+            .child(self.board_toolbar(cx))
+            .child(
+                Label::new(if self.editable && !self.reconcile {
+                    "Board items"
+                } else {
+                    "Board items · Read only"
+                })
+                .text_sm(),
+            );
         column = column.child(self.failed_item_moves(cx));
-        column = column.child(self.render_views(cx));
-        column = column.child(self.render_automations(cx));
-        column = column.child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    Button::new("open-archive")
-                        .small()
-                        .label("Archive…")
-                        .track_focus(&self.archive_focus)
-                        .disabled(self.pending || self.root_command.is_some())
-                        .on_click(cx.listener(|v, _, w, cx| v.open_recovery(false, w, cx))),
-                )
-                .child(
-                    Button::new("open-trash")
-                        .small()
-                        .label("Trash…")
-                        .track_focus(&self.trash_focus)
-                        .disabled(self.pending || self.root_command.is_some())
-                        .on_click(cx.listener(|v, _, w, cx| v.open_recovery(true, w, cx))),
-                ),
-        );
+        if self.views_open {
+            column = column.child(self.render_views(cx));
+        }
+        if self.automations_open {
+            column = column.child(self.render_automations(cx));
+        }
         if let Some(undo) = &self.undo {
             column = column
                 .child(Label::new(undo.label.clone()))
@@ -401,6 +387,8 @@ impl MainTable {
         let drag = self.drag.clone();
         let mut groups = div()
             .id("physical-groups")
+            .min_w_0()
+            .overflow_x_scroll()
             .relative()
             .flex()
             .flex_col()
@@ -471,6 +459,77 @@ impl MainTable {
         column
     }
 
+    fn board_toolbar(&self, cx: &mut Context<Connected>) -> impl IntoElement {
+        let owner = cx.weak_entity();
+        let archive = cx.weak_entity();
+        let trash = cx.weak_entity();
+        BoardToolbar::new()
+            .new_item(
+                Button::new("new-item")
+                    .disabled(!self.editable || self.pending || self.reconcile)
+                    .on_click(cx.listener(|view, _, w, cx| {
+                        if let Screen::Navigation(nav) = &view.screen
+                            && let Page::Items(_, table) = &nav.page
+                            && let Some(heading) = table.headings.iter().find(|h| !h.collapsed)
+                        {
+                            heading
+                                .entry
+                                .update(cx, |entry, cx| entry.focus_input(w, cx));
+                        }
+                    })),
+            )
+            .new_item_options(self.new_group_options(cx))
+            .search(&self.view_filter, "view-filter")
+            .search_disabled(self.pending || self.reconcile)
+            .action(
+                Button::new("views-toggle")
+                    .label("Views")
+                    .selected(self.views_open)
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        if let Screen::Navigation(nav) = &mut view.screen
+                            && let Page::Items(_, table) = &mut nav.page
+                        {
+                            table.views_open = !table.views_open;
+                            cx.notify();
+                        }
+                    })),
+            )
+            .action(
+                Button::new("automations-toggle")
+                    .label("Automate")
+                    .selected(self.automations_open)
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        if let Screen::Navigation(nav) = &mut view.screen
+                            && let Page::Items(_, table) = &mut nav.page
+                        {
+                            table.automations_open = !table.automations_open;
+                            cx.notify();
+                        }
+                    })),
+            )
+            .tools(
+                BoardToolbar::tools_trigger("board-tools-menu")
+                    .track_focus(&self.archive_focus)
+                    .disabled(self.pending || self.root_command.is_some())
+                    .dropdown_menu(move |menu, _, _| {
+                        let clear = owner.clone();
+                        let archive = archive.clone();
+                        let trash = trash.clone();
+                        menu.item(
+                            PopupMenuItem::new("Clear filter").on_click(move |_, w, cx| {
+                                let _ = clear.update(cx, |view, cx| view.clear_view_filter(w, cx));
+                            }),
+                        )
+                        .item(PopupMenuItem::new("Archive…").on_click(move |_, w, cx| {
+                            let _ = archive.update(cx, |view, cx| view.open_recovery(false, w, cx));
+                        }))
+                        .item(PopupMenuItem::new("Trash…").on_click(move |_, w, cx| {
+                            let _ = trash.update(cx, |view, cx| view.open_recovery(true, w, cx));
+                        }))
+                    }),
+            )
+    }
+
     fn render_views(&self, cx: &mut Context<Connected>) -> impl IntoElement {
         let mut panel = div()
             .id("views")
@@ -478,25 +537,6 @@ impl MainTable {
             .flex_col()
             .gap_2()
             .child(Label::new("Views"))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(Input::new(&self.view_filter).id("view-filter"))
-                    .child(
-                        Button::new("apply-filter")
-                            .small()
-                            .label("Apply filter")
-                            .on_click(cx.listener(|view, _, w, cx| view.apply_view_filter(w, cx))),
-                    )
-                    .child(
-                        Button::new("clear-filter")
-                            .small()
-                            .label("Clear filter")
-                            .on_click(cx.listener(|view, _, w, cx| view.clear_view_filter(w, cx))),
-                    ),
-            )
             .child(
                 div()
                     .flex()
@@ -735,17 +775,17 @@ impl MainTable {
 
     fn render_heading_body(&self, h: &Heading, cx: &mut Context<Connected>) -> impl IntoElement {
         let geometry = h.row_drag.clone();
-        let mut body = div()
-            .relative()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .pl_8()
-            .on_prepaint(move |bounds, w, _| {
-                geometry
-                    .borrow_mut()
-                    .set_viewport(bounds.intersect(&w.visual_viewport_bounds()));
-            });
+        let mut body =
+            div()
+                .relative()
+                .flex()
+                .flex_col()
+                .gap_0()
+                .on_prepaint(move |bounds, w, _| {
+                    geometry
+                        .borrow_mut()
+                        .set_viewport(bounds.intersect(&w.visual_viewport_bounds()));
+                });
         let group = h.id.clone();
         let selected = h
             .rows
@@ -757,11 +797,9 @@ impl MainTable {
             })
             .count();
         body = body.child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
+            BoardRow::new(Label::new("Item"))
+                .header()
+                .leading(
                     Checkbox::new(SharedString::from(format!("select-group-{group}")))
                         .small()
                         .accessibility_label(format!("Select all items in {}", h.name))
@@ -772,9 +810,7 @@ impl MainTable {
                             v.select_main_table_group(&group, *checked, w, cx)
                         })),
                 )
-                .child(div().flex_1().child(Label::new("Item")))
-                .child(self.status.header())
-                .child(div().w_24().flex_none()),
+                .cell(self.status.header()),
         );
         let visible = h
             .rows
@@ -818,23 +854,39 @@ impl MainTable {
                         cx.theme().background
                     })
                     .child(
-                        Checkbox::new(SharedString::from(format!("select-{id}")))
-                            .small()
-                            .accessibility_label(format!("Select {name}"))
-                            .checked(checked)
-                            .disabled(self.pending || self.reconcile)
-                            .on_change(cx.listener(move |v, checked, w, cx| {
-                                v.select_main_table_row(id, *checked, w.modifiers().shift, w, cx)
-                            })),
-                    )
-                    .child(self.item_grip(h, id, &name))
-                    .child(div().min_w_0().flex_1().child(r.clone()))
-                    .child(self.status_cell(id, &name, cx))
-                    .child(
-                        div()
-                            .w_24()
-                            .flex_none()
-                            .child(self.root_archive_menu(id, cx)),
+                        BoardRow::new(
+                            div()
+                                .flex()
+                                .items_center()
+                                .w_full()
+                                .min_w_0()
+                                .child(div().flex_1().min_w_0().child(r.clone()))
+                                .child(self.root_archive_menu(id, cx)),
+                        )
+                        .leading(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    Checkbox::new(SharedString::from(format!("select-{id}")))
+                                        .small()
+                                        .accessibility_label(format!("Select {name}"))
+                                        .checked(checked)
+                                        .disabled(self.pending || self.reconcile)
+                                        .on_change(cx.listener(move |v, checked, w, cx| {
+                                            v.select_main_table_row(
+                                                id,
+                                                *checked,
+                                                w.modifiers().shift,
+                                                w,
+                                                cx,
+                                            )
+                                        })),
+                                )
+                                .child(self.item_grip(h, id, &name)),
+                        )
+                        .cell(self.status_cell(id, &name, cx)),
                     )
                     .child(self.item_drop_marker(h, id, cx)),
             );

@@ -138,11 +138,7 @@ impl MainTable {
                             && let Page::Items(_, t) = &mut nav.page
                         {
                             t.archive = None;
-                            if t.recovery_trash {
-                                t.trash_focus.focus(w, cx);
-                            } else {
-                                t.archive_focus.focus(w, cx);
-                            }
+                            t.archive_focus.focus(w, cx);
                             cx.notify();
                         }
                     })),

@@ -4,15 +4,16 @@ Updated 2026-11-28. This is the short list of what is not done or not verified. 
 
 ## UI parity
 
-- [Live Chrome checks](workflows.md) now cover the rewritten workspace search and collapsed-rail hover flyout as well as the earlier rename/retry journey. The baseline's duplicate-`on_hover` panic is fixed in the production Rust [`Navigation`](../crates/web/src/navigation.rs) view; pointer entry, movement into the panel, leave dismissal and no table shift were observed. Twelve web tests (including six GPUI navigation interaction tests), WASM build and WASM/native Clippy passed. Search is scoped to the selected board's workspace and resets on workspace change (GPUI-tested, not live multi-workspace verified); the landing page falls back to the first authorized workspace because the workspace picker is not ported. Still open: same-fixture visual comparison, 300ms slide/reduced-motion handling, `aria-controls`, menu/dialog hover exclusions and document-level hover rescan, compact drawer/touch, configured columns, view toolbar and active/concurrent-edit comparison. A later bounded-viewer relaunch returned `program not found` after concurrent tools changes; the preceding after-change run succeeded and expired normally. No launcher changes were made by this rewrite.
+- [Live Chrome and native checks](workflows.md) cover workspace search, compact drawer, collapse/reopen and browser toolbar creation/search/reload. The 18-test web library suite passes, including eleven navigation tests and seven table tests; native sidebar controls and authorized selection/revocation also pass focused checks. Windows/WASM/Android now consume shared board header, tab, toolbar and row components. The Android debug APK was observed in the emulator: offline Sample board search and clear worked. Connected mobile saves/recovery, Back/resume and keyboard dismissal remain unverified. Final Windows toolbar focus/panel/recovery checks passed; the pre-existing default-stack overflow still requires the documented 8MB debug link workaround. Still open: same-fixture comparison, reference theme/blue accent, configured browser columns, workspace picker, native compact navigation, Android grouped data and sidebar, search timing/filtered selection parity, touchscreen journeys, `aria-controls`, menu/dialog hover exclusions and animated pinned-width changes. The existing viewer launches successfully with the documented local tool-home configuration; no launcher code was changed.
 
 - The desktop board journey has not been compared with the internal tool yet. Record every difference — layout, controls, labels, density, states, keyboard/focus, pointer/touch — in [workflows.md](workflows.md).
+- Mobile reference comparison: run the internal tool's native mobile app in a separate emulator beside boardcraft, using the same fixture and display size. Compare native controls, touch, keyboard, Back/resume and editing through Computer Use. The owner requested this as follow-up; this pass only observed boardcraft's emulator, not the internal tool on mobile.
 - Stock GPUI Kit coverage of the internal tool's table, group menu and drag behaviour is unmeasured. Build a control only when the screen needs it.
 
 ## Workflow parity
 
 - Groups, items, board chrome, archive/trash and recovery are partial or unverified in the desktop app.
-- Auth, Android and the browser are deliberately behind the desktop journey.
+- Auth remains behind the board journey. The owner explicitly authorized shared UI work on Android and WASM alongside Windows; platform behavior still differs where the port is incomplete.
 
 ## Verification
 

@@ -9,7 +9,9 @@ mod session_record;
 mod session_store;
 
 use boardcraft_mobile_edit_client::{EditClient, EditError, NameEdit, SavedItem};
+use boardcraft_ui::{BoardHeader, BoardRow, BoardTabs, BoardToolbar};
 use connection::{Connection, launch_connection};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::{
     Disableable, Root, Sizable, Theme, ThemeMode,
     button::Button,
@@ -63,6 +65,11 @@ struct BoardView {
     editor: Option<Editor>,
     automation_name: Entity<InputState>,
     automation_pending: bool,
+    board_search: Entity<InputState>,
+    _board_search_events: Subscription,
+    navigation_title: String,
+    views_open: bool,
+    automations_open: bool,
 }
 
 struct Editor {
@@ -78,6 +85,16 @@ impl BoardView {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let automation_name =
             cx.new(|cx| InputState::new(window, cx).placeholder("Automation name"));
+        let board_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
+        let board_search_events =
+            cx.subscribe(&board_search, |view: &mut Self, input, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    if let Some(navigation::Page::Selected { filter, .. }) = &mut view.navigation {
+                        *filter = input.read(cx).value().trim().to_owned();
+                    }
+                    cx.notify();
+                }
+            });
         let mut view = Self {
             board: Board {
                 title: "Sample board".into(),
@@ -96,6 +113,11 @@ impl BoardView {
             editor: None,
             automation_name,
             automation_pending: false,
+            board_search,
+            _board_search_events: board_search_events,
+            navigation_title: "Board".into(),
+            views_open: false,
+            automations_open: false,
         };
         match launch_connection() {
             Ok(None) => {
@@ -265,7 +287,7 @@ impl BoardView {
 
 impl Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut column = div().flex().flex_col().size_full().p_8().gap_6();
+        let mut column = div().flex().flex_col().size_full().p_4().gap_3();
         // The feed carries one session's token; a sign-out drops it so the next
         // sign-in opens a feed for the new token.
         if self.client.is_none() {
@@ -285,19 +307,41 @@ impl Render for BoardView {
         if let Some(page) = &self.navigation {
             return self.navigation_page(page, column, cx);
         }
-        column = column.child(Label::new(self.board.title.clone()).text_xl());
+        column = column
+            .child(BoardHeader::new(self.board.title.clone()))
+            .child(BoardTabs::new())
+            .child(
+                BoardToolbar::new()
+                    .search(&self.board_search, "board-search-input")
+                    .search_disabled(self.logging_out || self.editor.is_some()),
+            );
         if !self.message.is_empty() {
             column = column.child(Label::new(self.message));
         }
-        for item in &self.board.items {
+        let query = self.board_search.read(cx).value().trim().to_lowercase();
+        let mut table = div()
+            .id("mobile-main-table")
+            .flex()
+            .flex_col()
+            .overflow_x_scroll()
+            .child(BoardRow::new(Label::new("Item")).header().touch());
+        for item in self
+            .board
+            .items
+            .iter()
+            .filter(|item| item.title.to_lowercase().contains(&query))
+        {
             if let Some(editor) = self.editor.as_ref().filter(|e| e.id == item.id) {
-                column = column.child(Label::new("Editing name").text_lg()).child(
-                    Input::new(&editor.input)
-                        .large()
-                        .disabled(editor.pending || self.logging_out),
+                table = table.child(
+                    BoardRow::new(
+                        Input::new(&editor.input)
+                            .large()
+                            .disabled(editor.pending || self.logging_out),
+                    )
+                    .touch(),
                 );
                 if self.connection.is_some() {
-                    column = column.child(
+                    table = table.child(
                         Button::new("save")
                             .large()
                             .disabled(editor.pending || self.logging_out)
@@ -305,22 +349,28 @@ impl Render for BoardView {
                             .on_click(cx.listener(|view, _, window, cx| view.save(window, cx))),
                     );
                     if let Some(error) = editor.error {
-                        column = column.child(Label::new(error));
+                        table = table.child(Label::new(error));
                     }
                 }
             } else {
                 let id = item.id;
-                column = column.child(
-                    Button::new(SharedString::from(id.to_string()))
-                        .large()
-                        .disabled(self.logging_out)
-                        .label(item.title.clone())
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            view.open_editor(id, window, cx);
-                        })),
+                table = table.child(
+                    BoardRow::new(
+                        Button::new(SharedString::from(id.to_string()))
+                            .ghost()
+                            .large()
+                            .w_full()
+                            .disabled(self.logging_out)
+                            .child(div().flex_1().min_w_0().child(item.title.clone()))
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                view.open_editor(id, window, cx)
+                            })),
+                    )
+                    .touch(),
                 );
             }
         }
+        column = column.child(table);
         if self.client.is_some() {
             column = column.child(self.logout_button(cx));
         }

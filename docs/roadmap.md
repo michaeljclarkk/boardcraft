@@ -6,7 +6,7 @@ Updated 2026-11-28. This file holds the one task to work on next. The delivery o
 
 ## Next task
 
-**Finish this workspace-navigation screen's same-fixture parity comparison (Rust GPUI/WASM).** Search and temporary hover/pin/dismiss were rewritten in `crates/web/src/navigation.rs`; six production-view GPUI interaction tests and live Chrome/Computer Use checks now cover filtering, focus, collapse and temporary hover without table shift. The bounded before-change viewer exposed a duplicate-hover panic; the after-change viewer rendered and the panic is fixed. Remaining differences and observations are in `docs/workflows.md`: different fixtures prevent board-order/pixel parity claims; slide/reduced-motion handling, `aria-controls`, menu/dialog hover exclusions, compact drawer/touch and active-edit comparison remain open. Workspace scoping/reset has GPUI coverage but no live multi-workspace comparison. Use the bounded viewer command in `docs/development.md` for the next comparison; the most recent relaunch returned `program not found` after concurrent tools changes, so confirm launch first without restoring any runner. Do not start another screen. Keep board journey criteria below open where not demonstrated.
+**Finish shared board-screen parity across Rust Windows, WASM and Android.** The owner explicitly requested continued parallel UI work and then the same Rust UI on mobile. The shared title, tabs, toolbar and row components now live in `crates/boardcraft-ui/src/board_chrome.rs` and are consumed by all three clients; each still owns transport and unfinished screen behavior. Browser compact navigation, motion/reduced motion, click occlusion and toolbar name search are implemented. Current observed journeys and limitations are in `docs/workflows.md`. Continue the same board screen: align client search/selection behavior, remaining controls, mobile grouped data and theme/density against the same reference fixture. Keep the GPUI/WASM shell and existing native/mobile clients; do not introduce another view layer or runner.
 
 Acceptance:
 
@@ -18,7 +18,7 @@ Acceptance:
 - Any remaining difference is written in [workflows.md](workflows.md), not left in chat.
 - No harness, driver, orchestrator, packet runner, new crate, dependency, abstraction or infrastructure is added. The change is the screen only.
 
-Finish this journey, record it, and stop. Do not start group management, auth or Android.
+Finish this shared board journey and record the observed result. The owner has authorized the same UI on Android in parallel; unrelated group management, auth and infrastructure remain outside this slice.
 
 ## Recently delivered
 

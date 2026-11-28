@@ -3,11 +3,162 @@ use super::*;
 use boardcraft_mobile_edit_client::{
     Automation, BoardSummary, DirectoryUser, InboxNotification, MainTableRead, SavedView,
 };
-use gpui_kit::component::input::InputEvent;
+use gpui_kit::{
+    assets::IconName,
+    base::Selectable,
+    component::{ActiveTheme, Sizable, button::ButtonVariants, input::InputEvent},
+};
 
 enum ReadPage {
     List(Vec<BoardSummary>, i64),
-    Table(MainTableRead, Vec<SavedView>, Vec<Automation>, i64),
+    Table(
+        MainTableRead,
+        Vec<SavedView>,
+        Vec<Automation>,
+        i64,
+        Vec<BoardSummary>,
+    ),
+}
+
+#[cfg(all(test, feature = "native-smoke"))]
+mod workspace_tests {
+    use super::{Connected, EditClient, InputState, Navigation, Page, Screen, WorkspaceNavigation};
+    use boardcraft_mobile_edit_client::BoardSummary;
+    use gpui_kit::{
+        AppContext, Bounds, Entity, TestAppContext, WindowBounds, WindowOptions, px, size,
+        test::TestWindowExt,
+    };
+    use uuid::Uuid;
+
+    fn boards() -> Vec<BoardSummary> {
+        [(42, "Review", 1), (17, "Backlog", 1), (63, "Review", 2)]
+            .into_iter()
+            .map(|(id, name, workspace)| BoardSummary {
+                id: Uuid::from_u128(id),
+                name: name.into(),
+                workspace_id: Uuid::from_u128(workspace),
+            })
+            .collect()
+    }
+
+    fn visit(cx: &mut TestAppContext) -> (gpui_kit::AnyWindowHandle, Entity<Connected>) {
+        cx.update(gpui_kit::init);
+        cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Default::default(),
+                        size(px(1100.), px(800.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |w, cx| {
+                    cx.new(|cx| {
+                        let mut view = Connected::new(0, None);
+                        let mut workspace = WorkspaceNavigation::new(w, cx);
+                        workspace.accept(boards(), None, w, cx);
+                        view.link_input = Some(cx.new(|cx| InputState::new(w, cx)));
+                        view.screen = Screen::Navigation(Navigation {
+                            client: EditClient::new(0),
+                            page: Page::List(boards()),
+                            unread: 0,
+                            share: None,
+                            workspace: Some(workspace),
+                            _people_events: Vec::new(),
+                        });
+                        view
+                    })
+                },
+            )
+            .unwrap()
+        })
+    }
+
+    fn board(id: u128) -> String {
+        format!("board-{}", Uuid::from_u128(id))
+    }
+
+    #[gpui_kit::test]
+    fn workspace_search_filters_and_escape_restores_focus(cx: &mut TestAppContext) {
+        let (window, _) = visit(cx);
+        cx.update_window(window, |_, w, cx| {
+            w.render_frame(cx);
+            assert!(w.find(board(42)).bounds().top() < w.find(board(17)).bounds().top());
+            w.click("workspace-search-toggle", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, w, cx| {
+            w.render_frame(cx);
+            assert_eq!(w.find("workspace-search-input").focused(), Some(true));
+            w.input("CKlo", cx);
+            assert!(w.try_find(board(42)).is_none());
+            assert!(w.try_find(board(17)).is_some());
+            w.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, w, cx| {
+            w.render_frame(cx);
+            assert!(w.try_find("workspace-search-input").is_none());
+            assert_eq!(w.find("workspace-search-toggle").focused(), Some(true));
+            assert!(w.try_find(board(42)).is_some());
+            assert!(w.try_find(board(63)).is_some());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn workspace_collapse_retains_query_and_same_workspace_reads(cx: &mut TestAppContext) {
+        let (window, view) = visit(cx);
+        cx.update_window(window, |_, w, cx| {
+            w.render_frame(cx);
+            w.click("workspace-search-toggle", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, w, cx| {
+            w.render_frame(cx);
+            w.input("rev", cx);
+            w.click("workspace-navigation-close", cx);
+            assert!(w.try_find(board(42)).is_none());
+            assert_eq!(w.find("workspace-navigation-toggle").focused(), Some(true));
+            w.press("enter", cx);
+            assert_eq!(w.find("workspace-search-input").value(), Some("rev"));
+            // Accepted reads represent the first board, another board in its
+            // workspace, and Back to boards without introducing transport here.
+            view.update(cx, |view, cx| {
+                let Screen::Navigation(nav) = &mut view.screen else {
+                    panic!()
+                };
+                let workspace = nav.workspace.as_mut().unwrap();
+                for selected in [Some(42), Some(17), None] {
+                    workspace.accept(boards(), selected.map(Uuid::from_u128), w, cx);
+                }
+                cx.notify();
+            });
+            w.render_frame(cx);
+            assert_eq!(w.find("workspace-search-input").value(), Some("rev"));
+            assert!(w.try_find(board(17)).is_none());
+            view.update(cx, |view, cx| {
+                let Screen::Navigation(nav) = &mut view.screen else {
+                    panic!()
+                };
+                nav.workspace
+                    .as_mut()
+                    .unwrap()
+                    .accept(boards(), Some(Uuid::from_u128(63)), w, cx);
+                nav.page = Page::Recover(Uuid::from_u128(63), cx.focus_handle());
+                cx.notify();
+            });
+            w.render_frame(cx);
+            assert!(w.try_find("workspace-search-input").is_none());
+            assert!(w.try_find(board(42)).is_none());
+            assert!(w.try_find(board(63)).is_some());
+        })
+        .unwrap();
+    }
 }
 
 pub(super) struct PeoplePage {
@@ -39,7 +190,76 @@ pub(super) struct Navigation {
     pub(super) page: Page,
     pub(super) unread: i64,
     pub(super) share: Option<Entity<InputState>>,
+    pub(super) workspace: Option<WorkspaceNavigation>,
     pub(super) _people_events: Vec<Subscription>,
+}
+
+/// Visit-local controls retain their query and presentation across board reads.
+pub(super) struct WorkspaceNavigation {
+    boards: Vec<BoardSummary>,
+    workspace: Option<Uuid>,
+    search: Entity<InputState>,
+    search_open: bool,
+    collapsed: bool,
+    rail_focus: FocusHandle,
+    search_focus: FocusHandle,
+    _search_events: Subscription,
+}
+
+impl WorkspaceNavigation {
+    fn new(w: &mut Window, cx: &mut Context<Connected>) -> Self {
+        let search = cx.new(|cx| InputState::new(w, cx).placeholder("Search boards"));
+        let events = cx.subscribe(&search, |_, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
+        Self {
+            boards: Vec::new(),
+            workspace: None,
+            search,
+            search_open: false,
+            collapsed: false,
+            rail_focus: cx.focus_handle().tab_stop(true),
+            search_focus: cx.focus_handle().tab_stop(true),
+            _search_events: events,
+        }
+    }
+
+    fn accept(
+        &mut self,
+        boards: Vec<BoardSummary>,
+        selected: Option<Uuid>,
+        w: &mut Window,
+        cx: &mut Context<Connected>,
+    ) {
+        let workspace = selected
+            .and_then(|id| boards.iter().find(|b| b.id == id))
+            .map(|b| b.workspace_id);
+        if self.workspace.is_some() && workspace.is_some() && self.workspace != workspace {
+            self.search_open = false;
+            self.search
+                .update(cx, |input, cx| input.set_value("", w, cx));
+        }
+        if workspace.is_some() {
+            self.workspace = workspace;
+        }
+        self.boards = boards;
+    }
+
+    fn matching(&self, all_workspaces: bool, cx: &App) -> Vec<&BoardSummary> {
+        let query = self.search.read(cx).value().to_lowercase();
+        self.boards
+            .iter()
+            .filter(|board| {
+                (all_workspaces
+                    || self
+                        .workspace
+                        .is_none_or(|workspace| board.workspace_id == workspace))
+                    && board.name.to_lowercase().contains(&query)
+            })
+            .collect()
+    }
 }
 
 /// Marks this window as owning one accepted-change feed. The generation lives on
@@ -55,7 +275,10 @@ impl Connected {
         w: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.screen = Screen::Loading;
+        let mut workspace = match std::mem::replace(&mut self.screen, Screen::Loading) {
+            Screen::Navigation(mut navigation) => navigation.workspace.take(),
+            _ => None,
+        };
         self.message = "";
         self.navigation_request += 1;
         let request = self.navigation_request;
@@ -65,7 +288,13 @@ impl Connected {
                     let views = client.list_views(id)?;
                     let automations = client.list_automations(id)?;
                     let unread = client.list_notifications(false)?.unread;
-                    Ok(ReadPage::Table(read, views, automations, unread))
+                    Ok(ReadPage::Table(
+                        read,
+                        views,
+                        automations,
+                        unread,
+                        client.list_boards()?,
+                    ))
                 }),
                 None => client.resolve().and_then(|()| {
                     let list = client.list_boards()?;
@@ -86,9 +315,14 @@ impl Connected {
                     view.message = "Session expired. Sign in again.";
                     view.screen = Self::identifier(w, cx);
                 } else {
+                    let controls = workspace.get_or_insert_with(|| WorkspaceNavigation::new(w, cx));
                     let (page, unread) = match result {
-                        Ok(ReadPage::List(list, unread)) => (Page::List(list), unread),
-                        Ok(ReadPage::Table(read, saved, rules, unread)) => {
+                        Ok(ReadPage::List(list, unread)) => {
+                            controls.accept(list.clone(), None, w, cx);
+                            (Page::List(list), unread)
+                        }
+                        Ok(ReadPage::Table(read, saved, rules, unread, boards)) => {
+                            controls.accept(boards, board, w, cx);
                             let board = board.expect("selected board");
                             let mut table = MainTable::new(read, board, None, w, cx);
                             table.views = saved;
@@ -102,7 +336,12 @@ impl Connected {
                         Err(EditError::PermissionDenied | EditError::Missing)
                             if board.is_some() =>
                         {
+                            controls.boards.clear();
                             (Page::Unavailable, 0)
+                        }
+                        Err(EditError::PermissionDenied | EditError::Missing) => {
+                            controls.boards.clear();
+                            (Page::Fault(None), 0)
                         }
                         Err(_) => (Page::Fault(board), 0),
                     };
@@ -114,6 +353,7 @@ impl Connected {
                         page,
                         unread,
                         share: None,
+                        workspace: workspace.take(),
                         _people_events: Vec::new(),
                     });
                     // Navigation state exists now. The window keeps this feed
@@ -196,11 +436,69 @@ impl Connected {
             return;
         };
         if let Some(id) = board
-            && !matches!(&nav.page, Page::List(list) if list.iter().any(|s| s.id == id))
+            && !nav
+                .workspace
+                .as_ref()
+                .is_some_and(|workspace| workspace.boards.iter().any(|summary| summary.id == id))
+            && !matches!(&nav.page, Page::List(list) if list.iter().any(|summary| summary.id == id))
         {
             return;
         }
         self.navigate(nav.client.clone(), board, None, w, cx);
+    }
+
+    fn toggle_workspace(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        let Screen::Navigation(nav) = &mut self.screen else {
+            return;
+        };
+        let Some(workspace) = &mut nav.workspace else {
+            return;
+        };
+        workspace.collapsed = !workspace.collapsed;
+        workspace.rail_focus.focus(w, cx);
+        cx.notify();
+    }
+
+    fn toggle_workspace_search(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        let Screen::Navigation(nav) = &mut self.screen else {
+            return;
+        };
+        let Some(workspace) = &mut nav.workspace else {
+            return;
+        };
+        workspace.search_open = !workspace.search_open;
+        workspace.search.update(cx, |input, cx| {
+            input.set_value("", w, cx);
+            if workspace.search_open {
+                input.focus(w, cx);
+            }
+        });
+        if !workspace.search_open {
+            workspace.search_focus.focus(w, cx);
+        }
+        cx.notify();
+    }
+
+    fn workspace_escape(&mut self, event: &KeyDownEvent, w: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key != "escape" {
+            return;
+        }
+        let Screen::Navigation(nav) = &mut self.screen else {
+            return;
+        };
+        let Some(workspace) = &mut nav.workspace else {
+            return;
+        };
+        if workspace.search_open
+            && workspace
+                .search
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(w, cx)
+        {
+            self.toggle_workspace_search(w, cx);
+            cx.stop_propagation();
+        }
     }
 
     fn open_people(&mut self, w: &mut Window, cx: &mut Context<Self>) {
@@ -683,6 +981,148 @@ fn notifications_label(unread: i64) -> String {
 }
 
 impl Navigation {
+    fn workspace_navigation(
+        &self,
+        workspace: &WorkspaceNavigation,
+        cx: &mut Context<Connected>,
+    ) -> impl IntoElement {
+        let selected = match self.page {
+            Page::Items(id, _) => Some(id),
+            _ => None,
+        };
+        let rail = div()
+            .w(rems(4.5))
+            .h_full()
+            .flex_shrink_0()
+            .px_1()
+            .py_4()
+            .bg(cx.theme().sidebar)
+            .child(
+                Button::new("workspace-navigation-toggle")
+                    .ghost()
+                    .selected(true)
+                    .w_full()
+                    .h_12()
+                    .px_0()
+                    .accessibility_label("Workspace navigation")
+                    .tooltip(if workspace.collapsed {
+                        "Open workspace navigation"
+                    } else {
+                        "Collapse workspace navigation"
+                    })
+                    .aria_expanded(!workspace.collapsed)
+                    .track_focus(&workspace.rail_focus)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap_1()
+                            .child(IconName::PanelsTopLeft)
+                            .child(div().text_xs().child("Workspace")),
+                    )
+                    .on_click(cx.listener(|view, _, w, cx| view.toggle_workspace(w, cx))),
+            );
+        let mut navigation = div().flex().h_full().flex_shrink_0().child(rail);
+        if workspace.collapsed {
+            return navigation;
+        }
+        let mut boards = div()
+            .id("workspace-boards")
+            .flex()
+            .flex_col()
+            .gap_1()
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll();
+        let matches = workspace.matching(matches!(self.page, Page::List(_)), cx);
+        if matches.is_empty() {
+            boards = boards.child(
+                Label::new(if workspace.boards.is_empty() {
+                    "No boards"
+                } else {
+                    "No matching boards."
+                })
+                .id("workspace-search-status"),
+            );
+        }
+        for board in matches {
+            let id = board.id;
+            boards = boards.child(
+                Button::new(SharedString::from(format!("board-{id}")))
+                    .ghost()
+                    .small()
+                    .w_full()
+                    .selected(selected == Some(id))
+                    .accessibility_label(board.name.clone())
+                    .child(IconName::PanelsTopLeft)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(board.name.clone()),
+                    )
+                    .on_click(cx.listener(move |view, _, w, cx| view.follow(Some(id), w, cx))),
+            );
+        }
+        let panel = div()
+            .id("workspace-sidebar")
+            .role(Role::Navigation)
+            .aria_label("Workspace navigation")
+            .flex()
+            .flex_col()
+            .h_full()
+            .w(rems(17.375))
+            .flex_shrink_0()
+            .px_3()
+            .py_4()
+            .gap_3()
+            .bg(cx.theme().sidebar)
+            .text_color(cx.theme().sidebar_foreground)
+            .border_r_1()
+            .border_color(cx.theme().sidebar_border)
+            .capture_key_down(cx.listener(Connected::workspace_escape))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .px_2()
+                    .child(div().flex_1().min_w_0().truncate().child("Workspace"))
+                    .child(
+                        Button::new("workspace-search-toggle")
+                            .ghost()
+                            .icon(IconName::Search)
+                            .accessibility_label("Search workspace boards")
+                            .tooltip("Search workspace boards")
+                            .aria_expanded(workspace.search_open)
+                            .track_focus(&workspace.search_focus)
+                            .on_click(
+                                cx.listener(|view, _, w, cx| view.toggle_workspace_search(w, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("workspace-navigation-close")
+                            .ghost()
+                            .icon(IconName::ChevronLeft)
+                            .accessibility_label("Close workspace navigation")
+                            .tooltip("Collapse workspace navigation")
+                            .on_click(cx.listener(|view, _, w, cx| view.toggle_workspace(w, cx))),
+                    ),
+            )
+            .child(div().px_2().text_sm().child("Content"))
+            .children(workspace.search_open.then(|| {
+                Input::new(&workspace.search)
+                    .id("workspace-search-input")
+                    .small()
+                    .w_full()
+                    .aria_label("Search boards")
+            }))
+            .child(boards);
+        navigation = navigation.child(panel);
+        navigation
+    }
+
     pub(super) fn render(&self, cx: &mut Context<Connected>) -> impl IntoElement {
         let mut column = div().flex().flex_col().gap_3();
         let action = match &self.page {
@@ -692,15 +1132,19 @@ impl Navigation {
                 } else {
                     "Boards"
                 }));
-                for summary in list {
-                    let id = summary.id;
-                    column = column.child(
-                        Button::new(SharedString::from(format!("board-{id}")))
-                            .label(summary.name.clone())
-                            .on_click(
-                                cx.listener(move |view, _, w, cx| view.follow(Some(id), w, cx)),
-                            ),
-                    );
+                if self.workspace.is_none() {
+                    for summary in list {
+                        let id = summary.id;
+                        column = column.child(
+                            Button::new(SharedString::from(format!("board-{id}")))
+                                .label(summary.name.clone())
+                                .on_click(
+                                    cx.listener(move |view, _, w, cx| view.follow(Some(id), w, cx)),
+                                ),
+                        );
+                    }
+                } else if !list.is_empty() {
+                    column = column.child(Label::new("Choose a board from the sidebar."));
                 }
                 column = column.child(
                     Button::new("notifications")
@@ -755,7 +1199,15 @@ impl Navigation {
             }
             Page::Items(id, table) => {
                 let id = *id;
-                column = column.child(table.render(cx));
+                let title = self
+                    .workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.boards.iter().find(|board| board.id == id))
+                    .map(|board| board.name.clone())
+                    .unwrap_or_else(|| "Board".into());
+                column = column
+                    .child(boardcraft_ui::BoardHeader::new(title))
+                    .child(table.render(cx));
                 column = column.child(
                     Button::new("reload-table")
                         .label("Reload board")
@@ -935,10 +1387,25 @@ impl Navigation {
                 "Retry board list"
             }
         };
-        column.child(
+        column = column.child(
             Button::new("board-list")
                 .label(action)
                 .on_click(cx.listener(|view, _, w, cx| view.follow(None, w, cx))),
+        );
+        let mut row = div().flex().size_full().min_h_0().min_w_0();
+        if let Some(workspace) = &self.workspace {
+            row = row.child(self.workspace_navigation(workspace, cx));
+        }
+        row.child(
+            div()
+                .id("navigation-content")
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .h_full()
+                .overflow_y_scroll()
+                .p_4()
+                .child(column),
         )
     }
 }

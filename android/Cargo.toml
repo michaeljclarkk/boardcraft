@@ -14,6 +14,7 @@ crate-type = ["cdylib"]
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6", features = ["native-activity"] }
 boardcraft-mobile-edit-client = { path = "../crates/mobile-edit-client" }
+boardcraft-ui = { path = "../crates/boardcraft-ui" }
 jni = "0.22"
 uuid = { version = "1", features = ["serde"] }
 gpui-kit = { version = "=0.11.0", default-features = false, features = ["component"] }

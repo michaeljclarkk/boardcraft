@@ -36,6 +36,9 @@ impl GroupEntry {
             _events: events,
         }
     }
+    pub(super) fn focus_input(&self, w: &mut Window, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| input.focus(w, cx));
+    }
     pub(super) fn set_group_name(&mut self, name: &str) {
         self.label = format!("Add item to {name}").into();
     }
