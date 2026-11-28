@@ -69,7 +69,7 @@ If you are unsure whether something is part of the port: **it isn't.** Do not ad
 
 You may commit and push to `main` without asking, one screen at a time, when all of these are true:
 
-- the staged files are port code for one area: `crates/**`, `android/**`, `areas/<id>.md`, `docs/workflows.md`, or the generated `README.md` / `docs/port-status.svg`;
+- the staged files are port code for one area: `crates/**`, `android/**`, `areas/<id>.md`, `docs/workflows.md`, `docs/gaps.md`, `docs/roadmap.md`, `ROADMAP.md`, or the generated `README.md` / `docs/port-status.svg`;
 - the message names the area and screen: `port(<area>): <screen>`;
 - the focused checks pass and you ran the app.
 

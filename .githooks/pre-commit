@@ -9,7 +9,7 @@ fi
 bad=0
 for f in $(git diff --cached --name-only --diff-filter=ACMRD); do
   case "$f" in
-    crates/*|android/*|areas/*|docs/workflows.md|docs/port-status.svg|README.md|Cargo.toml|Cargo.lock) ;;
+    crates/*|android/*|areas/*|ROADMAP.md|docs/workflows.md|docs/gaps.md|docs/roadmap.md|docs/port-status.svg|README.md|Cargo.toml|Cargo.lock) ;;
     *)
       printf 'port-only guard: %s is not port code\n' "$f"
       bad=1
